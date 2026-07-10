@@ -3,6 +3,7 @@
 _pkgname=llavon-ime-fcitx5
 _srcname=ime-fcitx5
 _model_file=llavon-ime-llama-250m-Q4_K_M.gguf
+_vcpkg_commit=2b65c20fc66eda893aa15a15a453c3cf09500b19
 pkgname=${_pkgname}-git
 pkgver=0.1.0.r53.gcb51bb8
 pkgrel=1
@@ -10,16 +11,17 @@ pkgdesc='Fcitx5 frontend and local inference service for Llavon IME'
 arch=('x86_64' 'aarch64')
 url='https://github.com/llavon-ime/ime-fcitx5'
 license=('BSD-2-Clause')
-depends=('asio' 'fcitx5' 'llama.cpp' 'nlohmann-json')
-makedepends=('cmake' 'git' 'ninja' 'pkgconf')
+depends=('fcitx5' 'llama.cpp')
+makedepends=('cmake' 'curl' 'git' 'ninja' 'pkgconf' 'tar' 'unzip' 'zip')
 optdepends=('fcitx5-configtool: graphical configuration for fcitx5')
 provides=("${_pkgname}")
 conflicts=("${_pkgname}")
 source=(
     "${_srcname}::git+https://github.com/llavon-ime/ime-fcitx5.git#branch=main"
+    "vcpkg::git+https://github.com/microsoft/vcpkg.git#commit=${_vcpkg_commit}"
     "${_model_file}::https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF/resolve/main/${_model_file}"
 )
-sha256sums=('SKIP' 'SKIP')
+sha256sums=('SKIP' 'SKIP' 'SKIP')
 
 pkgver() {
     cd "${_srcname}"
@@ -37,9 +39,12 @@ pkgver() {
 }
 
 build() {
+    "${srcdir}/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
     cmake -S "${_srcname}/fcitx5" -B build -G Ninja \
         -DCMAKE_BUILD_TYPE=None \
         -DCMAKE_INSTALL_PREFIX=/usr \
+        -DCMAKE_TOOLCHAIN_FILE="${srcdir}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+        -DVCPKG_MANIFEST_DIR="${srcdir}/${_srcname}/packaging/aur" \
         -DIME_FCITX5_INSTALLED_MODEL_PATH="/usr/share/llavon-ime/models/${_model_file}" \
         -DIME_FCITX5_BUILD_TESTS=OFF
     cmake --build build
