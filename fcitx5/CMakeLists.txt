@@ -43,7 +43,13 @@ target_compile_definitions(ime_fcitx5_shared PRIVATE
 target_compile_options(ime_fcitx5_shared PRIVATE -Wall -Wextra -Wpedantic)
 
 find_package(nlohmann_json CONFIG REQUIRED)
-find_package(asio CONFIG REQUIRED)
+find_package(asio CONFIG QUIET)
+if(NOT TARGET asio::asio)
+    find_path(ASIO_INCLUDE_DIR asio.hpp REQUIRED)
+    add_library(asio::asio INTERFACE IMPORTED)
+    set_target_properties(asio::asio PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${ASIO_INCLUDE_DIR}")
+endif()
 find_package(Threads REQUIRED)
 target_sources(ime_fcitx5_shared PRIVATE shared/config/config.cpp)
 target_sources(ime_fcitx5_shared PRIVATE

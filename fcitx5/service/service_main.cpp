@@ -454,7 +454,7 @@ public:
 
         asio::error_code ignored;
         acceptor_.close(ignored);
-        idle_timer_.cancel(ignored);
+        idle_timer_.cancel();
     }
 
 private:
