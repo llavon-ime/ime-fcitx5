@@ -1,0 +1,8 @@
+[Addon]
+Name=llavon-ime
+Category=InputMethod
+Version=@PROJECT_VERSION@
+Library=llavon-ime-addon
+Type=SharedLibrary
+OnDemand=True
+Configurable=True

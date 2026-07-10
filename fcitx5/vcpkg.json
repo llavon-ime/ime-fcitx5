@@ -1,0 +1,31 @@
+{
+  "dependencies": [
+    "asio",
+    "llama-cpp",
+    "nlohmann-json"
+  ],
+  "features": {
+    "llama-vulkan": {
+      "description": "Build ggml/llama.cpp with Vulkan backend for GPU and iGPU offload.",
+      "dependencies": [
+        {
+          "name": "ggml",
+          "features": [
+            "vulkan"
+          ]
+        }
+      ]
+    },
+    "llama-metal": {
+      "description": "Build ggml/llama.cpp with Metal backend for macOS GPU offload.",
+      "dependencies": [
+        {
+          "name": "ggml",
+          "features": [
+            "metal"
+          ]
+        }
+      ]
+    }
+  }
+}

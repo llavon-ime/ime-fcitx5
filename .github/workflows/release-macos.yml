@@ -1,0 +1,254 @@
+name: Release macOS package
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without v prefix, for example 0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  FCITX5_MACOS_VERSION: "0.3.4"
+  MODEL_REPOSITORY: "tony65535/llavon-ime-llama-250m-GGUF"
+  MODEL_FILE_NAME: "llavon-ime-llama-250m-Q4_K_M.gguf"
+  HOMEBREW_TAP_REPO: "llavon-ime/homebrew-llavon-ime"
+  HOMEBREW_CASK_PATH: "Casks/llavon-ime.rb"
+  RELEASE_REPOSITORY: ${{ github.repository }}
+
+jobs:
+  release-macos:
+    name: Build pkg and update Homebrew tap
+    runs-on: macos-14
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      DEVELOPER_ID_APPLICATION: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+      DEVELOPER_ID_INSTALLER: ${{ secrets.DEVELOPER_ID_INSTALLER }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+
+    steps:
+      - name: Check runner architecture
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          if [[ "${arch}" != "arm64" ]]; then
+            echo "This workflow currently publishes the arm64 Cask asset, but the runner architecture is ${arch}." >&2
+            exit 1
+          fi
+
+      - name: Checkout ime-fcitx5
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          lfs: true
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.version }}"
+            tag="v${version}"
+          else
+            tag="${GITHUB_REF_NAME}"
+            version="${tag#v}"
+          fi
+          if [[ -z "${version}" || "${version}" == "${tag}" ]]; then
+            echo "Release tags must use the v<version> format, for example v0.1.0." >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          brew update
+          brew install cmake ninja pkg-config
+
+      - name: Cache vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-${{ hashFiles('vcpkg-configuration.json', 'fcitx5/vcpkg.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-vcpkg-
+
+      - name: Install fcitx5-macos runtime for linking
+        run: |
+          set -euo pipefail
+          runtime="${RUNNER_TEMP}/Fcitx5-arm64.tar.bz2"
+          curl -L \
+            -o "${runtime}" \
+            "https://github.com/fcitx/fcitx5-macos/releases/download/${FCITX5_MACOS_VERSION}/Fcitx5-arm64.tar.bz2"
+          sudo mkdir -p "/Library/Input Methods"
+          sudo tar -xjf "${runtime}" -C "/Library/Input Methods"
+          test -f "/Library/Input Methods/Fcitx5.app/Contents/lib/libFcitx5Core.dylib"
+
+      - name: Checkout fcitx5-macos headers
+        run: |
+          set -euo pipefail
+          git clone \
+            --branch "${FCITX5_MACOS_VERSION}" \
+            --depth 1 \
+            --recurse-submodules \
+            --shallow-submodules \
+            https://github.com/fcitx/fcitx5-macos.git \
+            "${RUNNER_TEMP}/fcitx5-macos"
+          test -f "${RUNNER_TEMP}/fcitx5-macos/fcitx5/src/lib/fcitx/inputmethodengine.h"
+
+      - name: Import signing certificates
+        if: env.MACOS_CERTIFICATE_P12 != ''
+        run: |
+          set -euo pipefail
+          cert_path="${RUNNER_TEMP}/developer-id.p12"
+          keychain_path="${RUNNER_TEMP}/build.keychain-db"
+          printf '%s' "${MACOS_CERTIFICATE_P12}" | base64 -D > "${cert_path}"
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${keychain_path}"
+          security set-keychain-settings -lut 21600 "${keychain_path}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${keychain_path}"
+          security import "${cert_path}" \
+            -P "${MACOS_CERTIFICATE_PASSWORD}" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "${keychain_path}"
+          security list-keychains -d user -s "${keychain_path}" login.keychain-db
+          security default-keychain -s "${keychain_path}"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "${KEYCHAIN_PASSWORD}" "${keychain_path}"
+
+      - name: Download bundled model
+        run: |
+          set -euo pipefail
+          mkdir -p models
+          model_path="models/${MODEL_FILE_NAME}"
+          curl --fail --location --retry 3 \
+            --output "${model_path}" \
+            "https://huggingface.co/${MODEL_REPOSITORY}/resolve/main/${MODEL_FILE_NAME}"
+          test -s "${model_path}"
+          case "${model_path}" in
+            *.gguf) ;;
+            *)
+              echo "Downloaded model must use the .gguf extension: ${model_path}" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Build package
+        id: package
+        run: |
+          set -euo pipefail
+          IME_FCITX5_VERSION="${{ steps.version.outputs.version }}" \
+          FCITX5_MACOS_SOURCE_DIR="${RUNNER_TEMP}/fcitx5-macos" \
+          ./scripts/package-macos.sh
+
+          unsigned_pkg="dist/macos/llavon-ime-${{ steps.version.outputs.version }}-arm64.pkg"
+          signed_pkg="dist/macos/llavon-ime-${{ steps.version.outputs.version }}-arm64-signed.pkg"
+          if [[ -f "${signed_pkg}" ]]; then
+            mv "${signed_pkg}" "${unsigned_pkg}"
+          fi
+          echo "pkg=${unsigned_pkg}" >> "${GITHUB_OUTPUT}"
+
+      - name: Notarize package
+        if: env.APPLE_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_APP_SPECIFIC_PASSWORD != ''
+        run: |
+          set -euo pipefail
+          pkg="${{ steps.package.outputs.pkg }}"
+          xcrun notarytool submit "${pkg}" \
+            --apple-id "${APPLE_ID}" \
+            --team-id "${APPLE_TEAM_ID}" \
+            --password "${APPLE_APP_SPECIFIC_PASSWORD}" \
+            --wait
+          xcrun stapler staple "${pkg}"
+
+      - name: Compute sha256
+        id: sha
+        run: |
+          set -euo pipefail
+          pkg="${{ steps.package.outputs.pkg }}"
+          sha="$(shasum -a 256 "${pkg}" | awk '{print $1}')"
+          echo "sha256=${sha}" >> "${GITHUB_OUTPUT}"
+          echo "${sha}  ${pkg}"
+
+      - name: Create or update GitHub release
+        run: |
+          set -euo pipefail
+          tag="${{ steps.version.outputs.tag }}"
+          pkg="${{ steps.package.outputs.pkg }}"
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" "${pkg}" --clobber
+          elif git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            gh release create "${tag}" "${pkg}" \
+              --verify-tag \
+              --title "${tag}" \
+              --notes "macOS fcitx5 package."
+          else
+            gh release create "${tag}" "${pkg}" \
+              --target "${GITHUB_SHA}" \
+              --title "${tag}" \
+              --notes "macOS fcitx5 package."
+          fi
+
+      - name: Check Homebrew tap token
+        run: |
+          set -euo pipefail
+          if [[ -z "${HOMEBREW_TAP_TOKEN}" ]]; then
+            echo "Set the HOMEBREW_TAP_TOKEN repository secret with write access to ${HOMEBREW_TAP_REPO}." >&2
+            exit 1
+          fi
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HOMEBREW_TAP_REPO }}
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Update Homebrew Cask
+        run: |
+          set -euo pipefail
+          cask="homebrew-tap/${HOMEBREW_CASK_PATH}"
+          VERSION="${{ steps.version.outputs.version }}" \
+          SHA256="${{ steps.sha.outputs.sha256 }}" \
+          CASK="${cask}" \
+          RELEASE_REPOSITORY="${RELEASE_REPOSITORY}" \
+          ruby <<'RUBY'
+          path = ENV.fetch("CASK")
+          version = ENV.fetch("VERSION")
+          sha256 = ENV.fetch("SHA256")
+          repository = ENV.fetch("RELEASE_REPOSITORY")
+          text = File.read(path)
+          text.sub!(/version\s+"[^"]+"/, %(version "#{version}"))
+          text.sub!(/sha256\s+"[^"]+"/, %(sha256 "#{sha256}"))
+          text.sub!(%r{url "https://github\.com/[^/]+/[^/]+/releases/download/},
+                    %(url "https://github.com/#{repository}/releases/download/))
+          text.sub!(/verified:\s+"github\.com\/[^\"]+"/, %(verified: "github.com/#{repository}/"))
+          text.sub!(/homepage "https:\/\/github\.com\/[^\"]+"/, %(homepage "https://github.com/#{repository}"))
+          File.write(path, text)
+          RUBY
+
+      - name: Push Homebrew tap update
+        working-directory: homebrew-tap
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- "${HOMEBREW_CASK_PATH}"; then
+            echo "Homebrew Cask is already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${HOMEBREW_CASK_PATH}"
+          git commit -m "Update llavon-ime to ${{ steps.version.outputs.version }}"
+          git push

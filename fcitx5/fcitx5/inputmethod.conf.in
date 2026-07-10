@@ -1,0 +1,7 @@
+[InputMethod]
+Name=拉風輸入法
+Icon=input-keyboard
+Label=拉風
+LangCode=zh
+Addon=llavon-ime
+Configurable=True

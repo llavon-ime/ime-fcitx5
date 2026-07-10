@@ -1,0 +1,50 @@
+# 機器本地 CMake 設定（不進版本控制）
+CMakeUserPresets.json
+
+# CMake 產生的建置目錄
+build/
+out/
+dist/
+cmake-build-*/
+
+#vcpkg
+vcpkg_installed/
+
+# Visual Studio
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+
+# 編譯產物
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.ime
+
+# 其他
+.DS_Store
+*.user
+*.suo
+.cache/
+.dataset/
+.temp/
+.tool/
+.superpowers/
+models/*
+hf_model_card/*
+python_probe/*
+benchmarks/*
+__pycache__/
+
+# release models
+# !models/model.gguf
+# !models/llavon-ime-llama-250m-Q4_K_M.gguf
+reports/
+
+llama-*
+fcitx5/third_party/llama.cpp/

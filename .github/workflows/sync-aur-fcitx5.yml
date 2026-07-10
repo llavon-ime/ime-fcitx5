@@ -1,0 +1,95 @@
+name: Sync fcitx5 AUR package repo
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AUR_GITHUB_REPO: llavon-ime/aur-llavon-ime-fcitx5-git
+  AUR_PACKAGE_DIR: packaging/aur/llavon-ime-fcitx5-git
+
+jobs:
+  sync-aur-github-repo:
+    name: Sync GitHub AUR repo
+    if: github.repository_owner == 'llavon-ime'
+    runs-on: ubuntu-latest
+    env:
+      AUR_GITHUB_TOKEN: ${{ secrets.AUR_GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout ime-fcitx5
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve pkgver
+        id: pkgver
+        run: |
+          set -euo pipefail
+          describe="$(git describe --long --tags --abbrev=7 2>/dev/null || true)"
+          if [[ -n "${describe}" ]]; then
+            pkgver="$(printf '%s\n' "${describe}" | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g')"
+          else
+            base_version="$(sed -n 's/^project(llavon-ime VERSION \([^ ]*\).*/\1/p' fcitx5/CMakeLists.txt)"
+            base_version="${base_version:-0.1.0}"
+            pkgver="${base_version}.r$(git rev-list --count HEAD).g$(git rev-parse --short=7 HEAD)"
+          fi
+          echo "pkgver=${pkgver}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check AUR GitHub token
+        run: |
+          set -euo pipefail
+          if [[ -z "${AUR_GITHUB_TOKEN}" ]]; then
+            echo "Set the AUR_GITHUB_TOKEN repository secret with write access to ${AUR_GITHUB_REPO}." >&2
+            exit 1
+          fi
+
+      - name: Checkout AUR GitHub repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.AUR_GITHUB_REPO }}
+          path: aur-repo
+          token: ${{ secrets.AUR_GITHUB_TOKEN }}
+
+      - name: Update AUR package files
+        env:
+          PKGVER: ${{ steps.pkgver.outputs.pkgver }}
+        run: |
+          set -euo pipefail
+          cp "${AUR_PACKAGE_DIR}/PKGBUILD" aur-repo/PKGBUILD
+          cp "${AUR_PACKAGE_DIR}/.SRCINFO" aur-repo/.SRCINFO
+          cp "${AUR_PACKAGE_DIR}/README.md" aur-repo/README.md
+          ruby <<'RUBY'
+          pkgver = ENV.fetch("PKGVER")
+          pkgbuild = "aur-repo/PKGBUILD"
+          srcinfo = "aur-repo/.SRCINFO"
+
+          text = File.read(pkgbuild)
+          text.sub!(/^pkgver=.*/, "pkgver=#{pkgver}")
+          File.write(pkgbuild, text)
+
+          text = File.read(srcinfo)
+          text.sub!(/^(\s*)pkgver = .*/, "\\1pkgver = #{pkgver}")
+          File.write(srcinfo, text)
+          RUBY
+
+      - name: Push AUR GitHub repo update
+        working-directory: aur-repo
+        env:
+          PKGVER: ${{ steps.pkgver.outputs.pkgver }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- PKGBUILD .SRCINFO README.md; then
+            echo "AUR GitHub repo is already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO README.md
+          git commit -m "Update llavon-ime-fcitx5-git to ${PKGVER}"
+          git push

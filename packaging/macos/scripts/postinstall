@@ -1,0 +1,51 @@
+#!/bin/sh
+set -eu
+
+PAYLOAD_ROOT="/Library/Application Support/llavon-ime/payload"
+
+console_user="$(stat -f %Su /dev/console 2>/dev/null || true)"
+if [ -z "${console_user}" ] || [ "${console_user}" = "root" ] || [ "${console_user}" = "loginwindow" ]; then
+    console_user="${SUDO_USER:-}"
+fi
+
+if [ -z "${console_user}" ] || ! id "${console_user}" >/dev/null 2>&1; then
+    echo "llavon-ime: no active user found; payload remains at ${PAYLOAD_ROOT}" >&2
+    exit 0
+fi
+
+user_home="$(dscl . -read "/Users/${console_user}" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+if [ -z "${user_home}" ] || [ ! -d "${user_home}" ]; then
+    user_home="$(eval echo "~${console_user}")"
+fi
+
+uid="$(id -u "${console_user}")"
+fcitx_was_running=false
+if /usr/bin/pgrep -x -u "${uid}" Fcitx5 >/dev/null 2>&1; then
+    fcitx_was_running=true
+fi
+
+if [ ! -d "${PAYLOAD_ROOT}" ]; then
+    echo "llavon-ime: missing package payload: ${PAYLOAD_ROOT}" >&2
+    exit 1
+fi
+
+target_root="${user_home}/Library/fcitx5"
+
+pkill -x llavon-ime-service >/dev/null 2>&1 || true
+pkill -x Fcitx5 >/dev/null 2>&1 || true
+
+/bin/mkdir -p "${target_root}"
+/usr/bin/ditto --norsrc --noextattr "${PAYLOAD_ROOT}" "${target_root}"
+
+/usr/bin/find "${target_root}" "/Library/Application Support/llavon-ime" -name '._*' -delete
+
+/usr/sbin/chown -R "${console_user}:staff" "${target_root}"
+/bin/chmod -R a+rX "/Library/Application Support/llavon-ime/models" 2>/dev/null || true
+
+if [ ! -d "/Library/Input Methods/Fcitx5.app" ]; then
+    echo "llavon-ime: Fcitx5.app is not installed; install fcitx5-macos before using this input method." >&2
+elif [ "${fcitx_was_running}" = true ]; then
+    /bin/launchctl asuser "${uid}" /usr/bin/open -gj -b org.fcitx.inputmethod.Fcitx5 >/dev/null 2>&1 || true
+fi
+
+exit 0
