@@ -7,22 +7,18 @@ pkgbase = llavon-ime-fcitx5-git
 	arch = aarch64
 	license = BSD-2-Clause
 	makedepends = cmake
-	makedepends = curl
 	makedepends = git
 	makedepends = ninja
 	makedepends = pkgconf
-	makedepends = tar
-	makedepends = unzip
-	makedepends = zip
+	depends = asio
 	depends = fcitx5
 	depends = llama.cpp
+	depends = nlohmann-json
 	optdepends = fcitx5-configtool: graphical configuration for fcitx5
 	provides = llavon-ime-fcitx5
 	conflicts = llavon-ime-fcitx5
 	source = ime-fcitx5::git+https://github.com/llavon-ime/ime-fcitx5.git#branch=main
-	source = vcpkg::git+https://github.com/microsoft/vcpkg.git#commit=2b65c20fc66eda893aa15a15a453c3cf09500b19
 	source = llavon-ime-llama-250m-Q4_K_M.gguf::https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF/resolve/main/llavon-ime-llama-250m-Q4_K_M.gguf
-	sha256sums = SKIP
 	sha256sums = SKIP
 	sha256sums = SKIP
 
