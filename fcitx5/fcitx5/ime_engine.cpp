@@ -180,7 +180,7 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
         return;
     }
 
-    if (poll_prediction()) update_ui(input_context);
+    if (poll_prediction(input_context)) update_ui(input_context);
 
     if (candidate_ui_active()) {
         if (key == FcitxKey_Up) {
@@ -357,7 +357,7 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
                     return;
                 }
             }
-            request_prediction_if_ready();
+            request_prediction_if_ready(input_context);
         }
         update_ui(input_context);
         event.filterAndAccept();
@@ -422,7 +422,7 @@ void ImeEngine::reload_config() {
 }
 
 void ImeEngine::update_ui(fcitx::InputContext* input_context) {
-    (void)poll_prediction();
+    (void)poll_prediction(input_context);
 
     if (buffer_.empty()) {
         displayed_candidates_.clear();
@@ -665,12 +665,12 @@ void ImeEngine::apply_fallback_candidates(size_t segment_index) {
     (void)buffer_.set_segment_candidates(segment_index, predictions[segment_index].candidates, false);
 }
 
-void ImeEngine::request_prediction_if_ready() {
+void ImeEngine::request_prediction_if_ready(fcitx::InputContext* input_context) {
     if (prediction_pending_) {
         prediction_dirty_ = true;
         return;
     }
-    auto request = build_predict_request();
+    auto request = build_predict_request(input_context);
     if (request.padding.empty()) return;
     prediction_segment_indices_ = buffer_.completed_segment_indices();
     prediction_pending_ = true;
@@ -689,7 +689,7 @@ void ImeEngine::request_prediction_if_ready() {
     });
 }
 
-PredictRequest ImeEngine::build_predict_request() const {
+PredictRequest ImeEngine::build_predict_request(const fcitx::InputContext* input_context) const {
     PredictRequest request;
     for (const auto& segment : buffer_.segments()) {
         if (!segment.complete()) continue;
@@ -702,10 +702,37 @@ PredictRequest ImeEngine::build_predict_request() const {
         }
         request.padding.push_back(std::move(entry));
     }
+
+    if (input_context == nullptr ||
+        input_context->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
+        return request;
+    }
+
+    const auto& surrounding = input_context->surroundingText();
+    if (!surrounding.isValid()) return request;
+
+    try {
+        auto text = utf8_to_u32(surrounding.text());
+        const size_t cursor = std::min<size_t>({surrounding.cursor(), surrounding.anchor(), text.size()});
+        text.resize(cursor);
+
+        // Each padding entry occupies one prompt token and one generated token.
+        const size_t reserved_tokens = 2 + request.padding.size() * 2;
+        const size_t context_limit = config_.context_length > static_cast<int>(reserved_tokens)
+                                         ? static_cast<size_t>(config_.context_length) - reserved_tokens
+                                         : 0;
+        if (text.size() > context_limit) text.erase(0, text.size() - context_limit);
+
+        std::string context_utf8;
+        for (const char32_t codepoint : text) context_utf8 += char32_to_utf8(codepoint);
+        request.context = utf8_to_u16(context_utf8);
+    } catch (const std::runtime_error&) {
+        // Ignore malformed surrounding text supplied by a client.
+    }
     return request;
 }
 
-bool ImeEngine::poll_prediction() {
+bool ImeEngine::poll_prediction(fcitx::InputContext* input_context) {
     if (prediction_pending_) {
         if (auto response = service_client_.latest_response()) {
             prediction_pending_ = false;
@@ -722,14 +749,14 @@ bool ImeEngine::poll_prediction() {
             }
             if (prediction_dirty_) {
                 prediction_dirty_ = false;
-                request_prediction_if_ready();
+                request_prediction_if_ready(input_context);
             }
             return changed;
         } else if (service_client_.state() == PredictState::Unavailable) {
             prediction_pending_ = false;
             if (prediction_dirty_) {
                 prediction_dirty_ = false;
-                request_prediction_if_ready();
+                request_prediction_if_ready(input_context);
             }
             return true;
         }

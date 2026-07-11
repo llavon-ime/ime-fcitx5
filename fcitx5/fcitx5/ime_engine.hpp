@@ -51,9 +51,9 @@ private:
     bool candidate_ui_active() const;
     void mark_prediction_dirty();
     void apply_fallback_candidates(size_t segment_index);
-    void request_prediction_if_ready();
-    PredictRequest build_predict_request() const;
-    bool poll_prediction();
+    void request_prediction_if_ready(fcitx::InputContext* input_context);
+    PredictRequest build_predict_request(const fcitx::InputContext* input_context) const;
+    bool poll_prediction(fcitx::InputContext* input_context);
     std::vector<char32_t> current_candidates(bool include_hidden = false) const;
     CandidateTarget candidate_target_mode() const;
     std::optional<size_t> current_candidate_target() const;
