@@ -500,7 +500,7 @@ const fcitx::Configuration* ImeEngine::getConfig() const {
 
 void ImeEngine::setConfig(const fcitx::RawConfig& config) {
     fcitx_config_.load(config, true);
-    (void)fcitx_config_.version.setValue(kFcitxDisplayVersion);
+    (void)fcitx_config_.version.setValue(DisplayVersion::Current);
     config_ = to_shared_config(fcitx_config_);
     save();
     ++generation_;

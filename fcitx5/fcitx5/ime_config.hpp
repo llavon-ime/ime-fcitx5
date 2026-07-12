@@ -12,7 +12,9 @@
 namespace ime::fcitx5 {
 
 inline constexpr const char* kFcitxConfigFile = "conf/llavon-ime.conf";
-inline constexpr const char* kFcitxDisplayVersion = IME_FCITX5_DISPLAY_VERSION;
+
+enum class DisplayVersion { Current };
+FCITX_CONFIG_ENUM_NAME(DisplayVersion, IME_FCITX5_DISPLAY_VERSION);
 
 enum class BopomofoKeyboardLayout { Standard };
 FCITX_CONFIG_ENUM_NAME(BopomofoKeyboardLayout, "標準");
@@ -27,7 +29,7 @@ enum class SelectPhrase { BeforeCursor, AfterCursor };
 FCITX_CONFIG_ENUM_NAME(SelectPhrase, "游標前", "游標後");
 
 FCITX_CONFIGURATION(ImeFcitxConfig,
-    fcitx::Option<std::string> version{this, "Version", "版本（唯讀）", kFcitxDisplayVersion};
+    fcitx::Option<DisplayVersion> version{this, "Version", "版本", DisplayVersion::Current};
     fcitx::Option<std::string> modelPath{this, "ModelPath", "模型路徑", default_config().model_path};
     fcitx::Option<int, fcitx::IntConstrain> contextLength{
         this, "ContextLength", "上下文長度", default_config().context_length, fcitx::IntConstrain(1, 1048576)};
