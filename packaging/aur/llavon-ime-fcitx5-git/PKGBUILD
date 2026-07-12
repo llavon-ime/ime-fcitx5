@@ -44,6 +44,7 @@ build() {
         -DCMAKE_BUILD_TYPE=None \
         -DCMAKE_INSTALL_PREFIX=/usr \
         -DCMAKE_TOOLCHAIN_FILE="${srcdir}/${_srcname}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+        -DVCPKG_MANIFEST_FEATURES=llama-vulkan \
         -DIMESVC_REQUIRE_LLAMA=ON \
         -DIMESVC_BUILD_TESTS=ON
     cmake --build service-build
