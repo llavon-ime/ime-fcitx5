@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(llavon-ime VERSION 0.1.0 LANGUAGES CXX)
+project(llavon-ime VERSION 0.2.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,6 +11,7 @@ set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 
 option(IME_FCITX5_BUILD_TESTS "Build fcitx5 tests" ON)
 set(IME_FCITX5_SERVICE_NAME "llavon-ime-service" CACHE STRING "Installed fcitx5 service executable name")
+set(IME_FCITX5_DISPLAY_VERSION "${PROJECT_VERSION}" CACHE STRING "Version displayed in the fcitx5 configuration UI")
 set(IME_FCITX5_FCITX_PLUGIN_DIR "plugin" CACHE STRING "macOS fcitx5-macos plugin metadata install directory")
 set(IME_FCITX5_INSTALLED_MODEL_PATH "" CACHE FILEPATH "Installed default GGUF model path")
 
@@ -93,6 +94,7 @@ if(Fcitx5_FOUND AND NOT WIN32)
     target_compile_definitions(llavon-ime-addon PRIVATE
         IME_FCITX5_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
         IME_FCITX5_INSTALLED_TABLE_PATH="${IME_FCITX5_INSTALLED_TABLE_PATH}"
+        IME_FCITX5_DISPLAY_VERSION="${IME_FCITX5_DISPLAY_VERSION}"
     )
     target_compile_options(llavon-ime-addon PRIVATE -Wall -Wextra -Wpedantic)
     set_target_properties(llavon-ime-addon PROPERTIES PREFIX "")

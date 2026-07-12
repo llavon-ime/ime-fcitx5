@@ -34,6 +34,7 @@ public:
     bool add_bopomofo(char32_t symbol);
     bool add_literal(char32_t symbol);
     bool backspace();
+    bool delete_forward();
     bool move_cursor_left();
     bool move_cursor_right();
     void clear();

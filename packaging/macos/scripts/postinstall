@@ -19,10 +19,20 @@ if [ -z "${user_home}" ] || [ ! -d "${user_home}" ]; then
 fi
 
 uid="$(id -u "${console_user}")"
-fcitx_was_running=false
-if /usr/bin/pgrep -x -u "${uid}" Fcitx5 >/dev/null 2>&1; then
-    fcitx_was_running=true
-fi
+
+stop_user_process() {
+    process_name="$1"
+    /usr/bin/pkill -x -u "${uid}" "${process_name}" >/dev/null 2>&1 || true
+    attempts=0
+    while /usr/bin/pgrep -x -u "${uid}" "${process_name}" >/dev/null 2>&1; do
+        attempts=$((attempts + 1))
+        if [ "${attempts}" -ge 20 ]; then
+            /usr/bin/pkill -KILL -x -u "${uid}" "${process_name}" >/dev/null 2>&1 || true
+            break
+        fi
+        /bin/sleep 0.1
+    done
+}
 
 if [ ! -d "${PAYLOAD_ROOT}" ]; then
     echo "llavon-ime: missing package payload: ${PAYLOAD_ROOT}" >&2
@@ -31,8 +41,11 @@ fi
 
 target_root="${user_home}/Library/fcitx5"
 
-pkill -x llavon-ime-service >/dev/null 2>&1 || true
-pkill -x Fcitx5 >/dev/null 2>&1 || true
+# The addon and service are loaded into the logged-in user's processes. Stop
+# both before replacing their files so the restarted input method cannot retain
+# an old service binary or addon image.
+stop_user_process llavon-ime-service
+stop_user_process Fcitx5
 
 /bin/mkdir -p "${target_root}"
 /usr/bin/ditto --norsrc --noextattr "${PAYLOAD_ROOT}" "${target_root}"
@@ -44,7 +57,7 @@ pkill -x Fcitx5 >/dev/null 2>&1 || true
 
 if [ ! -d "/Library/Input Methods/Fcitx5.app" ]; then
     echo "llavon-ime: Fcitx5.app is not installed; install fcitx5-macos before using this input method." >&2
-elif [ "${fcitx_was_running}" = true ]; then
+else
     /bin/launchctl asuser "${uid}" /usr/bin/open -gj -b org.fcitx.inputmethod.Fcitx5 >/dev/null 2>&1 || true
 fi
 

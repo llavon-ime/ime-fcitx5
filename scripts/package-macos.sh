@@ -3,7 +3,7 @@ set -euo pipefail
 export COPYFILE_DISABLE=1
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${IME_FCITX5_VERSION:-0.1.0}"
+VERSION="${IME_FCITX5_VERSION:-0.2.1}"
 ARCH="$(uname -m)"
 PAYLOAD_PREFIX="${IME_FCITX5_MACOS_PAYLOAD_PREFIX:-/Library/Application Support/llavon-ime/payload}"
 BUILD_DIR="${IME_FCITX5_BUILD_DIR:-${ROOT_DIR}/build/package-llavon-ime-macos-${ARCH}}"
@@ -113,6 +113,7 @@ cmake_args=(
     -DFCITX_INSTALL_PKGDATADIR=share/fcitx5
     -DIME_FCITX5_FCITX_PLUGIN_DIR=plugin
     -DIME_FCITX5_INSTALLED_MODEL_PATH="${MODEL_INSTALL_PATH}"
+    -DIME_FCITX5_DISPLAY_VERSION="${VERSION}"
 )
 
 cmake "${cmake_args[@]}"

@@ -55,6 +55,7 @@ build() {
         -DCMAKE_INSTALL_PREFIX=/usr \
         -DCMAKE_TOOLCHAIN_FILE="${srcdir}/${_srcname}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
         -DIME_FCITX5_INSTALLED_MODEL_PATH="/usr/share/llavon-ime/models/${_model_file}" \
+        -DIME_FCITX5_DISPLAY_VERSION="${pkgver}" \
         -DIME_FCITX5_BUILD_TESTS=OFF
     cmake --build build
 }

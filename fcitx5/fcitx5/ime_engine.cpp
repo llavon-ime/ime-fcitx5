@@ -372,6 +372,16 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
         return;
     }
 
+    if (key == FcitxKey_Delete && !buffer_.empty()) {
+        buffer_.delete_forward();
+        hide_candidate_ui();
+        reset_candidate_view();
+        mark_prediction_dirty();
+        update_ui(input_context);
+        event.filterAndAccept();
+        return;
+    }
+
     if (key == FcitxKey_Left && !buffer_.empty()) {
         if (buffer_.move_cursor_left()) {
             hide_candidate_ui();
@@ -490,6 +500,7 @@ const fcitx::Configuration* ImeEngine::getConfig() const {
 
 void ImeEngine::setConfig(const fcitx::RawConfig& config) {
     fcitx_config_.load(config, true);
+    (void)fcitx_config_.version.setValue(kFcitxDisplayVersion);
     config_ = to_shared_config(fcitx_config_);
     save();
     ++generation_;

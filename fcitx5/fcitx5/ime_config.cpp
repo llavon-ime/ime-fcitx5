@@ -91,6 +91,7 @@ Config to_shared_config(const ImeFcitxConfig& config) {
 }
 
 void apply_shared_config(ImeFcitxConfig& target, const Config& source) {
+    (void)target.version.setValue(kFcitxDisplayVersion);
     (void)target.modelPath.setValue(source.model_path);
     (void)target.contextLength.setValue(source.context_length);
     (void)target.threadCount.setValue(source.thread_count);

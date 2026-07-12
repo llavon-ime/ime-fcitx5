@@ -116,6 +116,11 @@ bool CompositionBuffer::backspace() {
     return removed;
 }
 
+bool CompositionBuffer::delete_forward() {
+    if (caret_ >= segments_.size()) return false;
+    return remove_segment(caret_);
+}
+
 bool CompositionBuffer::move_cursor_left() {
     if (caret_ == 0) return false;
     --caret_;

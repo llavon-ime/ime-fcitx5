@@ -107,6 +107,12 @@ int run_buffer_tests() {
     ok = ok && buffer.candidate_target(ime::fcitx5::CandidateTarget::AfterCursor) &&
          *buffer.candidate_target(ime::fcitx5::CandidateTarget::AfterCursor) == 1;
 
+    ok = ok && buffer.delete_forward();
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄋㄧˇ");
+    ok = ok && buffer.rendered_composition() == std::u16string(u"你");
+    ok = ok && buffer.caret() == 1;
+    ok = ok && !buffer.delete_forward();
+
     buffer.clear();
     ok = ok && type_keys(buffer, fallback, U"1m3");
     ok = ok && buffer.empty();
