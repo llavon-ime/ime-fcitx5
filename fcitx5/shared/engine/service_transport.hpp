@@ -66,6 +66,7 @@ private:
     void run();
     bool ensure_connected();
     void disconnect() noexcept;
+    void shutdown_service() noexcept;
     void fail(Pending pending, protocol::ErrorCode code, std::string message);
     static bool matches(RequestKind kind, const protocol::Message& request, const protocol::Message& response);
     static protocol::Error correlation_error(const protocol::Message& request, protocol::ErrorCode code, std::string message);

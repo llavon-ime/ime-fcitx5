@@ -58,6 +58,10 @@ int run_service_transport_tests() {
             } else {
                 connection.send_all(protocol::encode(protocol::Message{protocol::Prediction{session, 1, request->buffer_revision, {{U'你'}}}}));
             }
+
+            auto shutdown_connection = server.accept_one();
+            const auto shutdown_request = protocol::decode(receive_frame(shutdown_connection));
+            if (!std::holds_alternative<protocol::ShutdownRequest>(shutdown_request)) server_ok = false;
         } catch (...) {
             server_ok = false;
         }
@@ -66,7 +70,6 @@ int run_service_transport_tests() {
 
     ServiceTransportOptions options;
     options.socket_path = socket_path;
-    options.auto_start = false;
     ServiceTransport transport(options);
     std::mutex callback_mutex;
     std::condition_variable callback_condition;

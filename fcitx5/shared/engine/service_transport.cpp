@@ -126,17 +126,20 @@ void ServiceTransport::shutdown(Callback callback) {
 }
 
 void ServiceTransport::stop() {
+    bool should_shutdown = false;
     {
         std::lock_guard lock(mutex_);
         if (stopping_) {
             // The join below is still needed when stop() is called twice.
         } else {
             stopping_ = true;
+            should_shutdown = true;
         }
     }
     condition_.notify_all();
     disconnect();
     if (worker_.joinable()) worker_.join();
+    if (should_shutdown) shutdown_service();
 }
 
 bool ServiceTransport::connected() const noexcept {
@@ -312,6 +315,20 @@ void ServiceTransport::disconnect() noexcept {
         socket_fd_ = -1;
     }
     connected_ = false;
+}
+
+void ServiceTransport::shutdown_service() noexcept {
+    if (!options_.auto_start) return;
+    const int fd = connect_socket(options_.socket_path);
+    if (fd < 0) return;
+
+    try {
+        const auto bytes = protocol::encode(protocol::Message{protocol::ShutdownRequest{}});
+        (void)write_all(fd, bytes.data(), bytes.size());
+    } catch (...) {
+    }
+    ::shutdown(fd, SHUT_RDWR);
+    ::close(fd);
 }
 
 void ServiceTransport::fail(Pending pending, protocol::ErrorCode code, std::string message) {
