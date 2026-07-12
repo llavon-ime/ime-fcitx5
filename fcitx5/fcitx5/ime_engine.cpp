@@ -64,11 +64,14 @@ std::filesystem::path default_table_path() {
 
 ServiceTransportOptions default_transport_options() {
     ServiceTransportOptions options;
+    const auto config = load_config();
     options.tables_dir = default_table_path().parent_path();
+    options.model_path = config.model_path;
+    options.context_length = static_cast<std::uint32_t>(config.context_length);
+    options.threads = static_cast<std::uint32_t>(config.thread_count);
+    options.gpu_layers = config.gpu_layers;
+    options.idle_timeout_seconds = static_cast<std::uint32_t>(config.idle_timeout_seconds);
     if (const char* model = non_empty_env("IME_FCITX5_MODEL_PATH")) options.model_path = model;
-#ifdef IME_FCITX5_INSTALLED_MODEL_PATH
-    if (options.model_path.empty()) options.model_path = IME_FCITX5_INSTALLED_MODEL_PATH;
-#endif
     return options;
 }
 
