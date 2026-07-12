@@ -2,6 +2,7 @@
 
 #include <fcitx/addonfactory.h>
 #include <fcitx/candidatelist.h>
+#include <fcitx/inputcontextproperty.h>
 #include <fcitx/inputmethodengine.h>
 
 #include <memory>
@@ -11,8 +12,9 @@
 #include "buffer/composition_buffer.hpp"
 #include "config/config.hpp"
 #include "engine/fallback_engine.hpp"
-#include "engine/service_client.hpp"
+#include "engine/service_transport.hpp"
 #include "fcitx5/ime_config.hpp"
+#include "fcitx5/input_context_property.hpp"
 
 namespace fcitx {
 class EventDispatcher;
@@ -24,6 +26,7 @@ namespace ime::fcitx5 {
 class ImeEngine final : public fcitx::InputMethodEngineV2 {
 public:
     explicit ImeEngine(fcitx::Instance* instance);
+    ~ImeEngine() override;
 
     void keyEvent(const fcitx::InputMethodEntry& entry, fcitx::KeyEvent& event) override;
     void activate(const fcitx::InputMethodEntry& entry, fcitx::InputContextEvent& event) override;
@@ -34,6 +37,21 @@ public:
     void setConfig(const fcitx::RawConfig& config) override;
 
 private:
+    class StateScope {
+    public:
+        StateScope(ImeEngine& engine, fcitx::InputContext* input_context);
+        ~StateScope();
+        StateScope(const StateScope&) = delete;
+        StateScope& operator=(const StateScope&) = delete;
+
+    private:
+        ImeEngine& engine_;
+        bool entered_ = false;
+    };
+
+    ImeInputContextProperty* property(fcitx::InputContext* input_context) const;
+    void enter_context(fcitx::InputContext* input_context);
+    void leave_context();
     void reload_config();
     void update_ui(fcitx::InputContext* input_context);
     void commit_current(fcitx::InputContext* input_context);
@@ -52,7 +70,9 @@ private:
     void mark_prediction_dirty();
     void apply_fallback_candidates(size_t segment_index);
     void request_prediction_if_ready(fcitx::InputContext* input_context);
-    PredictRequest build_predict_request(const fcitx::InputContext* input_context) const;
+    protocol::PredictRequest build_predict_request(const fcitx::InputContext* input_context) const;
+    void send_prediction(fcitx::InputContext* input_context, std::uint64_t generation);
+    void schedule_response(fcitx::InputContext* input_context, std::uint64_t generation, protocol::Message response);
     bool poll_prediction(fcitx::InputContext* input_context);
     std::vector<char32_t> current_candidates(bool include_hidden = false) const;
     CandidateTarget candidate_target_mode() const;
@@ -63,7 +83,7 @@ private:
 
     CompositionBuffer buffer_;
     FallbackEngine fallback_;
-    ServiceClient service_client_;
+    ServiceTransport service_transport_;
     ImeFcitxConfig fcitx_config_;
     Config config_;
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
@@ -79,6 +99,15 @@ private:
     int candidate_cursor_ = 0;
     bool candidate_expanded_ = false;
     bool candidate_ui_hidden_ = true;
+
+    protocol::SessionId session_id_{};
+    std::uint64_t next_request_id_ = 1;
+    std::uint64_t generation_ = 0;
+    std::optional<std::uint64_t> inflight_request_id_;
+    std::uint64_t inflight_revision_ = 0;
+    fcitx::InputContext* active_input_context_ = nullptr;
+    std::size_t state_scope_depth_ = 0;
+    ImeInputContextPropertyFactory property_factory_;
 };
 
 class ImeEngineFactory final : public fcitx::AddonFactory {

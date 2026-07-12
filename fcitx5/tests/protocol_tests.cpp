@@ -1,168 +1,85 @@
-#include "protocol/binary_codec.hpp"
 #include "protocol/protocol.hpp"
-#include "ipc/unix_socket.hpp"
-#include "text/utf.hpp"
 
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
-#include <string>
-#include <thread>
 #include <vector>
 
+namespace {
+
+bool equal(const ime::fcitx5::protocol::ByteVector& actual, std::initializer_list<unsigned> expected) {
+    if (actual.size() != expected.size()) return false;
+    std::size_t index = 0;
+    for (const auto value : expected) {
+        if (actual[index++] != value) return false;
+    }
+    return true;
+}
+
+}  // namespace
+
 int run_protocol_tests() {
+    using namespace ime::fcitx5::protocol;
     bool ok = true;
 
-    ime::fcitx5::PredictRequest req;
-    req.context = u"你好";
-    req.padding.push_back({false, u"ㄋㄧˇ", 0});
-    const auto bytes = ime::fcitx5::encode_message(req);
-    const auto decoded = ime::fcitx5::decode_predict_request(bytes);
-    ok = ok && decoded.context == req.context;
-    ok = ok && decoded.padding.size() == 1;
-    ok = ok && decoded.padding[0].bopomofo == u"ㄋㄧˇ";
+    ok = ok && equal(encode(Message{OpenSessionRequest{}}), {2, 0, 0, 0, 1, 0});
 
-    ime::fcitx5::StatusResponse status;
-    status.running = true;
-    status.backend = "fallback";
-    const auto status_bytes = ime::fcitx5::encode_message(status);
-    const auto decoded_status = ime::fcitx5::decode_status_response(status_bytes);
-    ok = ok && decoded_status.running;
-    ok = ok && decoded_status.backend == "fallback";
+    PredictRequest request;
+    for (std::size_t i = 0; i < request.session_id.size(); ++i) request.session_id[i] = static_cast<std::uint8_t>(i + 1);
+    request.request_id = 0x0102030405060708ULL;
+    request.buffer_revision = 0x1112131415161718ULL;
+    request.context = u"你";
+    request.padding.push_back(PaddingEntry{true, {}, U'好'});
+    const auto bytes = encode(Message{request});
+    ok = ok && equal(bytes, {48, 0, 0, 0, 2, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                             8, 7, 6, 5, 4, 3, 2, 1, 24, 23, 22, 21, 20, 19, 18, 17, 1, 0, 0, 0,
+                             96, 79, 1, 0, 0, 0, 1, 125, 89, 0, 0});
+    const auto decoded = decode(bytes);
+    const auto* decoded_request = std::get_if<PredictRequest>(&decoded);
+    ok = ok && decoded_request != nullptr && decoded_request->request_id == request.request_id &&
+         decoded_request->buffer_revision == request.buffer_revision && decoded_request->padding.size() == 1 &&
+         decoded_request->padding.front().chosen && decoded_request->padding.front().chosen_char == U'好';
 
-    ime::fcitx5::ControlRequest stop_request;
-    stop_request.operation = "stop";
-    const auto stop_bytes = ime::fcitx5::encode_message(stop_request);
-    ok = ok && ime::fcitx5::decode_control_request(stop_bytes).operation == "stop";
-
-    ime::fcitx5::PredictResponse response;
-    response.candidates.push_back({U'你', U'妳'});
-    const auto response_bytes = ime::fcitx5::encode_message(response);
-    const auto decoded_response = ime::fcitx5::decode_predict_response(response_bytes);
-    ok = ok && decoded_response.candidates.size() == 1;
-    ok = ok && decoded_response.candidates.front().size() == 2;
-    ok = ok && decoded_response.candidates.front().front() == U'你';
-
-    auto malformed = bytes;
-    malformed.push_back(0);
-    bool rejected_extra_payload = false;
+    auto trailing = bytes;
+    trailing.push_back(0);
+    bool rejected = false;
     try {
-        (void)ime::fcitx5::decode_predict_request(malformed);
-    } catch (...) {
-        rejected_extra_payload = true;
+        (void)decode(trailing);
+    } catch (const ProtocolError&) {
+        rejected = true;
     }
-    ok = ok && rejected_extra_payload;
+    ok = ok && rejected;
 
-    req.padding[0].chosen = true;
-    req.padding[0].chosen_char = U'你';
-    const auto chosen_bytes = ime::fcitx5::encode_message(req);
-    ok = ok && ime::fcitx5::decode_predict_request(chosen_bytes).padding[0].chosen;
-    ok = ok && ime::fcitx5::decode_predict_request(chosen_bytes).padding[0].chosen_char == U'你';
-
-    bool rejected_empty_chosen_char = false;
+    auto truncated = bytes;
+    truncated.pop_back();
+    rejected = false;
     try {
-        ime::fcitx5::PredictRequest invalid_request;
-        invalid_request.padding.push_back({true, {}, 0});
-        (void)ime::fcitx5::encode_message(invalid_request);
-    } catch (...) {
-        rejected_empty_chosen_char = true;
+        (void)decode(truncated);
+    } catch (const ProtocolError&) {
+        rejected = true;
     }
-    ok = ok && rejected_empty_chosen_char;
+    ok = ok && rejected;
 
-    bool rejected_zero_candidate = false;
+    auto unknown = bytes;
+    unknown[4] = 99;
+    rejected = false;
     try {
-        ime::fcitx5::PredictResponse invalid_response;
-        invalid_response.candidates.push_back({0});
-        (void)ime::fcitx5::encode_message(invalid_response);
-    } catch (...) {
-        rejected_zero_candidate = true;
+        (void)decode(unknown);
+    } catch (const ProtocolError&) {
+        rejected = true;
     }
-    ok = ok && rejected_zero_candidate;
+    ok = ok && rejected;
 
-    bool rejected_decoded_zero_candidate = false;
+    auto oversized = bytes;
+    oversized[0] = 0x01;
+    oversized[1] = 0x00;
+    oversized[2] = 0x10;
+    oversized[3] = 0x00;
+    rejected = false;
     try {
-        auto invalid_response_bytes = response_bytes;
-        for (size_t i = 0; i < sizeof(char32_t); ++i) invalid_response_bytes[invalid_response_bytes.size() - 1 - i] = 0;
-        (void)ime::fcitx5::decode_predict_response(invalid_response_bytes);
-    } catch (...) {
-        rejected_decoded_zero_candidate = true;
+        (void)decode(oversized);
+    } catch (const ProtocolError&) {
+        rejected = true;
     }
-    ok = ok && rejected_decoded_zero_candidate;
-
-    bool rejected_wrong_type = false;
-    try {
-        (void)ime::fcitx5::decode_status_response(bytes);
-    } catch (...) {
-        rejected_wrong_type = true;
-    }
-    ok = ok && rejected_wrong_type;
-
-    bool rejected_missing_field = false;
-    try {
-        auto truncated = bytes;
-        truncated.pop_back();
-        (void)ime::fcitx5::decode_predict_request(truncated);
-    } catch (...) {
-        rejected_missing_field = true;
-    }
-    ok = ok && rejected_missing_field;
-
-    bool rejected_invalid_scalar = false;
-    try {
-        (void)ime::fcitx5::char32_to_utf8(0xD800);
-    } catch (...) {
-        rejected_invalid_scalar = true;
-    }
-    ok = ok && rejected_invalid_scalar;
-
-    const auto socket_path = std::filesystem::temp_directory_path() / "llavon-ime-protocol-test.sock";
-    ime::fcitx5::UnixSocketServer server;
-    server.bind_listen(socket_path);
-    std::thread server_thread([&server]() {
-        auto accepted = server.accept_one();
-        const auto received = accepted.recv_exact(3);
-        accepted.send_all(received);
-    });
-    auto client = ime::fcitx5::UnixSocketClient{}.connect(socket_path);
-    const std::vector<std::uint8_t> payload{1, 2, 3};
-    client.send_all(payload);
-    ok = ok && client.recv_exact(3) == payload;
-    server_thread.join();
-
-    const auto active_socket_path = std::filesystem::temp_directory_path() / "llavon-ime-active-test.sock";
-    ime::fcitx5::UnixSocketServer active_server;
-    active_server.bind_listen(active_socket_path);
-    bool rejected_active_socket = false;
-    try {
-        ime::fcitx5::UnixSocketServer second_server;
-        second_server.bind_listen(active_socket_path);
-    } catch (...) {
-        rejected_active_socket = true;
-    }
-    ok = ok && rejected_active_socket;
-
-    const auto parentless_socket = std::filesystem::path("llavon-ime-parentless-test.sock");
-    {
-        ime::fcitx5::UnixSocketServer parentless_server;
-        parentless_server.bind_listen(parentless_socket);
-    }
-    ok = ok && !std::filesystem::exists(parentless_socket);
-
-    const auto non_socket_path = std::filesystem::temp_directory_path() / "llavon-ime-non-socket-test";
-    {
-        std::ofstream file(non_socket_path);
-        file << "not a socket";
-    }
-    bool rejected_non_socket = false;
-    try {
-        ime::fcitx5::UnixSocketServer non_socket_server;
-        non_socket_server.bind_listen(non_socket_path);
-    } catch (...) {
-        rejected_non_socket = true;
-    }
-    ok = ok && rejected_non_socket;
-    ok = ok && std::filesystem::exists(non_socket_path);
-    std::filesystem::remove(non_socket_path);
+    ok = ok && rejected;
 
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

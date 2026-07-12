@@ -62,6 +62,16 @@ std::filesystem::path default_table_path() {
     return "/usr/share/llavon-ime/tables/bopomofo_char.json";
 }
 
+ServiceTransportOptions default_transport_options() {
+    ServiceTransportOptions options;
+    options.tables_dir = default_table_path().parent_path();
+    if (const char* model = non_empty_env("IME_FCITX5_MODEL_PATH")) options.model_path = model;
+#ifdef IME_FCITX5_INSTALLED_MODEL_PATH
+    if (options.model_path.empty()) options.model_path = IME_FCITX5_INSTALLED_MODEL_PATH;
+#endif
+    return options;
+}
+
 bool is_tone_key(char32_t value) {
     return value == U' ' || value == U'ˊ' || value == U'ˇ' || value == U'ˋ' || value == U'˙';
 }
@@ -159,18 +169,90 @@ private:
 
 }  // namespace
 
+ImeEngine::StateScope::StateScope(ImeEngine& engine, fcitx::InputContext* input_context) : engine_(engine) {
+    if (input_context != nullptr) {
+        engine_.enter_context(input_context);
+        entered_ = true;
+    }
+}
+
+ImeEngine::StateScope::~StateScope() {
+    if (entered_) engine_.leave_context();
+}
+
+ImeInputContextProperty* ImeEngine::property(fcitx::InputContext* input_context) const {
+    if (input_context == nullptr) return nullptr;
+    return static_cast<ImeInputContextProperty*>(input_context->property(&property_factory_));
+}
+
+void ImeEngine::enter_context(fcitx::InputContext* input_context) {
+    if (state_scope_depth_++ != 0) return;
+    active_input_context_ = input_context;
+    auto* state = property(input_context);
+    if (state == nullptr) return;
+
+    buffer_ = state->buffer;
+    displayed_candidates_ = state->displayed_candidates;
+    candidate_page_ = state->candidate_page;
+    candidate_cursor_ = state->candidate_cursor;
+    candidate_expanded_ = state->candidate_expanded;
+    candidate_ui_hidden_ = state->candidate_ui_hidden;
+    session_id_ = state->session_id;
+    next_request_id_ = state->next_request_id;
+    generation_ = state->generation;
+    inflight_request_id_ = state->inflight_request_id;
+    inflight_revision_ = state->inflight_revision;
+    prediction_key_ = state->prediction_key;
+    prediction_segment_indices_ = state->inflight_segment_indices;
+    prediction_pending_ = state->prediction_pending;
+    prediction_dirty_ = state->prediction_dirty;
+}
+
+void ImeEngine::leave_context() {
+    if (state_scope_depth_ == 0) return;
+    if (--state_scope_depth_ != 0) return;
+    auto* state = property(active_input_context_);
+    if (state != nullptr) {
+        state->buffer = buffer_;
+        state->displayed_candidates = displayed_candidates_;
+        state->candidate_page = candidate_page_;
+        state->candidate_cursor = candidate_cursor_;
+        state->candidate_expanded = candidate_expanded_;
+        state->candidate_ui_hidden = candidate_ui_hidden_;
+        state->session_id = session_id_;
+        state->next_request_id = next_request_id_;
+        state->generation = generation_;
+        state->inflight_request_id = inflight_request_id_;
+        state->inflight_revision = inflight_revision_;
+        state->prediction_key = prediction_key_;
+        state->inflight_segment_indices = prediction_segment_indices_;
+        state->prediction_pending = prediction_pending_;
+        state->prediction_dirty = prediction_dirty_;
+    }
+    active_input_context_ = nullptr;
+}
+
 ImeEngine::ImeEngine(fcitx::Instance* instance)
     : fallback_(default_table_path()),
+      service_transport_(default_transport_options()),
       config_(default_config()),
       instance_(instance),
       event_dispatcher_(instance ? &instance->eventDispatcher() : nullptr) {
+    if (instance_ != nullptr) {
+        (void)instance_->inputContextManager().registerProperty("llavon-ime-input-state", &property_factory_);
+    }
     reload_config();
+}
+
+ImeEngine::~ImeEngine() {
+    if (alive_) *alive_ = false;
 }
 
 void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event) {
     if (event.isRelease()) return;
 
     auto* input_context = event.inputContext();
+    StateScope state_scope(*this, input_context);
     const auto key = event.key().sym();
     const auto microsoft_punctuation = microsoft_punctuation_for_key(event.key());
     if (!microsoft_punctuation && has_blocking_modifier(event.key())) return;
@@ -366,11 +448,13 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
 }
 
 void ImeEngine::activate(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& event) {
+    StateScope state_scope(*this, event.inputContext());
     reload_config();
     update_ui(event.inputContext());
 }
 
 void ImeEngine::reset(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& event) {
+    StateScope state_scope(*this, event.inputContext());
     if (event.type() != fcitx::EventType::InputContextFocusOut && event.type() != fcitx::EventType::InputContextReset) {
         const auto text = buffer_.candidate_commit_text();
         if (!text.empty()) event.inputContext()->commitString(to_utf8(text));
@@ -378,8 +462,10 @@ void ImeEngine::reset(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& 
 
     buffer_.clear();
     displayed_candidates_.clear();
+    ++generation_;
     prediction_pending_ = false;
     prediction_dirty_ = false;
+    inflight_request_id_.reset();
     prediction_segment_indices_.clear();
     hide_candidate_ui();
     reset_candidate_view();
@@ -403,7 +489,23 @@ void ImeEngine::setConfig(const fcitx::RawConfig& config) {
     fcitx_config_.load(config, true);
     config_ = to_shared_config(fcitx_config_);
     save();
-    (void)service_client_.stop();
+    ++generation_;
+    inflight_request_id_.reset();
+    prediction_pending_ = false;
+    prediction_dirty_ = false;
+    if (instance_ != nullptr) {
+        instance_->inputContextManager().foreach([this](fcitx::InputContext* input_context) {
+            auto* state = property(input_context);
+            if (state == nullptr) return true;
+            if (!protocol::is_zero(state->session_id)) {
+                service_transport_.close_session(state->session_id, {});
+                state->session_id = {};
+            }
+            state->session_close_handle = {};
+            state->invalidate_generation();
+            return true;
+        });
+    }
 }
 
 void ImeEngine::reload_config() {
@@ -422,6 +524,7 @@ void ImeEngine::reload_config() {
 }
 
 void ImeEngine::update_ui(fcitx::InputContext* input_context) {
+    StateScope state_scope(*this, input_context);
     (void)poll_prediction(input_context);
 
     if (buffer_.empty()) {
@@ -490,6 +593,7 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
 }
 
 void ImeEngine::commit_current(fcitx::InputContext* input_context) {
+    StateScope state_scope(*this, input_context);
     input_context->commitString(to_utf8(buffer_.commit_text()));
     buffer_.clear();
     displayed_candidates_.clear();
@@ -501,6 +605,7 @@ void ImeEngine::commit_current(fcitx::InputContext* input_context) {
 }
 
 bool ImeEngine::select_candidate(fcitx::InputContext* input_context, int index) {
+    StateScope state_scope(*this, input_context);
     const auto target = current_candidate_target();
     if (!target || index < 0) return false;
 
@@ -516,6 +621,7 @@ bool ImeEngine::select_candidate(fcitx::InputContext* input_context, int index) 
 }
 
 bool ImeEngine::handle_escape(fcitx::InputContext* input_context) {
+    StateScope state_scope(*this, input_context);
     if (config_.esc_clears_entire_buffer) {
         buffer_.clear();
         displayed_candidates_.clear();
@@ -662,7 +768,7 @@ void ImeEngine::apply_fallback_candidates(size_t segment_index) {
 
     const auto predictions = fallback_.predict(buffer_);
     if (segment_index >= predictions.size()) return;
-    (void)buffer_.set_segment_candidates(segment_index, predictions[segment_index].candidates, false);
+    (void)buffer_.set_segment_candidates(segment_index, predictions[segment_index].candidates);
 }
 
 void ImeEngine::request_prediction_if_ready(fcitx::InputContext* input_context) {
@@ -670,31 +776,62 @@ void ImeEngine::request_prediction_if_ready(fcitx::InputContext* input_context) 
         prediction_dirty_ = true;
         return;
     }
-    auto request = build_predict_request(input_context);
+    const auto request = build_predict_request(input_context);
     if (request.padding.empty()) return;
     prediction_segment_indices_ = buffer_.completed_segment_indices();
     prediction_pending_ = true;
     prediction_dirty_ = false;
     prediction_key_ = buffer_.raw_composition();
     prediction_revision_ = buffer_.revision();
-    const auto alive = std::weak_ptr<bool>(alive_);
-    auto* dispatcher = event_dispatcher_;
-    (void)service_client_.request_predict_async(std::move(request), [this, alive, dispatcher](PredictState) {
-        if (!dispatcher || alive.expired()) return;
-        dispatcher->schedule([this, alive]() {
-            if (alive.expired() || !instance_) return;
-            auto* input_context = instance_->inputContextManager().lastFocusedInputContext();
-            if (input_context) update_ui(input_context);
+    const auto generation = generation_;
+    const auto engine_alive = std::weak_ptr<bool>(alive_);
+    if (protocol::is_zero(session_id_)) {
+        auto context = input_context ? input_context->watch() : fcitx::TrackableObjectReference<fcitx::InputContext>();
+        auto* dispatcher = event_dispatcher_;
+        service_transport_.open_session([this, context, generation, engine_alive, dispatcher](protocol::Message response) mutable {
+            if (engine_alive.expired() || dispatcher == nullptr) return;
+            dispatcher->scheduleWithContext(context, [this, context, generation, engine_alive,
+                                                     response = std::move(response)]() mutable {
+                auto* input_context = context.get();
+                if (engine_alive.expired() || input_context == nullptr) return;
+                StateScope state_scope(*this, input_context);
+                if (generation_ != generation || !prediction_pending_ || !protocol::is_zero(session_id_)) return;
+                if (const auto* opened = std::get_if<protocol::OpenSessionResponse>(&response)) {
+                    session_id_ = opened->session_id;
+                    if (auto* state = property(input_context)) {
+                        const auto alive = std::weak_ptr<bool>(alive_);
+                        const auto session_id = session_id_;
+                        state->session_close_handle = [this, alive, session_id]() {
+                            if (alive.expired()) return;
+                            service_transport_.close_session(session_id, {});
+                        };
+                    }
+                    send_prediction(input_context, generation);
+                } else {
+                    const bool dirty = prediction_dirty_;
+                    prediction_pending_ = false;
+                    inflight_request_id_.reset();
+                    for (const auto index : prediction_segment_indices_) apply_fallback_candidates(index);
+                    prediction_segment_indices_.clear();
+                    prediction_dirty_ = false;
+                    if (dirty) request_prediction_if_ready(input_context);
+                    update_ui(input_context);
+                }
+            });
         });
-    });
+    } else {
+        send_prediction(input_context, generation);
+    }
 }
 
-PredictRequest ImeEngine::build_predict_request(const fcitx::InputContext* input_context) const {
-    PredictRequest request;
+protocol::PredictRequest ImeEngine::build_predict_request(const fcitx::InputContext* input_context) const {
+    protocol::PredictRequest request;
+    request.session_id = session_id_;
+    request.buffer_revision = buffer_.revision();
     for (const auto& segment : buffer_.segments()) {
         if (!segment.complete()) continue;
 
-        PaddingEntry entry;
+        protocol::PaddingEntry entry;
         entry.bopomofo = segment.reading();
         if (segment.manually_chosen && segment.selected_candidate() != 0) {
             entry.chosen = true;
@@ -716,7 +853,6 @@ PredictRequest ImeEngine::build_predict_request(const fcitx::InputContext* input
         const size_t cursor = std::min<size_t>({surrounding.cursor(), surrounding.anchor(), text.size()});
         text.resize(cursor);
 
-        // Each padding entry occupies one prompt token and one generated token.
         const size_t reserved_tokens = 2 + request.padding.size() * 2;
         const size_t context_limit = config_.context_length > static_cast<int>(reserved_tokens)
                                          ? static_cast<size_t>(config_.context_length) - reserved_tokens
@@ -732,36 +868,71 @@ PredictRequest ImeEngine::build_predict_request(const fcitx::InputContext* input
     return request;
 }
 
-bool ImeEngine::poll_prediction(fcitx::InputContext* input_context) {
-    if (prediction_pending_) {
-        if (auto response = service_client_.latest_response()) {
-            prediction_pending_ = false;
-            bool changed = false;
-            if (prediction_key_ == buffer_.raw_composition() && prediction_revision_ == buffer_.revision()) {
-                const size_t count = std::min(response->candidates.size(), prediction_segment_indices_.size());
-                for (size_t i = 0; i < count; ++i) {
-                    if (!response->candidates[i].empty()) {
-                        changed =
-                            buffer_.set_segment_candidates(prediction_segment_indices_[i], response->candidates[i]) ||
-                            changed;
-                    }
+void ImeEngine::send_prediction(fcitx::InputContext* input_context, std::uint64_t generation) {
+    if (generation_ != generation || !prediction_pending_ || protocol::is_zero(session_id_)) return;
+    auto request = build_predict_request(input_context);
+    request.request_id = next_request_id_++;
+    request.buffer_revision = prediction_revision_;
+    inflight_request_id_ = request.request_id;
+    inflight_revision_ = request.buffer_revision;
+    auto context = input_context ? input_context->watch() : fcitx::TrackableObjectReference<fcitx::InputContext>();
+    const auto engine_alive = std::weak_ptr<bool>(alive_);
+    auto* dispatcher = event_dispatcher_;
+    service_transport_.predict(
+        request.session_id, request.request_id, request.buffer_revision, std::move(request.context),
+        std::move(request.padding), [this, context, generation, engine_alive, dispatcher](protocol::Message response) mutable {
+            if (engine_alive.expired() || dispatcher == nullptr) return;
+            dispatcher->scheduleWithContext(context, [this, context, generation, engine_alive,
+                                                     response = std::move(response)]() mutable {
+                auto* input_context = context.get();
+                if (engine_alive.expired() || input_context == nullptr) return;
+                schedule_response(input_context, generation, std::move(response));
+            });
+        });
+}
+
+void ImeEngine::schedule_response(fcitx::InputContext* input_context, std::uint64_t generation,
+                                     protocol::Message response) {
+    StateScope state_scope(*this, input_context);
+    if (generation_ != generation || !prediction_pending_) return;
+
+    bool accepted = false;
+    if (const auto* prediction = std::get_if<protocol::Prediction>(&response)) {
+        accepted = inflight_request_id_ && *inflight_request_id_ == prediction->request_id &&
+                   inflight_revision_ == prediction->buffer_revision &&
+                   prediction->session_id == session_id_;
+        if (accepted && prediction->candidates.size() == prediction_segment_indices_.size() &&
+            prediction_key_ == buffer_.raw_composition() && prediction_revision_ == buffer_.revision()) {
+            for (std::size_t i = 0; i < prediction_segment_indices_.size(); ++i) {
+                const auto index = prediction_segment_indices_[i];
+                if (index < buffer_.segments().size()) {
+                    (void)buffer_.set_segment_candidates(index, prediction->candidates[i]);
                 }
             }
-            if (prediction_dirty_) {
-                prediction_dirty_ = false;
-                request_prediction_if_ready(input_context);
-            }
-            return changed;
-        } else if (service_client_.state() == PredictState::Unavailable) {
-            prediction_pending_ = false;
-            if (prediction_dirty_) {
-                prediction_dirty_ = false;
-                request_prediction_if_ready(input_context);
-            }
-            return true;
+        } else if (accepted) {
+            for (const auto index : prediction_segment_indices_) apply_fallback_candidates(index);
+        }
+    } else if (const auto* error = std::get_if<protocol::Error>(&response)) {
+        accepted = !inflight_request_id_ || error->request_id == 0 || error->request_id == *inflight_request_id_;
+        if (accepted) {
+            if (error->code == protocol::ErrorCode::UnknownSession) session_id_ = {};
+            for (const auto index : prediction_segment_indices_) apply_fallback_candidates(index);
         }
     }
+    if (!accepted) return;
 
+    const bool dirty = prediction_dirty_;
+    prediction_pending_ = false;
+    prediction_dirty_ = false;
+    inflight_request_id_.reset();
+    inflight_revision_ = 0;
+    prediction_segment_indices_.clear();
+    if (dirty) request_prediction_if_ready(input_context);
+    update_ui(input_context);
+}
+
+bool ImeEngine::poll_prediction(fcitx::InputContext* input_context) {
+    (void)input_context;
     return false;
 }
 

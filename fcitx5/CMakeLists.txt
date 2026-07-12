@@ -15,10 +15,7 @@ set(IME_FCITX5_FCITX_PLUGIN_DIR "plugin" CACHE STRING "macOS fcitx5-macos plugin
 set(IME_FCITX5_INSTALLED_MODEL_PATH "" CACHE FILEPATH "Installed default GGUF model path")
 
 set(IME_FCITX5_INSTALLED_SERVICE_PATH "${CMAKE_INSTALL_FULL_BINDIR}/${IME_FCITX5_SERVICE_NAME}")
-set(IME_FCITX5_INSTALLED_TABLE_DIR "${CMAKE_INSTALL_FULL_DATADIR}/llavon-ime/tables")
 set(IME_FCITX5_INSTALLED_TABLE_PATH "${CMAKE_INSTALL_FULL_DATADIR}/llavon-ime/tables/bopomofo_char.json")
-
-include(LlamaCpp)
 
 function(ime_fcitx5_install_destination output directory)
     if(IS_ABSOLUTE "${directory}")
@@ -43,13 +40,6 @@ target_compile_definitions(ime_fcitx5_shared PRIVATE
 target_compile_options(ime_fcitx5_shared PRIVATE -Wall -Wextra -Wpedantic)
 
 find_package(nlohmann_json CONFIG REQUIRED)
-find_package(asio CONFIG QUIET)
-if(NOT TARGET asio::asio)
-    find_path(ASIO_INCLUDE_DIR asio.hpp REQUIRED)
-    add_library(asio::asio INTERFACE IMPORTED)
-    set_target_properties(asio::asio PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES "${ASIO_INCLUDE_DIR}")
-endif()
 find_package(Threads REQUIRED)
 target_sources(ime_fcitx5_shared PRIVATE shared/config/config.cpp)
 target_sources(ime_fcitx5_shared PRIVATE
@@ -60,29 +50,15 @@ target_sources(ime_fcitx5_shared PRIVATE
     shared/buffer/composition_buffer.cpp
     shared/engine/fallback_engine.cpp
     shared/input/keypad.cpp
-    shared/engine/service_client.cpp
     shared/protocol/protocol.cpp
-    shared/protocol/binary_codec.cpp
-    shared/ipc/unix_socket.cpp
 )
+if(NOT WIN32)
+    target_sources(ime_fcitx5_shared PRIVATE
+        shared/engine/service_transport.cpp
+        shared/ipc/unix_socket.cpp
+    )
+endif()
 target_link_libraries(ime_fcitx5_shared PUBLIC nlohmann_json::nlohmann_json Threads::Threads)
-
-add_library(ime_fcitx5_service_lib STATIC service/service_app.cpp service/llama_backend.cpp)
-set_target_properties(ime_fcitx5_service_lib PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(ime_fcitx5_service_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(ime_fcitx5_service_lib PUBLIC ime_fcitx5_shared)
-target_compile_definitions(ime_fcitx5_service_lib PRIVATE
-    IME_FCITX5_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-    IME_FCITX5_INSTALLED_TABLE_DIR="${IME_FCITX5_INSTALLED_TABLE_DIR}"
-    IME_FCITX5_INSTALLED_TABLE_PATH="${IME_FCITX5_INSTALLED_TABLE_PATH}"
-)
-target_compile_options(ime_fcitx5_service_lib PRIVATE -Wall -Wextra -Wpedantic)
-ime_fcitx5_configure_llama(ime_fcitx5_service_lib)
-
-add_executable(llavon-ime-service service/service_main.cpp)
-target_link_libraries(llavon-ime-service PRIVATE ime_fcitx5_service_lib asio::asio)
-set_target_properties(llavon-ime-service PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/service")
-install(TARGETS llavon-ime-service RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../tables/bopomofo_char.json"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/llavon-ime/tables")
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../tables/tokens"
@@ -90,7 +66,7 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../tables/tokens"
         FILES_MATCHING PATTERN "*.json")
 
 find_package(Fcitx5 QUIET)
-if(Fcitx5_FOUND)
+if(Fcitx5_FOUND AND NOT WIN32)
     find_package(Fcitx5Utils QUIET CONFIG)
     if(NOT DEFINED FCITX_INSTALL_ADDONDIR)
         set(FCITX_INSTALL_ADDONDIR "${CMAKE_INSTALL_FULL_LIBDIR}/fcitx5")
@@ -132,6 +108,8 @@ if(Fcitx5_FOUND)
         install(FILES "${CMAKE_BINARY_DIR}/fcitx5/plugin/llavon-ime.json"
                 DESTINATION "${IME_FCITX5_FCITX_PLUGIN_DIR}")
     endif()
+elseif(Fcitx5_FOUND)
+    message(STATUS "llavon-ime Fcitx5 frontend is only built on Linux/macOS")
 else()
     message(STATUS "fcitx5 development files not found; skipping llavon-ime-addon")
 endif()
