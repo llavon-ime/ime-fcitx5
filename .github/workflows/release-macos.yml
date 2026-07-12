@@ -53,6 +53,7 @@ jobs:
         with:
           submodules: recursive
           lfs: true
+          fetch-depth: 0
 
       - name: Resolve version
         id: version

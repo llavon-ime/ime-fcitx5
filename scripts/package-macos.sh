@@ -45,6 +45,10 @@ if [[ ! -x "${ROOT_DIR}/vcpkg/vcpkg" ]]; then
     "${ROOT_DIR}/vcpkg/bootstrap-vcpkg.sh"
 fi
 
+if [[ "$(git -C "${ROOT_DIR}/vcpkg" rev-parse --is-shallow-repository)" == "true" ]]; then
+    git -C "${ROOT_DIR}/vcpkg" fetch --unshallow
+fi
+
 if [[ -z "${MODEL_PATH}" ]]; then
     shopt -s nullglob
     model_candidates=("${ROOT_DIR}"/models/*.gguf)
