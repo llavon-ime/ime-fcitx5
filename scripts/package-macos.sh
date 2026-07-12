@@ -85,6 +85,7 @@ service_cmake_args=(
     -DCMAKE_BUILD_TYPE=Release
     -DCMAKE_TOOLCHAIN_FILE="${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake"
     -DCMAKE_INSTALL_PREFIX="${PAYLOAD_PREFIX}"
+    -DIMESVC_REQUIRE_LLAMA=ON
     -DIMESVC_BUILD_TESTS=ON
 )
 if [[ -n "${VCPKG_FEATURES}" ]]; then
