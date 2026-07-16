@@ -1,0 +1,57 @@
+name: Update ime-fcitx5 submodule
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IME_FCITX5_REPOSITORY: llavon-ime/ime-fcitx5
+
+jobs:
+  update-submodule:
+    if: github.repository == 'llavon-ime/ime-service'
+    runs-on: ubuntu-latest
+    env:
+      IME_FCITX5_PUSH_TOKEN: ${{ secrets.IME_FCITX5_PUSH_TOKEN }}
+
+    steps:
+      - name: Check push token
+        run: |
+          set -euo pipefail
+          if [[ -z "${IME_FCITX5_PUSH_TOKEN}" ]]; then
+            echo "Set IME_FCITX5_PUSH_TOKEN with contents write access to ${IME_FCITX5_REPOSITORY}." >&2
+            exit 1
+          fi
+
+      - name: Checkout ime-fcitx5
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.IME_FCITX5_REPOSITORY }}
+          ref: main
+          path: ime-fcitx5
+          token: ${{ secrets.IME_FCITX5_PUSH_TOKEN }}
+          fetch-depth: 0
+
+      - name: Update ime-service submodule
+        working-directory: ime-fcitx5
+        run: |
+          set -euo pipefail
+          git submodule update --init ime-service
+          git -C ime-service fetch origin main --depth=1
+          git -C ime-service checkout --detach FETCH_HEAD
+
+          git add ime-service
+          if git diff --cached --quiet; then
+            echo "ime-service submodule is already up to date."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update ime-service submodule"
+          git push origin HEAD:main

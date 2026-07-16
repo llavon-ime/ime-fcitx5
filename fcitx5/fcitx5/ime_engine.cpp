@@ -3,7 +3,12 @@
 #include <fcitx-config/iniparser.h>
 #include <fcitx-utils/eventdispatcher.h>
 #include <fcitx-utils/key.h>
+#if __has_include(<fcitx-utils/standardpaths.h>)
 #include <fcitx-utils/standardpaths.h>
+#define IME_FCITX5_MODERN_STANDARD_PATHS 1
+#else
+#include <fcitx-utils/standardpath.h>
+#endif
 #include <fcitx/addonfactory.h>
 #include <fcitx/addonmanager.h>
 #include <fcitx/event.h>
@@ -13,9 +18,12 @@
 #include <fcitx/instance.h>
 
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
+#include <random>
 #include <string>
 #include <utility>
 
@@ -26,6 +34,12 @@
 namespace ime::fcitx5 {
 
 namespace {
+
+#ifdef IME_FCITX5_MODERN_STANDARD_PATHS
+constexpr auto kFcitxConfigPathType = fcitx::StandardPathsType::PkgConfig;
+#else
+constexpr auto kFcitxConfigPathType = fcitx::StandardPath::Type::PkgConfig;
+#endif
 
 const char* non_empty_env(const char* name) {
     if (const char* value = std::getenv(name); value != nullptr && value[0] != '\0') return value;
@@ -71,12 +85,46 @@ ServiceTransportOptions default_transport_options() {
     options.threads = static_cast<std::uint32_t>(config.thread_count);
     options.gpu_layers = config.gpu_layers;
     options.idle_timeout_seconds = static_cast<std::uint32_t>(config.idle_timeout_seconds);
+    options.personal_learning_enabled = config.personal_learning_enabled;
+    options.lora_training_enabled = config.lora_training_enabled;
+    options.training_base_safetensors_path = config.training_base_safetensors_path;
+    options.base_model_sha256 = config.base_model_sha256;
     if (const char* model = non_empty_env("IME_FCITX5_MODEL_PATH")) options.model_path = model;
     return options;
 }
 
 bool is_tone_key(char32_t value) {
     return value == U' ' || value == U'ˊ' || value == U'ˇ' || value == U'ˋ' || value == U'˙';
+}
+
+bool is_semantic_latin(char32_t value) {
+    return (value >= U'a' && value <= U'z') || (value >= U'A' && value <= U'Z') ||
+           (value >= U'0' && value <= U'9') || value == U'-' || value == U'_' || value == U'+';
+}
+
+// This mirrors the runtime tokenizer's context grouping: each CJK/space/unknown
+// scalar is one token and a contiguous ASCII latin run is one latin token.
+std::size_t trim_context_to_token_budget(std::u32string& context, std::size_t budget) {
+    auto next_token_end = [&context](std::size_t begin) {
+        if (begin >= context.size()) return begin;
+        if (!is_semantic_latin(context[begin])) return begin + 1U;
+        std::size_t end = begin + 1U;
+        while (end < context.size() && is_semantic_latin(context[end])) ++end;
+        return end;
+    };
+
+    std::size_t tokens = 0;
+    for (std::size_t index = 0; index < context.size();) {
+        index = next_token_end(index);
+        ++tokens;
+    }
+    std::size_t first = 0;
+    while (tokens > budget && first < context.size()) {
+        first = next_token_end(first);
+        --tokens;
+    }
+    if (first != 0) context.erase(0, first);
+    return tokens;
 }
 
 char32_t normalize_ascii_letter(char32_t key) {
@@ -152,11 +200,38 @@ std::u16string spaced_readings(const CompositionBuffer& buffer) {
     return result;
 }
 
+void append_utf16_scalar(std::u16string& output, char32_t scalar) {
+    if (scalar <= 0xffffU) {
+        output.push_back(static_cast<char16_t>(scalar));
+        return;
+    }
+    scalar -= 0x10000U;
+    output.push_back(static_cast<char16_t>(0xd800U + (scalar >> 10U)));
+    output.push_back(static_cast<char16_t>(0xdc00U + (scalar & 0x3ffU)));
+}
+
+protocol::EventId new_feedback_event_id() {
+    protocol::EventId result{};
+    try {
+        std::random_device random;
+        for (auto& byte : result) byte = static_cast<std::uint8_t>(random());
+    } catch (...) {
+        static std::uint64_t sequence = 0;
+        const auto seed = static_cast<std::uint64_t>(
+            std::chrono::steady_clock::now().time_since_epoch().count()) ^ ++sequence;
+        for (std::size_t index = 0; index < result.size(); ++index) {
+            result[index] = static_cast<std::uint8_t>(seed >> ((index % 8U) * 8U));
+        }
+    }
+    if (protocol::is_zero(result)) result[0] = 1;
+    return result;
+}
+
 class SelectableCandidateWord final : public fcitx::CandidateWord {
 public:
     SelectableCandidateWord(fcitx::Text text, fcitx::Text comment, std::function<void(fcitx::InputContext*)> callback)
         : CandidateWord(std::move(text)), callback_(std::move(callback)) {
-        if (!comment.empty()) setComment(std::move(comment));
+        (void)comment;
     }
 
     SelectableCandidateWord(fcitx::Text text, std::function<void(fcitx::InputContext*)> callback)
@@ -206,6 +281,10 @@ void ImeEngine::enter_context(fcitx::InputContext* input_context) {
     inflight_request_id_ = state->inflight_request_id;
     inflight_revision_ = state->inflight_revision;
     prediction_key_ = state->prediction_key;
+    prediction_context_ = state->prediction_context;
+    prediction_base_model_hash_ = state->prediction_base_model_hash;
+    prediction_feedback_token_ = state->prediction_feedback_token;
+    feedback_sensitive_ = state->feedback_sensitive;
     prediction_segment_indices_ = state->inflight_segment_indices;
     prediction_pending_ = state->prediction_pending;
     prediction_dirty_ = state->prediction_dirty;
@@ -228,6 +307,10 @@ void ImeEngine::leave_context() {
         state->inflight_request_id = inflight_request_id_;
         state->inflight_revision = inflight_revision_;
         state->prediction_key = prediction_key_;
+        state->prediction_context = prediction_context_;
+        state->prediction_base_model_hash = prediction_base_model_hash_;
+        state->prediction_feedback_token = prediction_feedback_token_;
+        state->feedback_sensitive = feedback_sensitive_;
         state->inflight_segment_indices = prediction_segment_indices_;
         state->prediction_pending = prediction_pending_;
         state->prediction_dirty = prediction_dirty_;
@@ -237,11 +320,12 @@ void ImeEngine::leave_context() {
 
 ImeEngine::ImeEngine(fcitx::Instance* instance)
     : fallback_(default_table_path()),
-      service_transport_(default_transport_options()),
+      service_transport_(std::make_unique<ServiceTransport>(default_transport_options())),
       config_(default_config()),
-      instance_(instance),
-      event_dispatcher_(instance ? &instance->eventDispatcher() : nullptr) {
+      instance_(instance) {
     if (instance_ != nullptr) {
+        event_dispatcher_ = std::make_unique<fcitx::EventDispatcher>();
+        event_dispatcher_->attach(&instance_->eventLoop());
         (void)instance_->inputContextManager().registerProperty("llavon-ime-input-state", &property_factory_);
     }
     reload_config();
@@ -249,6 +333,7 @@ ImeEngine::ImeEngine(fcitx::Instance* instance)
 
 ImeEngine::~ImeEngine() {
     if (alive_) *alive_ = false;
+    if (service_transport_) service_transport_->stop();
 }
 
 void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event) {
@@ -256,6 +341,13 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
 
     auto* input_context = event.inputContext();
     StateScope state_scope(*this, input_context);
+    if (input_context != nullptr &&
+        input_context->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
+        feedback_sensitive_ = true;
+        prediction_context_.clear();
+        prediction_base_model_hash_.clear();
+        prediction_feedback_token_ = {};
+    }
     const auto key = event.key().sym();
     const auto microsoft_punctuation = microsoft_punctuation_for_key(event.key());
     if (!microsoft_punctuation && has_blocking_modifier(event.key())) return;
@@ -461,8 +553,8 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
 }
 
 void ImeEngine::activate(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& event) {
-    StateScope state_scope(*this, event.inputContext());
     reload_config();
+    StateScope state_scope(*this, event.inputContext());
     update_ui(event.inputContext());
 }
 
@@ -474,6 +566,10 @@ void ImeEngine::reset(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& 
     }
 
     buffer_.clear();
+    prediction_context_.clear();
+    prediction_base_model_hash_.clear();
+    prediction_feedback_token_ = {};
+    feedback_sensitive_ = false;
     displayed_candidates_.clear();
     ++generation_;
     prediction_pending_ = false;
@@ -491,7 +587,7 @@ void ImeEngine::reloadConfig() {
 
 void ImeEngine::save() {
     // PkgConfig maps to $XDG_CONFIG_HOME/fcitx5, matching shared config_path().
-    fcitx::safeSaveAsIni(fcitx_config_, fcitx::StandardPathsType::PkgConfig, kFcitxConfigFile);
+    fcitx::safeSaveAsIni(fcitx_config_, kFcitxConfigPathType, kFcitxConfigFile);
 }
 
 const fcitx::Configuration* ImeEngine::getConfig() const {
@@ -499,8 +595,19 @@ const fcitx::Configuration* ImeEngine::getConfig() const {
 }
 
 void ImeEngine::setConfig(const fcitx::RawConfig& config) {
+    const auto previous = config_;
     fcitx_config_.load(config, true);
     (void)fcitx_config_.version.setValue(DisplayVersion::Current);
+    const bool delete_requested = *fcitx_config_.deletePersonalData;
+    if (delete_requested) {
+        (void)fcitx_config_.deletePersonalData.setValue(true);
+        (void)fcitx_config_.personalLearningEnabled.setValue(previous.personal_learning_enabled);
+        (void)fcitx_config_.loraTrainingEnabled.setValue(previous.lora_training_enabled);
+        config_ = to_shared_config(fcitx_config_);
+        save();
+        request_personal_data_deletion();
+        return;
+    }
     config_ = to_shared_config(fcitx_config_);
     save();
     ++generation_;
@@ -512,7 +619,7 @@ void ImeEngine::setConfig(const fcitx::RawConfig& config) {
             auto* state = property(input_context);
             if (state == nullptr) return true;
             if (!protocol::is_zero(state->session_id)) {
-                service_transport_.close_session(state->session_id, {});
+                service_transport_->close_session(state->session_id, {});
                 state->session_id = {};
             }
             state->session_close_handle = {};
@@ -520,12 +627,14 @@ void ImeEngine::setConfig(const fcitx::RawConfig& config) {
             return true;
         });
     }
+    rebuild_service_transport();
 }
 
 void ImeEngine::reload_config() {
+    const auto previous = config_;
     fcitx_config_ = ImeFcitxConfig();
     try {
-        fcitx::readAsIni(fcitx_config_, fcitx::StandardPathsType::PkgConfig, kFcitxConfigFile);
+        fcitx::readAsIni(fcitx_config_, kFcitxConfigPathType, kFcitxConfigFile);
     } catch (...) {
         fcitx_config_ = ImeFcitxConfig();
     }
@@ -533,8 +642,96 @@ void ImeEngine::reload_config() {
     std::error_code ec;
     const bool has_fcitx_config = std::filesystem::exists(config_path(), ec) && !ec;
     apply_shared_config(fcitx_config_, load_config());
+    const bool delete_requested = *fcitx_config_.deletePersonalData;
+    if (delete_requested) {
+        const bool persisted_personal_learning = *fcitx_config_.personalLearningEnabled;
+        const bool persisted_lora_training = *fcitx_config_.loraTrainingEnabled;
+        (void)fcitx_config_.deletePersonalData.setValue(true);
+        (void)fcitx_config_.personalLearningEnabled.setValue(persisted_personal_learning);
+        (void)fcitx_config_.loraTrainingEnabled.setValue(persisted_lora_training);
+        save();
+    }
     if (!has_fcitx_config) save();
     config_ = to_shared_config(fcitx_config_);
+    if (delete_requested) {
+        request_personal_data_deletion();
+        return;
+    }
+    if (previous.model_path != config_.model_path || previous.context_length != config_.context_length ||
+         previous.thread_count != config_.thread_count || previous.gpu_layers != config_.gpu_layers ||
+         previous.idle_timeout_seconds != config_.idle_timeout_seconds ||
+         previous.personal_learning_enabled != config_.personal_learning_enabled ||
+         previous.lora_training_enabled != config_.lora_training_enabled ||
+         previous.training_base_safetensors_path != config_.training_base_safetensors_path ||
+         previous.base_model_sha256 != config_.base_model_sha256) {
+         if (instance_ != nullptr) {
+            instance_->inputContextManager().foreach([this](fcitx::InputContext* input_context) {
+                auto* state = property(input_context);
+                if (state == nullptr) return true;
+                if (!protocol::is_zero(state->session_id)) {
+                    service_transport_->close_session(state->session_id, {});
+                    state->session_id = {};
+                }
+                state->session_close_handle = {};
+                state->invalidate_generation();
+                return true;
+            });
+        }
+        rebuild_service_transport();
+    }
+}
+
+void ImeEngine::rebuild_service_transport() {
+    auto previous = std::move(service_transport_);
+    if (previous) previous->stop();
+    service_transport_ = std::make_unique<ServiceTransport>(default_transport_options());
+}
+
+void ImeEngine::request_personal_data_deletion() {
+    if (deletion_in_flight_ || !service_transport_) return;
+    deletion_in_flight_ = true;
+    const auto engine_alive = std::weak_ptr<bool>(alive_);
+    auto* dispatcher = event_dispatcher_.get();
+    service_transport_->delete_personal_data(
+        [this, engine_alive, dispatcher](protocol::Message response) mutable {
+            if (engine_alive.expired() || dispatcher == nullptr) return;
+            const auto* result = std::get_if<protocol::DeletePersonalDataResponse>(&response);
+            const bool deleted = result != nullptr && result->deleted;
+            dispatcher->schedule([this, engine_alive, deleted]() {
+                if (engine_alive.expired()) return;
+                finish_personal_data_deletion(deleted);
+            });
+        });
+}
+
+void ImeEngine::finish_personal_data_deletion(bool deleted) {
+    deletion_in_flight_ = false;
+    if (!deleted) {
+        // Keep the one-shot flag and previous opt-in state so a later reload can retry.
+        save();
+        return;
+    }
+    (void)fcitx_config_.deletePersonalData.setValue(false);
+    (void)fcitx_config_.personalLearningEnabled.setValue(false);
+    (void)fcitx_config_.loraTrainingEnabled.setValue(false);
+    config_ = to_shared_config(fcitx_config_);
+    save();
+    ++generation_;
+    inflight_request_id_.reset();
+    prediction_pending_ = false;
+    prediction_dirty_ = false;
+    if (instance_ != nullptr) {
+        instance_->inputContextManager().foreach([this](fcitx::InputContext* input_context) {
+            auto* state = property(input_context);
+            if (state == nullptr) return true;
+            if (!protocol::is_zero(state->session_id)) service_transport_->close_session(state->session_id, {});
+            state->session_id = {};
+            state->session_close_handle = {};
+            state->invalidate_generation();
+            return true;
+        });
+    }
+    rebuild_service_transport();
 }
 
 void ImeEngine::update_ui(fcitx::InputContext* input_context) {
@@ -601,21 +798,73 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
         ++index;
     }
     candidates->setPage(candidate_page_);
-    if (target) candidates->setCursorIndex(candidate_cursor_ - candidate_page_offset());
+    if (target) candidates->setGlobalCursorIndex(candidate_cursor_);
     input_context->inputPanel().setCandidateList(std::move(candidates));
     input_context->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
 }
 
 void ImeEngine::commit_current(fcitx::InputContext* input_context) {
     StateScope state_scope(*this, input_context);
+    submit_feedback_if_eligible(input_context);
     input_context->commitString(to_utf8(buffer_.commit_text()));
     buffer_.clear();
+    prediction_context_.clear();
+    prediction_base_model_hash_.clear();
+    prediction_feedback_token_ = {};
+    feedback_sensitive_ = false;
     displayed_candidates_.clear();
     prediction_pending_ = false;
     prediction_dirty_ = false;
     prediction_segment_indices_.clear();
     hide_candidate_ui();
     update_ui(input_context);
+}
+
+void ImeEngine::submit_feedback_if_eligible(fcitx::InputContext* input_context) {
+    if (!config_.personal_learning_enabled || prediction_base_model_hash_.empty() || feedback_sensitive_ || input_context == nullptr ||
+        input_context->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
+        return;
+    }
+
+    protocol::FeedbackRequest feedback;
+    feedback.event_id = new_feedback_event_id();
+    feedback.session_id = session_id_;
+    feedback.feedback_token = prediction_feedback_token_;
+    feedback.left_context = prediction_context_;
+    feedback.base_model_hash = prediction_base_model_hash_;
+    feedback.created_at = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+
+    bool saw_manual_selection = false;
+    bool saw_correction = false;
+    bool used_fallback = false;
+    for (const auto& segment : buffer_.segments()) {
+        if (!segment.complete() || segment.literal != 0 || segment.candidates.empty() ||
+            segment.selected_index >= segment.candidates.size() || segment.candidate_source == CandidateSource::None) {
+            return;
+        }
+        const auto selected = segment.selected_candidate();
+        if (selected == 0 || std::find(segment.candidates.begin(), segment.candidates.end(), selected) == segment.candidates.end()) {
+            return;
+        }
+        if (!feedback.bopomofo_sequence.empty()) feedback.bopomofo_sequence.push_back(protocol::kBopomofoReadingSeparator);
+        feedback.bopomofo_sequence += segment.reading();
+        append_utf16_scalar(feedback.committed_characters, selected);
+        append_utf16_scalar(feedback.predicted_top1, segment.candidates.front());
+        feedback.manually_chosen_flags.push_back(segment.manually_chosen);
+        saw_manual_selection = saw_manual_selection || segment.manually_chosen;
+        saw_correction = saw_correction || (segment.manually_chosen && segment.selected_index != 0);
+        used_fallback = used_fallback || segment.candidate_source == CandidateSource::Fallback;
+    }
+    if (feedback.committed_characters.empty() || used_fallback) return;
+    if (saw_correction) {
+        feedback.signal_type = protocol::FeedbackSignal::ExplicitCorrection;
+    } else if (saw_manual_selection) {
+        feedback.signal_type = protocol::FeedbackSignal::ExplicitTop1Selection;
+    } else {
+        feedback.signal_type = protocol::FeedbackSignal::AcceptedPrediction;
+    }
+    service_transport_->submit_feedback(std::move(feedback), {});
 }
 
 bool ImeEngine::select_candidate(fcitx::InputContext* input_context, int index) {
@@ -638,9 +887,16 @@ bool ImeEngine::handle_escape(fcitx::InputContext* input_context) {
     StateScope state_scope(*this, input_context);
     if (config_.esc_clears_entire_buffer) {
         buffer_.clear();
+        prediction_context_.clear();
+        prediction_base_model_hash_.clear();
+        prediction_feedback_token_ = {};
+        feedback_sensitive_ = false;
         displayed_candidates_.clear();
+        ++generation_;
         prediction_pending_ = false;
         prediction_dirty_ = false;
+        inflight_request_id_.reset();
+        prediction_segment_indices_.clear();
         hide_candidate_ui();
         update_ui(input_context);
         return true;
@@ -664,9 +920,16 @@ bool ImeEngine::handle_escape(fcitx::InputContext* input_context) {
     }
 
     buffer_.clear();
+    prediction_context_.clear();
+    prediction_base_model_hash_.clear();
+    prediction_feedback_token_ = {};
+    feedback_sensitive_ = false;
     displayed_candidates_.clear();
+    ++generation_;
     prediction_pending_ = false;
     prediction_dirty_ = false;
+    inflight_request_id_.reset();
+    prediction_segment_indices_.clear();
     hide_candidate_ui();
     update_ui(input_context);
     return true;
@@ -792,6 +1055,8 @@ void ImeEngine::request_prediction_if_ready(fcitx::InputContext* input_context) 
     }
     const auto request = build_predict_request(input_context);
     if (request.padding.empty()) return;
+    if (config_.context_length < 2 ||
+        request.padding.size() > static_cast<std::size_t>((config_.context_length - 2) / 2)) return;
     prediction_segment_indices_ = buffer_.completed_segment_indices();
     prediction_pending_ = true;
     prediction_dirty_ = false;
@@ -801,11 +1066,11 @@ void ImeEngine::request_prediction_if_ready(fcitx::InputContext* input_context) 
     const auto engine_alive = std::weak_ptr<bool>(alive_);
     if (protocol::is_zero(session_id_)) {
         auto context = input_context ? input_context->watch() : fcitx::TrackableObjectReference<fcitx::InputContext>();
-        auto* dispatcher = event_dispatcher_;
-        service_transport_.open_session([this, context, generation, engine_alive, dispatcher](protocol::Message response) mutable {
+        auto* dispatcher = event_dispatcher_.get();
+        service_transport_->open_session([this, context, generation, engine_alive, dispatcher](protocol::Message response) mutable {
             if (engine_alive.expired() || dispatcher == nullptr) return;
-            dispatcher->scheduleWithContext(context, [this, context, generation, engine_alive,
-                                                     response = std::move(response)]() mutable {
+            dispatcher->schedule([this, context, generation, engine_alive,
+                                  response = std::move(response)]() mutable {
                 auto* input_context = context.get();
                 if (engine_alive.expired() || input_context == nullptr) return;
                 StateScope state_scope(*this, input_context);
@@ -817,7 +1082,7 @@ void ImeEngine::request_prediction_if_ready(fcitx::InputContext* input_context) 
                         const auto session_id = session_id_;
                         state->session_close_handle = [this, alive, session_id]() {
                             if (alive.expired()) return;
-                            service_transport_.close_session(session_id, {});
+                            service_transport_->close_session(session_id, {});
                         };
                     }
                     send_prediction(input_context, generation);
@@ -869,9 +1134,9 @@ protocol::PredictRequest ImeEngine::build_predict_request(const fcitx::InputCont
 
         const size_t reserved_tokens = 2 + request.padding.size() * 2;
         const size_t context_limit = config_.context_length > static_cast<int>(reserved_tokens)
-                                         ? static_cast<size_t>(config_.context_length) - reserved_tokens
-                                         : 0;
-        if (text.size() > context_limit) text.erase(0, text.size() - context_limit);
+                                          ? static_cast<size_t>(config_.context_length) - reserved_tokens
+                                          : 0;
+        (void)trim_context_to_token_budget(text, context_limit);
 
         std::string context_utf8;
         for (const char32_t codepoint : text) context_utf8 += char32_to_utf8(codepoint);
@@ -887,17 +1152,26 @@ void ImeEngine::send_prediction(fcitx::InputContext* input_context, std::uint64_
     auto request = build_predict_request(input_context);
     request.request_id = next_request_id_++;
     request.buffer_revision = prediction_revision_;
+    if (config_.personal_learning_enabled && !config_.base_model_sha256.empty() && !feedback_sensitive_) {
+        prediction_context_ = request.context;
+        prediction_base_model_hash_ = config_.base_model_sha256;
+        prediction_feedback_token_ = {};
+    } else {
+        prediction_context_.clear();
+        prediction_base_model_hash_.clear();
+        prediction_feedback_token_ = {};
+    }
     inflight_request_id_ = request.request_id;
     inflight_revision_ = request.buffer_revision;
     auto context = input_context ? input_context->watch() : fcitx::TrackableObjectReference<fcitx::InputContext>();
     const auto engine_alive = std::weak_ptr<bool>(alive_);
-    auto* dispatcher = event_dispatcher_;
-    service_transport_.predict(
+    auto* dispatcher = event_dispatcher_.get();
+    service_transport_->predict(
         request.session_id, request.request_id, request.buffer_revision, std::move(request.context),
         std::move(request.padding), [this, context, generation, engine_alive, dispatcher](protocol::Message response) mutable {
             if (engine_alive.expired() || dispatcher == nullptr) return;
-            dispatcher->scheduleWithContext(context, [this, context, generation, engine_alive,
-                                                     response = std::move(response)]() mutable {
+            dispatcher->schedule([this, context, generation, engine_alive,
+                                  response = std::move(response)]() mutable {
                 auto* input_context = context.get();
                 if (engine_alive.expired() || input_context == nullptr) return;
                 schedule_response(input_context, generation, std::move(response));
@@ -917,10 +1191,11 @@ void ImeEngine::schedule_response(fcitx::InputContext* input_context, std::uint6
                    prediction->session_id == session_id_;
         if (accepted && prediction->candidates.size() == prediction_segment_indices_.size() &&
             prediction_key_ == buffer_.raw_composition() && prediction_revision_ == buffer_.revision()) {
+            prediction_feedback_token_ = prediction->feedback_token;
             for (std::size_t i = 0; i < prediction_segment_indices_.size(); ++i) {
                 const auto index = prediction_segment_indices_[i];
                 if (index < buffer_.segments().size()) {
-                    (void)buffer_.set_segment_candidates(index, prediction->candidates[i]);
+                    (void)buffer_.set_segment_candidates(index, prediction->candidates[i], true, CandidateSource::Service);
                 }
             }
         } else if (accepted) {

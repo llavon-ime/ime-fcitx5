@@ -86,6 +86,9 @@ int connect_socket(const std::filesystem::path& path) {
         ::close(fd);
         return -1;
     }
+    const timeval timeout{30, 0};
+    (void)::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    (void)::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
     return fd;
 }
 
@@ -125,6 +128,18 @@ void ServiceTransport::shutdown(Callback callback) {
     enqueue(RequestKind::Shutdown, protocol::Message{protocol::ShutdownRequest{}}, std::move(callback));
 }
 
+void ServiceTransport::submit_feedback(protocol::FeedbackRequest request, Callback callback) {
+    enqueue(RequestKind::Feedback, protocol::Message{std::move(request)}, std::move(callback));
+}
+
+void ServiceTransport::training_status(Callback callback) {
+    enqueue(RequestKind::TrainingStatus, protocol::Message{protocol::TrainingStatusRequest{}}, std::move(callback));
+}
+
+void ServiceTransport::delete_personal_data(Callback callback) {
+    enqueue(RequestKind::DeletePersonalData, protocol::Message{protocol::DeletePersonalDataRequest{}}, std::move(callback));
+}
+
 void ServiceTransport::stop() {
     bool should_shutdown = false;
     {
@@ -135,9 +150,9 @@ void ServiceTransport::stop() {
             stopping_ = true;
             should_shutdown = true;
         }
+        if (socket_fd_ >= 0) (void)::shutdown(socket_fd_, SHUT_RDWR);
     }
     condition_.notify_all();
-    disconnect();
     if (worker_.joinable()) worker_.join();
     if (should_shutdown) shutdown_service();
 }
@@ -216,6 +231,18 @@ void ServiceTransport::run() {
 
         try {
             if (!ensure_connected()) throw std::system_error(ENOENT, std::generic_category(), "service is unavailable");
+            if (pending.kind == RequestKind::Feedback && !has_capability(protocol::Capability::PersonalFeedback)) {
+                fail(std::move(pending), protocol::ErrorCode::Unauthorized, "service does not support negotiated personal feedback");
+                continue;
+            }
+            if (pending.kind == RequestKind::TrainingStatus && !has_capability(protocol::Capability::TrainingStatus)) {
+                fail(std::move(pending), protocol::ErrorCode::Unauthorized, "service does not support negotiated training status");
+                continue;
+            }
+            if (pending.kind == RequestKind::DeletePersonalData && !has_capability(protocol::Capability::DeletePersonalData)) {
+                fail(std::move(pending), protocol::ErrorCode::Unauthorized, "service does not support negotiated personal-data deletion");
+                continue;
+            }
             const auto bytes = protocol::encode(pending.message);
             if (!write_all(socket_fd_, bytes.data(), bytes.size())) throw std::system_error(errno, std::generic_category(), "write service frame");
             const auto response = protocol::decode(recv_frame(socket_fd_));
@@ -266,6 +293,18 @@ bool ServiceTransport::ensure_connected() {
         arguments.emplace_back("--max-idle-sessions"); arguments.emplace_back(std::to_string(options_.max_idle_sessions));
         arguments.emplace_back("--max-concurrent-predictions"); arguments.emplace_back(std::to_string(options_.max_concurrent_predictions));
         arguments.emplace_back("--idle-timeout"); arguments.emplace_back(std::to_string(options_.idle_timeout_seconds));
+        if (!options_.base_model_sha256.empty()) {
+            arguments.emplace_back("--base-model-sha256");
+            arguments.emplace_back(options_.base_model_sha256);
+        }
+        if (options_.personal_learning_enabled) arguments.emplace_back("--personal-learning");
+        if (options_.lora_training_enabled) {
+            arguments.emplace_back("--lora-training");
+            if (!options_.training_base_safetensors_path.empty()) {
+                arguments.emplace_back("--base-safetensors");
+                arguments.emplace_back(options_.training_base_safetensors_path.string());
+            }
+        }
         const pid_t child = ::fork();
         if (child == 0) {
             std::vector<char*> argv;
@@ -284,7 +323,48 @@ bool ServiceTransport::ensure_connected() {
     }
     if (fd < 0) return false;
 
+    const auto adopt_negotiating_socket = [this](int descriptor) {
+        std::lock_guard lock(mutex_);
+        if (stopping_) {
+            ::close(descriptor);
+            return false;
+        }
+        socket_fd_ = descriptor;
+        connected_ = false;
+        capabilities_ = 0;
+        return true;
+    };
+    const auto close_owned_socket = [this](int descriptor) {
+        {
+            std::lock_guard lock(mutex_);
+            if (socket_fd_ == descriptor) socket_fd_ = -1;
+        }
+        ::close(descriptor);
+    };
+    if (!adopt_negotiating_socket(fd)) return false;
+
     try {
+        const auto hello_request = protocol::encode(protocol::Message{protocol::HelloRequest{
+            protocol::kMinProtocolVersion, protocol::kMaxProtocolVersion, protocol::kSupportedCapabilities}});
+        if (!write_all(fd, hello_request.data(), hello_request.size())) throw std::runtime_error("failed to negotiate service protocol");
+        std::optional<protocol::Message> hello_response;
+        try {
+            hello_response = protocol::decode(recv_frame(fd));
+        } catch (const std::system_error&) {
+            close_owned_socket(fd);
+            throw protocol::ProtocolError("service does not support protocol negotiation");
+        }
+        if (hello_response.has_value()) {
+            const auto* hello = std::get_if<protocol::HelloResponse>(&*hello_response);
+            if (hello == nullptr) {
+                throw protocol::ProtocolError("service negotiation returned an unexpected response");
+            } else if (hello->version < protocol::kMinProtocolVersion || hello->version > protocol::kMaxProtocolVersion) {
+                throw protocol::ProtocolError("service selected an unsupported protocol version");
+            } else {
+                std::lock_guard lock(mutex_);
+                capabilities_ = hello->capabilities & protocol::kSupportedCapabilities;
+            }
+        }
         const auto status_request = protocol::encode(protocol::Message{protocol::StatusRequest{std::nullopt}});
         if (!write_all(fd, status_request.data(), status_request.size())) throw std::runtime_error("failed to query service epoch");
         const auto response = protocol::decode(recv_frame(fd));
@@ -297,12 +377,11 @@ bool ServiceTransport::ensure_connected() {
                 // and lazily open a replacement on its next prediction.
             }
             epoch_ = status->service_epoch;
-            socket_fd_ = fd;
             connected_ = true;
         }
         return true;
     } catch (...) {
-        ::close(fd);
+        close_owned_socket(fd);
         return false;
     }
 }
@@ -315,6 +394,7 @@ void ServiceTransport::disconnect() noexcept {
         socket_fd_ = -1;
     }
     connected_ = false;
+    capabilities_ = 0;
 }
 
 void ServiceTransport::shutdown_service() noexcept {
@@ -323,6 +403,14 @@ void ServiceTransport::shutdown_service() noexcept {
     if (fd < 0) return;
 
     try {
+        const auto hello = protocol::encode(protocol::Message{protocol::HelloRequest{
+            protocol::kMinProtocolVersion, protocol::kMaxProtocolVersion, protocol::kSupportedCapabilities}});
+        if (!write_all(fd, hello.data(), hello.size())) throw std::runtime_error("write shutdown negotiation failed");
+        const auto negotiated = protocol::decode(recv_frame(fd));
+        const auto* response = std::get_if<protocol::HelloResponse>(&negotiated);
+        if (response == nullptr || response->version != protocol::kProtocolVersion) {
+            throw std::runtime_error("shutdown negotiation failed");
+        }
         const auto bytes = protocol::encode(protocol::Message{protocol::ShutdownRequest{}});
         (void)write_all(fd, bytes.data(), bytes.size());
     } catch (...) {
@@ -351,8 +439,20 @@ bool ServiceTransport::matches(RequestKind kind, const protocol::Message& reques
         }
         case RequestKind::Status: return std::holds_alternative<protocol::StatusResponse>(response);
         case RequestKind::Shutdown: return std::holds_alternative<protocol::ShutdownResponse>(response);
+        case RequestKind::Feedback: {
+            const auto* sent = std::get_if<protocol::FeedbackRequest>(&request);
+            const auto* received = std::get_if<protocol::FeedbackAccepted>(&response);
+            return sent && received && sent->event_id == received->event_id;
+        }
+        case RequestKind::TrainingStatus: return std::holds_alternative<protocol::TrainingStatusResponse>(response);
+        case RequestKind::DeletePersonalData: return std::holds_alternative<protocol::DeletePersonalDataResponse>(response);
     }
     return false;
+}
+
+bool ServiceTransport::has_capability(protocol::Capability capability) const noexcept {
+    std::lock_guard lock(mutex_);
+    return protocol::has_capability(capabilities_, capability);
 }
 
 protocol::Error ServiceTransport::correlation_error(const protocol::Message& request, protocol::ErrorCode code, std::string message) {

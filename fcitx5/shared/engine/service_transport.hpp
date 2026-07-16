@@ -19,7 +19,7 @@ struct ServiceTransportOptions {
     std::filesystem::path service_path;
     std::filesystem::path model_path;
     std::filesystem::path tables_dir;
-    std::uint32_t context_length = 512;
+    std::uint32_t context_length = 384;
     std::uint32_t threads = 8;
     int gpu_layers = -2;
     std::size_t max_sessions = 8;
@@ -27,6 +27,10 @@ struct ServiceTransportOptions {
     std::size_t max_concurrent_predictions = 2;
     std::uint32_t idle_timeout_seconds = 1800;
     bool auto_start = true;
+    bool personal_learning_enabled = false;
+    bool lora_training_enabled = false;
+    std::filesystem::path training_base_safetensors_path;
+    std::string base_model_sha256;
 };
 
 class ServiceTransport final {
@@ -45,6 +49,9 @@ public:
     void close_session(const protocol::SessionId& session_id, Callback callback);
     void status(std::optional<protocol::SessionId> session_id, Callback callback);
     void shutdown(Callback callback);
+    void submit_feedback(protocol::FeedbackRequest request, Callback callback);
+    void training_status(Callback callback);
+    void delete_personal_data(Callback callback);
 
     void stop();
     bool connected() const noexcept;
@@ -55,7 +62,7 @@ public:
     static std::filesystem::path default_service_path();
 
 private:
-    enum class RequestKind : std::uint8_t { Open, Predict, Close, Status, Shutdown };
+    enum class RequestKind : std::uint8_t { Open, Predict, Close, Status, Shutdown, Feedback, TrainingStatus, DeletePersonalData };
     struct Pending {
         RequestKind kind;
         protocol::Message message;
@@ -71,12 +78,14 @@ private:
     static bool matches(RequestKind kind, const protocol::Message& request, const protocol::Message& response);
     static protocol::Error correlation_error(const protocol::Message& request, protocol::ErrorCode code, std::string message);
     void observe_response(const protocol::Message& response);
+    bool has_capability(protocol::Capability capability) const noexcept;
 
     ServiceTransportOptions options_;
     mutable std::mutex mutex_;
     std::condition_variable condition_;
     std::queue<Pending> queue_;
     std::optional<protocol::ServiceEpoch> epoch_;
+    protocol::Capabilities capabilities_ = 0;
     bool stopping_ = false;
     bool connected_ = false;
     int socket_fd_ = -1;

@@ -1,0 +1,39 @@
+name: Linux
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ nlohmann-json3-dev libsqlite3-dev \
+            libfcitx5core-dev libfcitx5config-dev libfcitx5utils-dev \
+            fcitx5-modules-dev extra-cmake-modules
+
+      - name: Build and test service core
+        run: |
+          cmake -S ime-service -B build/service -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DIMESVC_ENABLE_LLAMA=OFF \
+            -DIMESVC_BUILD_TRAINER=OFF \
+            -DIMESVC_BUILD_TESTS=ON
+          cmake --build build/service
+          ctest --test-dir build/service --output-on-failure
+
+      - name: Build and test Fcitx frontend
+        run: |
+          cmake -S fcitx5 -B build/fcitx -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DIME_FCITX5_BUILD_TESTS=ON
+          cmake --build build/fcitx
+          ctest --test-dir build/fcitx --output-on-failure

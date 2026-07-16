@@ -31,8 +31,11 @@ FCITX_CONFIG_ENUM_NAME(SelectPhrase, "游標前", "游標後");
 FCITX_CONFIGURATION(ImeFcitxConfig,
     fcitx::Option<DisplayVersion> version{this, "Version", "版本", DisplayVersion::Current};
     fcitx::Option<std::string> modelPath{this, "ModelPath", "模型路徑", default_config().model_path};
+    fcitx::Option<std::string> baseModelSha256{this, "BaseModelSha256", "基礎模型 SHA256",
+                                               default_config().base_model_sha256};
     fcitx::Option<int, fcitx::IntConstrain> contextLength{
-        this, "ContextLength", "上下文長度", default_config().context_length, fcitx::IntConstrain(1, 1048576)};
+        this, "ContextLength", "上下文長度", default_config().context_length,
+        fcitx::IntConstrain(1, kNativeContextLength)};
     fcitx::Option<int, fcitx::IntConstrain> threadCount{
         this, "ThreadCount", "執行緒數", default_config().thread_count, fcitx::IntConstrain(1, 1024)};
     fcitx::Option<int, fcitx::IntConstrain> gpuLayers{
@@ -62,8 +65,16 @@ FCITX_CONFIGURATION(ImeFcitxConfig,
                                                            "逸出鍵清除整個組字區",
                                                            default_config().esc_clears_entire_buffer};
     fcitx::Option<bool> capsLockInputsBopomofo{this, "CapsLockInputsBopomofo",
-                                               "大寫鎖定時仍輸入注音",
-                                               default_config().caps_lock_inputs_bopomofo};);
+                                                "大寫鎖定時仍輸入注音",
+                                                default_config().caps_lock_inputs_bopomofo};
+    fcitx::Option<bool> personalLearningEnabled{this, "PersonalLearningEnabled", "收集本機個人化回饋",
+                                                   default_config().personal_learning_enabled};
+    fcitx::Option<bool> loraTrainingEnabled{this, "LoraTrainingEnabled", "啟用背景 LoRA 個人化微調",
+                                             default_config().lora_training_enabled};
+    fcitx::Option<std::string> trainingBaseSafetensorsPath{this, "TrainingBaseSafetensorsPath",
+                                                            "LoRA 訓練基礎權重路徑（F32 Safetensors）",
+                                                            default_config().training_base_safetensors_path};
+    fcitx::Option<bool> deletePersonalData{this, "DeletePersonalData", "刪除所有本機個人化資料（套用後執行）", false};);
 
 Config to_shared_config(const ImeFcitxConfig& config);
 void apply_shared_config(ImeFcitxConfig& target, const Config& source);

@@ -32,7 +32,7 @@ private:
 int run_config_tests() {
     bool ok = true;
     auto cfg = ime::fcitx5::default_config();
-    ok = ok && cfg.context_length == 512;
+    ok = ok && cfg.context_length == ime::fcitx5::kNativeContextLength;
     ok = ok && cfg.thread_count >= 1;
     ok = ok && cfg.gpu_layers == 999;
     ok = ok && cfg.idle_timeout_seconds == 1800;
@@ -46,6 +46,9 @@ int run_config_tests() {
     ok = ok && !cfg.move_cursor_after_selection;
     ok = ok && !cfg.esc_clears_entire_buffer;
     ok = ok && cfg.caps_lock_inputs_bopomofo;
+    ok = ok && !cfg.personal_learning_enabled;
+    ok = ok && !cfg.lora_training_enabled;
+    ok = ok && cfg.training_base_safetensors_path.empty();
 
     auto json = ime::fcitx5::to_json(cfg);
     auto roundtrip = ime::fcitx5::config_from_json(json);
@@ -54,6 +57,9 @@ int run_config_tests() {
     ok = ok && roundtrip.selection_keys == cfg.selection_keys;
     ok = ok && roundtrip.select_phrase == cfg.select_phrase;
     ok = ok && roundtrip.caps_lock_inputs_bopomofo == cfg.caps_lock_inputs_bopomofo;
+    ok = ok && roundtrip.personal_learning_enabled == cfg.personal_learning_enabled;
+    ok = ok && roundtrip.lora_training_enabled == cfg.lora_training_enabled;
+    ok = ok && roundtrip.training_base_safetensors_path == cfg.training_base_safetensors_path;
     ok = ok && ime::fcitx5::socket_path().filename() == "ime.sock";
     ok = ok && ime::fcitx5::pid_path().filename() == "service.pid";
 
@@ -76,7 +82,7 @@ int run_config_tests() {
     {
         std::ofstream output(ime::fcitx5::config_path());
         output << "ModelPath=/tmp/model.gguf\n"
-               << "ContextLength=1024\n"
+               << "ContextLength=384\n"
                << "ThreadCount=2\n"
                << "GpuLayers=3\n"
                << "IdleTimeoutSeconds=4\n"
@@ -88,12 +94,15 @@ int run_config_tests() {
                << "ChooseCandidateUsingSpace=False\n"
                << "SelectPhrase=after_cursor\n"
                << "MoveCursorAfterSelection=True\n"
-               << "EscKeyClearsEntireComposingBuffer=True\n"
-               << "CapsLockInputsBopomofo=False\n";
+                << "EscKeyClearsEntireComposingBuffer=True\n"
+                << "CapsLockInputsBopomofo=False\n"
+                << "PersonalLearningEnabled=True\n"
+                << "LoraTrainingEnabled=True\n"
+                << "TrainingBaseSafetensorsPath=/tmp/base.safetensors\n";
     }
     const auto loaded = ime::fcitx5::load_config();
     ok = ok && loaded.model_path == "/tmp/model.gguf";
-    ok = ok && loaded.context_length == 1024;
+    ok = ok && loaded.context_length == 384;
     ok = ok && loaded.thread_count == 2;
     ok = ok && loaded.gpu_layers == 3;
     ok = ok && loaded.idle_timeout_seconds == 4;
@@ -107,6 +116,9 @@ int run_config_tests() {
     ok = ok && loaded.move_cursor_after_selection;
     ok = ok && loaded.esc_clears_entire_buffer;
     ok = ok && !loaded.caps_lock_inputs_bopomofo;
+    ok = ok && loaded.personal_learning_enabled;
+    ok = ok && loaded.lora_training_enabled;
+    ok = ok && loaded.training_base_safetensors_path == "/tmp/base.safetensors";
 
     {
         std::ofstream output(ime::fcitx5::config_path());

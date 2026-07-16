@@ -60,6 +60,7 @@ bool CompositionBuffer::add_bopomofo(char32_t symbol) {
             segment.candidates.clear();
             segment.selected_index = 0;
             segment.manually_chosen = false;
+            segment.candidate_source = CandidateSource::None;
             last_edited_segment_ = caret_ - 1;
             touch();
             return true;
@@ -111,6 +112,7 @@ bool CompositionBuffer::backspace() {
         segment.candidates.clear();
         segment.selected_index = 0;
         segment.manually_chosen = false;
+        segment.candidate_source = CandidateSource::None;
     }
     if (removed) touch();
     return removed;
@@ -245,7 +247,7 @@ std::optional<size_t> CompositionBuffer::segment_selected_index(size_t index) co
 }
 
 bool CompositionBuffer::set_segment_candidates(size_t index, std::vector<char32_t> candidates,
-                                               bool preserve_manual_choice) {
+                                                bool preserve_manual_choice, CandidateSource source) {
     if (index >= segments_.size()) return false;
 
     auto& segment = segments_[index];
@@ -254,6 +256,7 @@ bool CompositionBuffer::set_segment_candidates(size_t index, std::vector<char32_
     segment.candidates = std::move(candidates);
     segment.selected_index = 0;
     segment.manually_chosen = false;
+    segment.candidate_source = segment.candidates.empty() ? CandidateSource::None : source;
     touch();
     return true;
 }

@@ -53,8 +53,12 @@ private:
     void enter_context(fcitx::InputContext* input_context);
     void leave_context();
     void reload_config();
+    void rebuild_service_transport();
+    void request_personal_data_deletion();
+    void finish_personal_data_deletion(bool deleted);
     void update_ui(fcitx::InputContext* input_context);
     void commit_current(fcitx::InputContext* input_context);
+    void submit_feedback_if_eligible(fcitx::InputContext* input_context);
     bool select_candidate(fcitx::InputContext* input_context, int index);
     bool handle_escape(fcitx::InputContext* input_context);
     int candidate_page_size() const;
@@ -83,15 +87,20 @@ private:
 
     CompositionBuffer buffer_;
     FallbackEngine fallback_;
-    ServiceTransport service_transport_;
+    std::unique_ptr<ServiceTransport> service_transport_;
     ImeFcitxConfig fcitx_config_;
     Config config_;
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     fcitx::Instance* instance_ = nullptr;
-    fcitx::EventDispatcher* event_dispatcher_ = nullptr;
+    std::unique_ptr<fcitx::EventDispatcher> event_dispatcher_;
     bool prediction_pending_ = false;
     bool prediction_dirty_ = false;
+    bool deletion_in_flight_ = false;
     std::u16string prediction_key_;
+    std::u16string prediction_context_;
+    std::string prediction_base_model_hash_;
+    protocol::EventId prediction_feedback_token_{};
+    bool feedback_sensitive_ = false;
     size_t prediction_revision_ = 0;
     std::vector<size_t> prediction_segment_indices_;
     std::vector<char32_t> displayed_candidates_;

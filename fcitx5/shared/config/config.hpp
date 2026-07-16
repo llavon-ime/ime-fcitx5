@@ -6,9 +6,13 @@
 
 namespace ime::fcitx5 {
 
+inline constexpr int kNativeContextLength = 384;
+
 struct Config {
     std::string model_path;
-    int context_length = 512;
+    // An empty fingerprint deliberately disables personal feedback submission.
+    std::string base_model_sha256;
+    int context_length = kNativeContextLength;
     int thread_count = 1;
     int gpu_layers = 0;
     int idle_timeout_seconds = 1800;
@@ -22,6 +26,11 @@ struct Config {
     bool move_cursor_after_selection = false;
     bool esc_clears_entire_buffer = false;
     bool caps_lock_inputs_bopomofo = true;
+    // Personal text is never retained unless the user explicitly opts in.
+    bool personal_learning_enabled = false;
+    // Training is a separate opt-in because it starts a low-priority local process.
+    bool lora_training_enabled = false;
+    std::string training_base_safetensors_path;
 };
 
 Config default_config();

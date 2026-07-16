@@ -73,6 +73,7 @@ SelectPhrase select_phrase_from_string(const std::string& value) {
 Config to_shared_config(const ImeFcitxConfig& config) {
     Config shared;
     shared.model_path = *config.modelPath;
+    shared.base_model_sha256 = *config.baseModelSha256;
     shared.context_length = *config.contextLength;
     shared.thread_count = *config.threadCount;
     shared.gpu_layers = *config.gpuLayers;
@@ -87,12 +88,16 @@ Config to_shared_config(const ImeFcitxConfig& config) {
     shared.move_cursor_after_selection = *config.moveCursorAfterSelection;
     shared.esc_clears_entire_buffer = *config.escKeyClearsEntireComposingBuffer;
     shared.caps_lock_inputs_bopomofo = *config.capsLockInputsBopomofo;
+    shared.personal_learning_enabled = *config.personalLearningEnabled;
+    shared.lora_training_enabled = *config.loraTrainingEnabled;
+    shared.training_base_safetensors_path = *config.trainingBaseSafetensorsPath;
     return shared;
 }
 
 void apply_shared_config(ImeFcitxConfig& target, const Config& source) {
     (void)target.version.setValue(DisplayVersion::Current);
     (void)target.modelPath.setValue(source.model_path);
+    (void)target.baseModelSha256.setValue(source.base_model_sha256);
     (void)target.contextLength.setValue(source.context_length);
     (void)target.threadCount.setValue(source.thread_count);
     (void)target.gpuLayers.setValue(source.gpu_layers);
@@ -107,6 +112,9 @@ void apply_shared_config(ImeFcitxConfig& target, const Config& source) {
     (void)target.moveCursorAfterSelection.setValue(source.move_cursor_after_selection);
     (void)target.escKeyClearsEntireComposingBuffer.setValue(source.esc_clears_entire_buffer);
     (void)target.capsLockInputsBopomofo.setValue(source.caps_lock_inputs_bopomofo);
+    (void)target.personalLearningEnabled.setValue(source.personal_learning_enabled);
+    (void)target.loraTrainingEnabled.setValue(source.lora_training_enabled);
+    (void)target.trainingBaseSafetensorsPath.setValue(source.training_base_safetensors_path);
 }
 
 }  // namespace ime::fcitx5

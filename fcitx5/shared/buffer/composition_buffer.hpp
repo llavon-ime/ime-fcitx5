@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -14,12 +15,19 @@ enum class CandidateTarget {
     AfterCursor,
 };
 
+enum class CandidateSource : std::uint8_t {
+    None,
+    Fallback,
+    Service,
+};
+
 struct Segment {
     Syllable syllable;
     char32_t literal = 0;
     std::vector<char32_t> candidates;
     size_t selected_index = 0;
     bool manually_chosen = false;
+    CandidateSource candidate_source = CandidateSource::None;
 
     bool complete() const noexcept;
     bool empty() const noexcept;
@@ -57,7 +65,8 @@ public:
     std::u16string segment_reading(size_t index) const;
     const std::vector<char32_t>* segment_candidates(size_t index) const;
     std::optional<size_t> segment_selected_index(size_t index) const;
-    bool set_segment_candidates(size_t index, std::vector<char32_t> candidates, bool preserve_manual_choice = true);
+    bool set_segment_candidates(size_t index, std::vector<char32_t> candidates, bool preserve_manual_choice = true,
+                                CandidateSource source = CandidateSource::Fallback);
     bool select_candidate(size_t segment_index, size_t candidate_index, bool move_cursor_after_selection);
     bool cancel_candidate_selection(size_t segment_index);
     bool remove_segment(size_t index);

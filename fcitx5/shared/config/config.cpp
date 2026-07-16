@@ -227,7 +227,8 @@ Config config_from_fcitx_ini(const std::filesystem::path& path) {
     if (fields.empty()) return cfg;
 
     cfg.model_path = ini_string_field(fields, "ModelPath", cfg.model_path);
-    cfg.context_length = ini_int_field(fields, "ContextLength", cfg.context_length, 1, 1048576);
+    cfg.base_model_sha256 = ini_string_field(fields, "BaseModelSha256", cfg.base_model_sha256);
+    cfg.context_length = ini_int_field(fields, "ContextLength", cfg.context_length, 1, kNativeContextLength);
     cfg.thread_count = ini_int_field(fields, "ThreadCount", cfg.thread_count, 1, 1024);
     cfg.gpu_layers = ini_int_field(fields, "GpuLayers", cfg.gpu_layers, 0, 1024);
     cfg.idle_timeout_seconds = ini_int_field(fields, "IdleTimeoutSeconds", cfg.idle_timeout_seconds, 0, 86400);
@@ -251,6 +252,10 @@ Config config_from_fcitx_ini(const std::filesystem::path& path) {
     cfg.esc_clears_entire_buffer =
         ini_bool_field(fields, "EscKeyClearsEntireComposingBuffer", cfg.esc_clears_entire_buffer);
     cfg.caps_lock_inputs_bopomofo = ini_bool_field(fields, "CapsLockInputsBopomofo", cfg.caps_lock_inputs_bopomofo);
+    cfg.personal_learning_enabled = ini_bool_field(fields, "PersonalLearningEnabled", cfg.personal_learning_enabled);
+    cfg.lora_training_enabled = ini_bool_field(fields, "LoraTrainingEnabled", cfg.lora_training_enabled);
+    cfg.training_base_safetensors_path =
+        ini_string_field(fields, "TrainingBaseSafetensorsPath", cfg.training_base_safetensors_path);
     return cfg;
 }
 
@@ -338,6 +343,7 @@ Config load_config() {
 nlohmann::json to_json(const Config& cfg) {
     return nlohmann::json{
         {"model_path", cfg.model_path},
+        {"base_model_sha256", cfg.base_model_sha256},
         {"context_length", cfg.context_length},
         {"thread_count", cfg.thread_count},
         {"gpu_layers", cfg.gpu_layers},
@@ -352,6 +358,9 @@ nlohmann::json to_json(const Config& cfg) {
         {"move_cursor_after_selection", cfg.move_cursor_after_selection},
         {"esc_clears_entire_buffer", cfg.esc_clears_entire_buffer},
         {"caps_lock_inputs_bopomofo", cfg.caps_lock_inputs_bopomofo},
+        {"personal_learning_enabled", cfg.personal_learning_enabled},
+        {"lora_training_enabled", cfg.lora_training_enabled},
+        {"training_base_safetensors_path", cfg.training_base_safetensors_path},
     };
 }
 
@@ -360,7 +369,8 @@ Config config_from_json(const nlohmann::json& json) {
     if (!json.is_object()) return cfg;
 
     cfg.model_path = string_field(json, "model_path", cfg.model_path);
-    cfg.context_length = int_field(json, "context_length", cfg.context_length, 1, 1048576);
+    cfg.base_model_sha256 = string_field(json, "base_model_sha256", cfg.base_model_sha256);
+    cfg.context_length = int_field(json, "context_length", cfg.context_length, 1, kNativeContextLength);
     cfg.thread_count = int_field(json, "thread_count", cfg.thread_count, 1, 1024);
     cfg.gpu_layers = int_field(json, "gpu_layers", cfg.gpu_layers, 0, 1024);
     cfg.idle_timeout_seconds = int_field(json, "idle_timeout_seconds", cfg.idle_timeout_seconds, 0, 86400);
@@ -378,6 +388,10 @@ Config config_from_json(const nlohmann::json& json) {
     cfg.move_cursor_after_selection = bool_field(json, "move_cursor_after_selection", cfg.move_cursor_after_selection);
     cfg.esc_clears_entire_buffer = bool_field(json, "esc_clears_entire_buffer", cfg.esc_clears_entire_buffer);
     cfg.caps_lock_inputs_bopomofo = bool_field(json, "caps_lock_inputs_bopomofo", cfg.caps_lock_inputs_bopomofo);
+    cfg.personal_learning_enabled = bool_field(json, "personal_learning_enabled", cfg.personal_learning_enabled);
+    cfg.lora_training_enabled = bool_field(json, "lora_training_enabled", cfg.lora_training_enabled);
+    cfg.training_base_safetensors_path =
+        string_field(json, "training_base_safetensors_path", cfg.training_base_safetensors_path);
     return cfg;
 }
 
