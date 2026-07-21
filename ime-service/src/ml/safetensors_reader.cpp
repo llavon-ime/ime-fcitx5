@@ -190,11 +190,11 @@ void SafetensorsReader::load_fixed_llama(const std::filesystem::path& path, cons
         parameter_count += elements;
     }
     if (metadata.size() != destinations.size() && metadata.size() != destinations.size() + 1U) throw std::runtime_error("invalid safetensors tensor set");
-    if (parameter_count != LlamaModelConfig::kParameterCount) throw std::runtime_error("unexpected base parameter count");
     std::sort(ranges.begin(), ranges.end());
     for (std::size_t index = 1; index < ranges.size(); ++index) {
         if (ranges[index - 1].second > ranges[index].first) throw std::runtime_error("overlapping safetensors ranges");
     }
+    if (parameter_count != LlamaModelConfig::kParameterCount) throw std::runtime_error("unexpected base parameter count");
     const auto* data = file.data() + 8U + static_cast<std::size_t>(header_size);
     torch::NoGradGuard guard;
     for (const auto& [name, destination] : destinations) {

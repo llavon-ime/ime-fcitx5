@@ -8,7 +8,6 @@
 
 #if IMESVC_HAS_LLAMA
 #include "llamaEngine.hpp"
-#include "../utils/runtime_paths.hpp"
 #endif
 
 namespace imesvc {
@@ -24,7 +23,7 @@ public:
     std::vector<std::vector<char32_t>> predict(const protocol::PredictRequest& request) override {
         if (!engine_) {
             try {
-                engine_ = std::make_unique<LlamaEngine>(adapter_generation_);
+                engine_ = std::make_unique<LlamaEngine>(runtime_, adapter_generation_);
                 runtime_->record_inference_loaded(adapter_generation_ != nullptr);
             } catch (const std::exception& error) {
                 if (!adapter_generation_) {
@@ -35,7 +34,7 @@ public:
                 // Drop the in-memory generation and keep inference available on the verified base model.
                 runtime_->reject_active_adapter(adapter_generation_->version);
                 try {
-                    engine_ = std::make_unique<LlamaEngine>();
+                    engine_ = std::make_unique<LlamaEngine>(runtime_);
                     adapter_generation_.reset();
                     runtime_->record_inference_loaded(false);
                 } catch (const std::exception& error) {

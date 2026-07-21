@@ -1,13 +1,13 @@
 # Llavon IME for Fcitx5
 
-Linux and macOS fcitx5 frontend for Llavon IME. Inference runs in the `ime-service`
-submodule as a standalone `llavon-ime-service` process with session-based Unix
-socket IPC.
+Linux and macOS fcitx5 frontend for Llavon IME. Inference runs from the bundled
+`ime-service` source directory as a standalone `llavon-ime-service` process with
+session-based Unix socket IPC.
 
 ## Linux Build
 
-Install CMake, Ninja, pkg-config, fcitx5 development files, and initialize
-submodules:
+Install CMake, Ninja, pkg-config, fcitx5 development files, and initialize the
+vcpkg submodule:
 
 ```bash
 git clone --recurse-submodules https://github.com/llavon-ime/ime-fcitx5.git

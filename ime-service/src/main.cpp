@@ -95,7 +95,6 @@ int main(int argc, char* argv[]) {
 #include "platform/server_strategy.hpp"
 #include "pipe/protocol.hpp"
 #include "platform/unix_socket_server.hpp"
-#include "utils/runtime_paths.hpp"
 
 #include <cerrno>
 #include <cstdlib>
@@ -240,11 +239,6 @@ int main(int argc, char* argv[]) {
             std::error_code error;
             const auto executable = std::filesystem::absolute(argv[0], error);
             if (!error) options.lora_training.trainer_executable = executable.parent_path() / "llavon-ime-trainer";
-        }
-        if (!options.runtime.model_path.empty()) {
-            imesvc::RuntimePaths::configure(options.runtime.model_path, options.runtime.tables_dir,
-                                            options.runtime.context_length, options.runtime.threads,
-                                            options.runtime.gpu_layers);
         }
         std::clog << "[SRV] IME Service starting\n";
         auto server = imesvc::create_server_strategy(std::move(options));

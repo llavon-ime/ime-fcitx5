@@ -1,5 +1,7 @@
 #include "ml/checkpoint.hpp"
+#include "engine/tokenizer.hpp"
 #include "ml/gguf_lora_writer.hpp"
+#include "ml/llama_model.hpp"
 #include "ml/lora_linear.hpp"
 #include "ml/rms_norm.hpp"
 #include "ml/rotary_embedding.hpp"
@@ -8,14 +10,21 @@
 
 #include <gguf.h>
 #include <ATen/CPUGeneratorImpl.h>
+#include <nlohmann/json.hpp>
+#include <utf8/cpp20.h>
 
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <string_view>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -29,6 +38,39 @@ std::filesystem::path temporary_directory() {
                           std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(path);
     return path;
+}
+
+std::filesystem::path write_safetensors_fixture(const std::filesystem::path& directory,
+                                                const std::string& name,
+                                                const std::string& header,
+                                                const std::vector<std::uint8_t>& data = {}) {
+    const auto path = directory / name;
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    const auto header_size = static_cast<std::uint64_t>(header.size());
+    for (unsigned int shift = 0; shift < 64; shift += 8) {
+        output.put(static_cast<char>(header_size >> shift));
+    }
+    output.write(header.data(), static_cast<std::streamsize>(header.size()));
+    if (!data.empty()) {
+        output.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+    }
+    if (!output) throw std::runtime_error("write malformed safetensors fixture failed");
+    return path;
+}
+
+void require_safetensors_failure(const std::filesystem::path& path,
+                                 const std::unordered_map<std::string, torch::Tensor>& destinations,
+                                 std::string_view expected,
+                                 imesvc::ml::SafetensorsLimits limits = {}) {
+    const auto sha256 = imesvc::ml::SafetensorsReader::sha256_file(path);
+    try {
+        imesvc::ml::SafetensorsReader(limits).load_fixed_llama(path, sha256, destinations);
+    } catch (const std::exception& error) {
+        require(std::string_view(error.what()).find(expected) != std::string_view::npos,
+                "safetensors rejection used the wrong validation path");
+        return;
+    }
+    throw std::runtime_error("malformed safetensors fixture was accepted");
 }
 
 void test_rms_norm_and_rope() {
@@ -81,6 +123,156 @@ void test_lora_gradients_and_math() {
             "dynamic LoRA output does not match merged weights");
 }
 
+void test_gradient_accumulation_equivalence() {
+    imesvc::ml::LoraConfig config;
+    config.rank = 2;
+    config.alpha = 4.0;
+    config.dropout = 0.0;
+    imesvc::ml::LoraLinear batched(3, 4, config);
+    imesvc::ml::LoraLinear accumulated(3, 4, config);
+    {
+        torch::NoGradGuard guard;
+        batched->weight.normal_(0.0, 0.1);
+        batched->lora_a.normal_(0.0, 0.1);
+        batched->lora_b.normal_(0.0, 0.1);
+        accumulated->weight.copy_(batched->weight);
+        accumulated->lora_a.copy_(batched->lora_a);
+        accumulated->lora_b.copy_(batched->lora_b);
+    }
+    const auto inputs = torch::randn({2, 3});
+    const auto targets = torch::randn({2, 4});
+    torch::optim::SGD batched_optimizer(batched->adapter_parameters(), torch::optim::SGDOptions(1e-2));
+    torch::optim::SGD accumulated_optimizer(accumulated->adapter_parameters(), torch::optim::SGDOptions(1e-2));
+
+    torch::mse_loss(batched->forward(inputs), targets).backward();
+    batched_optimizer.step();
+    for (std::int64_t index = 0; index < inputs.size(0); ++index) {
+        torch::mse_loss(accumulated->forward(inputs[index].unsqueeze(0)), targets[index].unsqueeze(0)).backward();
+    }
+    for (auto& parameter : accumulated->adapter_parameters()) parameter.grad().div_(inputs.size(0));
+    accumulated_optimizer.step();
+
+    require(torch::allclose(batched->lora_a, accumulated->lora_a, 1e-6, 1e-6) &&
+                torch::allclose(batched->lora_b, accumulated->lora_b, 1e-6, 1e-6),
+            "gradient accumulation differs from an equivalent batch");
+}
+
+void test_attention_swiglu_and_causality() {
+    imesvc::ml::LlamaModelConfig model;
+    model.hidden_size = 8;
+    model.attention_heads = 2;
+    model.kv_heads = 2;
+    model.intermediate_size = 16;
+    model.context_length = 8;
+    imesvc::ml::LoraConfig lora;
+    lora.rank = 2;
+    lora.alpha = 4.0;
+    lora.dropout = 0.0;
+
+    imesvc::ml::CausalSelfAttention attention(model, lora);
+    imesvc::ml::LlamaMlp mlp(model, lora);
+    {
+        torch::NoGradGuard guard;
+        for (const auto& projection : {attention->q_proj, attention->k_proj, attention->v_proj, attention->o_proj}) {
+            projection->weight.normal_(0.0, 0.1);
+        }
+        for (const auto& projection : {mlp->gate_proj, mlp->up_proj, mlp->down_proj}) {
+            projection->weight.normal_(0.0, 0.1);
+        }
+    }
+    attention->eval();
+    mlp->eval();
+    const auto input = torch::randn({1, 4, model.hidden_size});
+    auto changed_future = input.clone();
+    changed_future.slice(1, 2).add_(100.0);
+    const auto original_attention = attention->forward(input);
+    const auto changed_attention = attention->forward(changed_future);
+    require(original_attention.sizes() == input.sizes() && torch::isfinite(original_attention).all().item<bool>(),
+            "attention output shape or values are invalid");
+    require(torch::allclose(original_attention.slice(1, 0, 2), changed_attention.slice(1, 0, 2), 1e-5, 1e-5),
+            "causal attention allowed future tokens to alter earlier outputs");
+
+    const auto gate = torch::nn::functional::linear(input, mlp->gate_proj->weight);
+    const auto up = torch::nn::functional::linear(input, mlp->up_proj->weight);
+    const auto expected = torch::nn::functional::linear(torch::silu(gate) * up, mlp->down_proj->weight);
+    require(torch::allclose(mlp->forward(input), expected, 1e-6, 1e-6), "SwiGLU numerical mismatch");
+}
+
+void test_tokenizer_parity() {
+    imesvc::Tokenizer runtime_tokenizer(IMESVC_TEST_TABLES_DIRECTORY);
+    imesvc::ml::TrainingTokenizer training_tokenizer(IMESVC_TEST_TABLES_DIRECTORY);
+    for (const std::u16string context : {u"ABC-12 你好", u"未知🙂abc", u"--- 你"}) {
+        const auto runtime = runtime_tokenizer.encode_context(context);
+        const auto training = training_tokenizer.encode_context(utf8::utf16to8(context));
+        require(std::vector<std::int64_t>(runtime.begin(), runtime.end()) == training,
+                "training and runtime context tokenizers disagree");
+    }
+}
+
+void test_safetensors_rejections() {
+    const auto directory = temporary_directory();
+    try {
+        const std::vector<std::uint8_t> four_bytes(4);
+        const auto tensor = torch::zeros({1}, torch::kFloat32);
+        const std::unordered_map<std::string, torch::Tensor> one{{"tensor", tensor}};
+        const auto metadata = [](std::string dtype, nlohmann::json shape, nlohmann::json offsets) {
+            return nlohmann::json{{"tensor", {{"dtype", std::move(dtype)}, {"shape", std::move(shape)},
+                                                   {"data_offsets", std::move(offsets)}}}}.dump();
+        };
+
+        const auto sha_mismatch = write_safetensors_fixture(directory, "sha-mismatch.safetensors", "{}");
+        try {
+            imesvc::ml::SafetensorsReader().load_fixed_llama(sha_mismatch, std::string(64, '0'), {});
+            throw std::runtime_error("safetensors SHA mismatch was accepted");
+        } catch (const std::exception& error) {
+            require(std::string_view(error.what()).find("SHA256 mismatch") != std::string_view::npos,
+                    "safetensors SHA mismatch used the wrong validation path");
+        }
+
+        const auto oversized = write_safetensors_fixture(directory, "oversized-header.safetensors", std::string(64, ' '));
+        auto limits = imesvc::ml::SafetensorsLimits{};
+        limits.max_header_bytes = 16;
+        require_safetensors_failure(oversized, {}, "header length", limits);
+
+        const std::string duplicate_header =
+            R"({"tensor":{"dtype":"F32","shape":[1],"data_offsets":[0,4]},"tensor":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}})";
+        require_safetensors_failure(
+            write_safetensors_fixture(directory, "duplicate.safetensors", duplicate_header, four_bytes),
+            one, "duplicate safetensors JSON key");
+
+        const auto unknown_header = nlohmann::json{{"unknown", {{"dtype", "F32"}, {"shape", {1}},
+                                                                  {"data_offsets", {0, 4}}}}}.dump();
+        require_safetensors_failure(
+            write_safetensors_fixture(directory, "unknown.safetensors", unknown_header, four_bytes),
+            {}, "unknown safetensors tensor");
+        require_safetensors_failure(write_safetensors_fixture(directory, "missing.safetensors", "{}"), one,
+                                    "missing safetensors tensor");
+        require_safetensors_failure(
+            write_safetensors_fixture(directory, "dtype.safetensors", metadata("F16", {1}, {0, 4}), four_bytes),
+            one, "unsupported safetensors tensor");
+        require_safetensors_failure(
+            write_safetensors_fixture(directory, "shape.safetensors", metadata("F32", nlohmann::json::array(), {0, 4}), four_bytes),
+            one, "invalid safetensors shape");
+        require_safetensors_failure(
+            write_safetensors_fixture(directory, "truncated.safetensors", metadata("F32", {1}, {0, 8}), four_bytes),
+            one, "invalid safetensors byte range");
+
+        const std::unordered_map<std::string, torch::Tensor> two{{"a", tensor}, {"b", tensor}};
+        const auto overlap_header = nlohmann::json{
+            {"a", {{"dtype", "F32"}, {"shape", {1}}, {"data_offsets", {0, 4}}}},
+            {"b", {{"dtype", "F32"}, {"shape", {1}}, {"data_offsets", {0, 4}}}}}.dump();
+        require_safetensors_failure(
+            write_safetensors_fixture(directory, "overlap.safetensors", overlap_header, four_bytes),
+            two, "overlapping safetensors ranges");
+    } catch (...) {
+        std::error_code error;
+        std::filesystem::remove_all(directory, error);
+        throw;
+    }
+    std::error_code error;
+    std::filesystem::remove_all(directory, error);
+}
+
 void test_causal_loss_and_dataset() {
     const auto logits = torch::tensor({{{2.0F, 0.0F, -1.0F}, {0.0F, 3.0F, 1.0F}, {1.0F, 1.0F, 1.0F}}});
     const auto labels = torch::tensor(
@@ -110,8 +302,14 @@ void test_checkpoint_and_gguf() {
         config.dropout = 0;
         imesvc::ml::LoraLinear layer(3, 4, config);
         torch::optim::AdamW optimizer(layer->adapter_parameters(), torch::optim::AdamWOptions(1e-2));
-        layer->forward(torch::randn({2, 3})).sum().backward();
+        const auto first_input = torch::randn({2, 3});
+        const auto second_input = torch::randn({2, 3});
+        layer->forward(first_input).pow(2).mean().backward();
         optimizer.step();
+        optimizer.zero_grad();
+        const auto checkpoint_a = layer->lora_a.detach().clone();
+        const auto checkpoint_b = layer->lora_b.detach().clone();
+        const auto base_weight = layer->weight.detach().clone();
 
         imesvc::ml::CheckpointState state;
         state.adapter_tensors = {{"lora_a", layer->lora_a}, {"lora_b", layer->lora_b}};
@@ -151,6 +349,21 @@ void test_checkpoint_and_gguf() {
         require(torch::equal(restored.adapter_tensors.at("lora_a"), layer->lora_a) &&
                     torch::equal(restored.adapter_tensors.at("lora_b"), layer->lora_b),
                 "checkpoint tensor round-trip failed");
+        {
+            torch::NoGradGuard guard;
+            restored_layer->weight.copy_(base_weight);
+            restored_layer->lora_a.copy_(restored.adapter_tensors.at("lora_a"));
+            restored_layer->lora_b.copy_(restored.adapter_tensors.at("lora_b"));
+        }
+        layer->forward(second_input).pow(2).mean().backward();
+        optimizer.step();
+        restored_layer->forward(second_input).pow(2).mean().backward();
+        restored_optimizer.step();
+        require(torch::allclose(layer->lora_a, restored_layer->lora_a, 1e-6, 1e-6) &&
+                    torch::allclose(layer->lora_b, restored_layer->lora_b, 1e-6, 1e-6),
+                "resumed optimizer step differs from uninterrupted training");
+        require(!torch::equal(checkpoint_a, layer->lora_a) || !torch::equal(checkpoint_b, layer->lora_b),
+                "resume comparison did not perform another optimizer update");
         std::filesystem::rename(directory / "checkpoint", directory / "checkpoint.previous");
         imesvc::ml::LoraLinear recovered_layer(3, 4, config);
         torch::optim::AdamW recovered_optimizer(recovered_layer->adapter_parameters(), torch::optim::AdamWOptions(1e-2));
@@ -201,6 +414,10 @@ int main() {
         torch::manual_seed(20260713);
         test_rms_norm_and_rope();
         test_lora_gradients_and_math();
+        test_gradient_accumulation_equivalence();
+        test_attention_swiglu_and_causality();
+        test_tokenizer_parity();
+        test_safetensors_rejections();
         test_causal_loss_and_dataset();
         test_checkpoint_and_gguf();
         test_sha256();

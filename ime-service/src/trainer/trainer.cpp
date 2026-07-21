@@ -20,11 +20,70 @@
 #include <stdexcept>
 #include <chrono>
 
+#ifndef _WIN32
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 namespace imesvc::trainer {
 namespace {
 
 class InferenceActivity final {};
 constexpr std::string_view kTrainingCodeVersion = "native-libtorch-lora-v1";
+
+void flush_path(const std::filesystem::path& path) {
+#ifndef _WIN32
+    int flags = O_RDONLY;
+#ifdef O_CLOEXEC
+    flags |= O_CLOEXEC;
+#endif
+#ifdef O_NOFOLLOW
+    flags |= O_NOFOLLOW;
+#endif
+    const int descriptor = ::open(path.c_str(), flags);
+    if (descriptor < 0 || ::fsync(descriptor) != 0) {
+        if (descriptor >= 0) (void)::close(descriptor);
+        throw std::runtime_error("flush adapter manifest failed");
+    }
+    if (::close(descriptor) != 0) throw std::runtime_error("close adapter manifest failed");
+#else
+    (void)path;
+#endif
+}
+
+void write_manifest_atomic(const std::filesystem::path& path, const nlohmann::json& manifest) {
+    const std::filesystem::path temporary = path.string() + ".tmp";
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(temporary, error);
+    if (error != std::errc::no_such_file_or_directory && error) {
+        throw std::runtime_error("inspect temporary adapter manifest failed: " + error.message());
+    }
+    if (!error && std::filesystem::exists(status)) {
+        if (std::filesystem::is_symlink(status) || !std::filesystem::is_regular_file(status)) {
+            throw std::runtime_error("refusing unsafe temporary adapter manifest path");
+        }
+        if (!std::filesystem::remove(temporary, error) || error) {
+            throw std::runtime_error("remove stale temporary adapter manifest failed");
+        }
+    }
+    try {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        if (!output) throw std::runtime_error("write adapter manifest failed");
+        output << manifest;
+        output.flush();
+        if (!output) throw std::runtime_error("flush adapter manifest stream failed");
+        output.close();
+        if (!output) throw std::runtime_error("close adapter manifest stream failed");
+        flush_path(temporary);
+        std::filesystem::rename(temporary, path, error);
+        if (error) throw std::runtime_error("publish adapter manifest failed: " + error.message());
+        if (!path.parent_path().empty()) flush_path(path.parent_path());
+    } catch (...) {
+        std::error_code cleanup_error;
+        std::filesystem::remove(temporary, cleanup_error);
+        throw;
+    }
+}
 
 double signal_weight(training::FeedbackSignal signal) {
     switch (signal) {
@@ -303,11 +362,7 @@ int run(const TrainerOptions& options) {
                             {"validation_target_characters", snapshot.snapshot.validation_target_characters},
                             {"validation_loss_before", validation_loss_before},
                             {"validation_loss_after", validation_loss_after}};
-    std::ofstream output(options.staging_directory / "manifest.json");
-    if (!output) throw std::runtime_error("write adapter manifest failed");
-    output << manifest;
-    output.close();
-    if (!output) throw std::runtime_error("flush adapter manifest failed");
+    write_manifest_atomic(options.staging_directory / "manifest.json", manifest);
     std::filesystem::remove_all(checkpoint_directory, error);
     if (error) throw std::runtime_error("remove completed checkpoint failed: " + error.message());
     std::filesystem::remove_all(previous_checkpoint_directory, error);

@@ -1,5 +1,9 @@
 #include "model_runtime.hpp"
 
+#if IMESVC_HAS_LLAMA
+#include "llama_resources.hpp"
+#endif
+
 #include <fstream>
 #include <limits>
 #include <nlohmann/json.hpp>
@@ -94,6 +98,15 @@ void SharedModelRuntime::record_inference_failure(std::string error) noexcept {
     adapter_loaded_ = false;
     inference_load_error_ = std::move(error);
 }
+
+#if IMESVC_HAS_LLAMA
+std::shared_ptr<LlamaModelResources> SharedModelRuntime::llama_resources() const {
+    std::call_once(llama_resources_once_, [this]() {
+        llama_resources_ = std::make_shared<LlamaModelResources>(config_);
+    });
+    return llama_resources_;
+}
+#endif
 
 std::vector<char32_t> SharedModelRuntime::lookup(std::u16string_view bopomofo) const {
     ensure_loaded();

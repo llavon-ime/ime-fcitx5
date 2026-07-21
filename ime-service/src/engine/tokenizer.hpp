@@ -11,8 +11,6 @@
 #include <variant>
 #include <vector>
 
-#include "../utils/runtime_paths.hpp"
-
 namespace imesvc {
 
 struct PaddingEntry {
@@ -27,11 +25,11 @@ class Tokenizer {
     std::unordered_map<std::string, int> special_table;
     std::unordered_map<std::string, int> bpmf_table;
 
-    static std::filesystem::path resolve_table_path(const char* filename) {
-        return RuntimePaths::token_table_path(filename);
-    }
-
-    Tokenizer() {
+public:
+    explicit Tokenizer(const std::filesystem::path& tables_directory) {
+        const auto resolve_table_path = [&tables_directory](const char* filename) {
+            return tables_directory / "tokens" / filename;
+        };
         char_table =
             rfl::json::load<std::unordered_map<std::string, int>>(resolve_table_path("chars.json").string()).value();
         latin_table =
@@ -43,6 +41,7 @@ class Tokenizer {
             rfl::json::load<std::unordered_map<std::string, int>>(resolve_table_path("bpmf.json").string()).value();
     }
 
+private:
     static bool is_alpha(int c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
     static bool is_digit(int c) { return (c >= '0' && c <= '9'); }
     static bool is_latin_char(int c) { return is_alpha(c) || is_digit(c) || c == '-' || c == '_' || c == '+'; }
@@ -57,21 +56,14 @@ class Tokenizer {
     }
 
 public:
-    static Tokenizer& instance() {
-        static Tokenizer tokenizer;
-        return tokenizer;
-    }
-
-    int map_char(char32_t c) {
+    int map_char(char32_t c) const {
         std::string s;
         utf8::append(c, s);
         if (char_table.contains(s)) return char_table.at(s);
         return -1;
     }
 
-    std::vector<int> tokenize(const std::u16string& context16, const std::vector<PaddingEntry>& padding) {
-        std::vector<int> res;
-        res.push_back(special_table.at("<BOS>"));
+    std::vector<int> encode_context(const std::u16string& context16) const {
         std::vector<int> context_tokens;
         std::string context8 = utf8::utf16to8(context16);
         std::u32string context = utf8::utf8to32(context8);
@@ -102,6 +94,13 @@ public:
             }
         }
         remove_leading_unknown_context_tokens(context_tokens, special_table.at("<UNK>"));
+        return context_tokens;
+    }
+
+    std::vector<int> tokenize(const std::u16string& context16, const std::vector<PaddingEntry>& padding) const {
+        std::vector<int> res;
+        res.push_back(special_table.at("<BOS>"));
+        auto context_tokens = encode_context(context16);
         res.insert(res.end(), context_tokens.begin(), context_tokens.end());
         for (auto& entry : padding) {
             if (entry.is_chosen) {

@@ -7,14 +7,57 @@
 #include <stdexcept>
 #include <vector>
 
+#ifndef _WIN32
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 namespace imesvc::ml {
+namespace {
+
+void flush_path(const std::filesystem::path& path) {
+#ifndef _WIN32
+    int flags = O_RDONLY;
+#ifdef O_CLOEXEC
+    flags |= O_CLOEXEC;
+#endif
+#ifdef O_NOFOLLOW
+    flags |= O_NOFOLLOW;
+#endif
+    const int descriptor = ::open(path.c_str(), flags);
+    if (descriptor < 0 || ::fsync(descriptor) != 0) {
+        if (descriptor >= 0) (void)::close(descriptor);
+        throw std::runtime_error("flush GGUF adapter artifact failed");
+    }
+    if (::close(descriptor) != 0) throw std::runtime_error("close GGUF adapter artifact failed");
+#else
+    (void)path;
+#endif
+}
+
+void prepare_temporary_file(const std::filesystem::path& path) {
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(path, error);
+    if (error == std::errc::no_such_file_or_directory) return;
+    if (error) throw std::runtime_error("inspect temporary GGUF adapter failed: " + error.message());
+    if (!std::filesystem::exists(status)) return;
+    if (std::filesystem::is_symlink(status) || !std::filesystem::is_regular_file(status)) {
+        throw std::runtime_error("refusing unsafe temporary GGUF adapter path");
+    }
+    if (!std::filesystem::remove(path, error) || error) {
+        throw std::runtime_error("remove stale temporary GGUF adapter failed");
+    }
+}
+
+}  // namespace
 
 void GgufLoraWriter::write_f32_atomic(const std::filesystem::path& output,
                                       const std::unordered_map<std::string, torch::Tensor>& tensors,
                                       const LoraConfig& config) {
     config.validate();
     if (tensors.empty()) throw std::invalid_argument("cannot write an empty LoRA adapter");
-    const auto temporary = output.string() + ".tmp";
+    const std::filesystem::path temporary = output.string() + ".tmp";
+    prepare_temporary_file(temporary);
     ggml_init_params parameters{}; parameters.mem_size = 4U * 1024U * 1024U; parameters.no_alloc = true;
     auto* tensor_context = ggml_init(parameters);
     auto* gguf = gguf_init_empty();
@@ -33,9 +76,18 @@ void GgufLoraWriter::write_f32_atomic(const std::filesystem::path& output,
             gguf_set_tensor_data(gguf, name.c_str(), value.data_ptr());
         }
         if (!gguf_write_to_file(gguf, temporary.c_str(), false)) throw std::runtime_error("write GGUF adapter failed");
-        std::error_code error; std::filesystem::rename(temporary, output, error);
+        flush_path(temporary);
+        std::error_code error;
+        std::filesystem::rename(temporary, output, error);
         if (error) throw std::runtime_error("publish GGUF adapter failed: " + error.message());
-    } catch (...) { gguf_free(gguf); ggml_free(tensor_context); throw; }
+        if (!output.parent_path().empty()) flush_path(output.parent_path());
+    } catch (...) {
+        std::error_code cleanup_error;
+        std::filesystem::remove(temporary, cleanup_error);
+        gguf_free(gguf);
+        ggml_free(tensor_context);
+        throw;
+    }
     gguf_free(gguf); ggml_free(tensor_context);
 }
 

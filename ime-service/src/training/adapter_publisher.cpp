@@ -16,7 +16,9 @@
 #include <vector>
 
 #ifndef _WIN32
+#include <fcntl.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 namespace imesvc::training {
@@ -24,6 +26,26 @@ namespace {
 
 StoreOperationResult success() { return {true, {}}; }
 StoreOperationResult failure(std::string error) { return {false, std::move(error)}; }
+
+void flush_path(const std::filesystem::path& path) {
+#ifndef _WIN32
+    int flags = O_RDONLY;
+#ifdef O_CLOEXEC
+    flags |= O_CLOEXEC;
+#endif
+#ifdef O_NOFOLLOW
+    flags |= O_NOFOLLOW;
+#endif
+    const int descriptor = ::open(path.c_str(), flags);
+    if (descriptor < 0 || ::fsync(descriptor) != 0) {
+        if (descriptor >= 0) (void)::close(descriptor);
+        throw std::runtime_error("flush published LoRA artifact failed");
+    }
+    if (::close(descriptor) != 0) throw std::runtime_error("close published LoRA artifact failed");
+#else
+    (void)path;
+#endif
+}
 
 constexpr std::uint64_t kMaximumAdapterBytes = 512ULL * 1024ULL * 1024ULL;
 
@@ -292,6 +314,10 @@ StoreOperationResult AdapterPublisher::handle_completed_run(const TrainingRunCon
         try {
             require_private_artifact(published_adapter);
             require_private_artifact(published_manifest);
+            flush_path(published_adapter);
+            flush_path(published_manifest);
+            flush_path(destination);
+            flush_path(options_.directory);
             const auto activate = [&]() -> StoreOperationResult {
                 AdapterRecord record;
                 record.version = version;

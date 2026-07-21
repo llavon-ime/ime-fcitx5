@@ -45,6 +45,10 @@ public:
         return configured().model_path;
     }
 
+    static const std::filesystem::path& tables_dir() {
+        return configured().tables_dir;
+    }
+
     static std::filesystem::path token_table_path(const char* filename) {
         return configured().tables_dir / "tokens" / filename;
     }

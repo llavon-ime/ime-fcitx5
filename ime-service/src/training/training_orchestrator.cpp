@@ -551,7 +551,7 @@ private:
             (void)::syscall(SYS_ioprio_set, 1, 0, (3 << 13) | 7);
 #endif
 #endif
-            (void)::chdir(staging_directory.c_str());
+            if (::chdir(staging_directory.c_str()) != 0) _exit(126);
             ::execv(argv.front(), argv.data());
             _exit(127);
         }

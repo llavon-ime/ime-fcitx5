@@ -5,8 +5,8 @@ named-pipe server. The optional native LoRA trainer is a separate install compon
 
 ## Build
 
-This repository owns only `vcpkg.json`. It does not vendor vcpkg and should not point at a local absolute vcpkg path.
-Pass the vcpkg toolchain from the build environment, CI, or parent build orchestration:
+This source directory owns only `vcpkg.json`. It uses the parent repository's vcpkg submodule and should not point at a
+machine-specific vcpkg path. Pass the vcpkg toolchain from the build environment, CI, or parent build orchestration:
 
 ```powershell
 cmake --preset windows -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"

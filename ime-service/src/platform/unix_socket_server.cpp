@@ -268,13 +268,14 @@ double ratio(std::uint64_t numerator, std::uint64_t denominator) {
 }
 
 training::StoreOperationResult validate_serving_runtime(const std::filesystem::path& adapter_path,
-                                                         const std::vector<training::DatasetSample>& samples,
-                                                         training::TrainingRunKind kind,
-                                                         std::shared_ptr<const AdapterGeneration> baseline_generation,
-                                                         const std::filesystem::path& candidate_map_path) {
+                                                          const std::vector<training::DatasetSample>& samples,
+                                                          training::TrainingRunKind kind,
+                                                          const std::shared_ptr<SharedModelRuntime>& runtime,
+                                                          std::shared_ptr<const AdapterGeneration> baseline_generation,
+                                                          const std::filesystem::path& candidate_map_path) {
     try {
-        const auto score = [&samples](std::shared_ptr<const AdapterGeneration> generation) {
-            LlamaEngine engine(std::move(generation));
+        const auto score = [&samples, &runtime](std::shared_ptr<const AdapterGeneration> generation) {
+            LlamaEngine engine(runtime, std::move(generation));
             ServingValidationMetrics metrics;
             std::vector<double> latencies;
             for (const auto& sample : samples) {
@@ -371,13 +372,13 @@ training::StoreOperationResult validate_serving_runtime(const std::filesystem::p
             if (readings.empty()) throw std::runtime_error("general regression candidate map has no readings");
             constexpr std::size_t kMaximumGeneralReadings = 512;
             const auto stride = std::max<std::size_t>(1, readings.size() / kMaximumGeneralReadings);
-            LlamaEngine baseline_engine(general_baseline_generation);
+            LlamaEngine baseline_engine(runtime, general_baseline_generation);
             auto adapted_generation = std::make_shared<AdapterGeneration>();
             adapted_generation->revision = 1;
             adapted_generation->version = "general-validation";
             adapted_generation->path = adapter_path;
             adapted_generation->sha256 = "validation";
-            LlamaEngine adapted_engine(std::move(adapted_generation));
+            LlamaEngine adapted_engine(runtime, std::move(adapted_generation));
             std::uint64_t total = 0;
             std::uint64_t top1_agreement = 0;
             std::uint64_t top5_recall = 0;
@@ -1020,11 +1021,13 @@ void UnixSocketServer::initialize_training() {
         return;
     }
 #if IMESVC_HAS_LLAMA
-    publisher_options.validate_loadable = [](const std::filesystem::path& path) { LlamaEngine::validate_adapter(path); };
+    publisher_options.validate_loadable = [runtime = runtime_](const std::filesystem::path& path) {
+        LlamaEngine::validate_adapter(runtime, path);
+    };
     publisher_options.validate_runtime = [this](const std::filesystem::path& adapter,
                                                  const std::vector<training::DatasetSample>& samples,
                                                  training::TrainingRunKind kind) {
-        return validate_serving_runtime(adapter, samples, kind, runtime_->adapter_generation(),
+        return validate_serving_runtime(adapter, samples, kind, runtime_, runtime_->adapter_generation(),
                                         options_.runtime.tables_dir / "bopomofo_char.json");
     };
     publisher_options.transition_activation = [this](const training::TrainingRunContext& run,

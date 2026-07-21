@@ -1,11 +1,9 @@
 #pragma once
 
-#include <ggml-backend.h>
 #include <llama-cpp.h>
 #include <utf8/cpp20.h>
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -17,9 +15,11 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
 #include "../core/bopomofo.hpp"
-#include "../utils/runtime_paths.hpp"
+#endif
 #include "engine.h"
+#include "llama_resources.hpp"
 #include "model_runtime.hpp"
 
 #ifndef IMESVC_TRACE_PREDICT
@@ -32,150 +32,12 @@
 
 namespace imesvc {
 
-inline constexpr int kLlamaThreads = 8;
 inline constexpr auto kLlamaReadyIdleThreshold = std::chrono::milliseconds(500);
 inline constexpr long long kSlowDecodeLogThresholdUs = 50'000;
 
-struct LlamaOffloadDevice {
-    ggml_backend_dev_t device = nullptr;
-    enum ggml_backend_dev_type type = GGML_BACKEND_DEVICE_TYPE_CPU;
-    size_t memory_free = 0;
-    size_t memory_total = 0;
-};
-
-class ModelManager {
-    static const char* device_type_name(enum ggml_backend_dev_type type) {
-        switch (type) {
-            case GGML_BACKEND_DEVICE_TYPE_CPU:
-                return "CPU";
-            case GGML_BACKEND_DEVICE_TYPE_GPU:
-                return "GPU";
-            case GGML_BACKEND_DEVICE_TYPE_IGPU:
-                return "IGPU";
-            case GGML_BACKEND_DEVICE_TYPE_ACCEL:
-                return "ACCEL";
-            case GGML_BACKEND_DEVICE_TYPE_META:
-                return "META";
-            default:
-                return "UNKNOWN";
-        }
-    }
-
-    static double mib(size_t bytes) {
-        return static_cast<double>(bytes) / 1024.0 / 1024.0;
-    }
-
-    static LlamaOffloadDevice select_gpu_device() {
-        const size_t count = ggml_backend_dev_count();
-        std::vector<LlamaOffloadDevice> candidates;
-        for (size_t i = 0; i < count; ++i) {
-            ggml_backend_dev_t device = ggml_backend_dev_get(i);
-            ggml_backend_dev_props props{};
-            ggml_backend_dev_get_props(device, &props);
-            const auto type = props.type;
-            const char* name = props.name ? props.name : ggml_backend_dev_name(device);
-            const char* description = props.description ? props.description : ggml_backend_dev_description(device);
-            std::clog << "[SRV] llama device[" << i << "] type=" << device_type_name(type)
-                      << " name=" << (name ? name : "<unknown>")
-                      << " desc=" << (description ? description : "<unknown>")
-                      << " free_mib=" << std::fixed << std::setprecision(1) << mib(props.memory_free)
-                      << " total_mib=" << mib(props.memory_total) << std::defaultfloat
-                      << " id=" << (props.device_id ? props.device_id : "<unknown>") << '\n';
-
-            if (type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_IGPU) {
-                candidates.push_back({device, type, props.memory_free, props.memory_total});
-            }
-        }
-
-        if (candidates.empty()) return {};
-
-        std::sort(candidates.begin(), candidates.end(), [](const LlamaOffloadDevice& a, const LlamaOffloadDevice& b) {
-            if (a.type != b.type) {
-                return a.type == GGML_BACKEND_DEVICE_TYPE_IGPU;
-            }
-            if (a.memory_total != b.memory_total) return a.memory_total > b.memory_total;
-            return a.memory_free > b.memory_free;
-        });
-
-        const auto selected = candidates.front();
-        std::clog << "[SRV] llama selected offload device type=" << device_type_name(selected.type)
-                  << " name=" << (ggml_backend_dev_name(selected.device) ? ggml_backend_dev_name(selected.device)
-                                                                         : "<unknown>")
-                  << " total_mib=" << std::fixed << std::setprecision(1) << mib(selected.memory_total)
-                  << std::defaultfloat << '\n';
-        return selected;
-    }
-
-    llama_model_ptr _model;
-    const llama_vocab* _vocab;
-
-    ModelManager() {
-        llama_backend_init();
-        auto path = RuntimePaths::model_path().string();
-        auto model_params = llama_model_default_params();
-        std::array<ggml_backend_dev_t, 2> offload_devices{};
-        LlamaOffloadDevice offload_device = select_gpu_device();
-        const bool supports_gpu_offload = llama_supports_gpu_offload();
-        const int requested_gpu_layers = RuntimePaths::gpu_layers();
-        const bool wants_gpu = requested_gpu_layers != 0 &&
-                               (requested_gpu_layers == -2 || requested_gpu_layers == -1 || requested_gpu_layers > 0);
-        const bool use_gpu_offload = wants_gpu && offload_device.device && supports_gpu_offload;
-        if (use_gpu_offload) {
-            offload_devices[0] = offload_device.device;
-            offload_devices[1] = nullptr;
-            model_params.devices = offload_devices.data();
-            model_params.n_gpu_layers = requested_gpu_layers == -2 || requested_gpu_layers == -1 ? -1 : requested_gpu_layers;
-            model_params.split_mode = LLAMA_SPLIT_MODE_NONE;
-            model_params.main_gpu = 0;
-        }
-
-        std::clog << "[SRV] loading model: " << path << '\n';
-        std::clog << "[SRV] llama gpu_offload=" << (supports_gpu_offload ? "supported" : "unavailable")
-                  << " gpu_layers=" << model_params.n_gpu_layers << " main_gpu=" << model_params.main_gpu
-                  << '\n';
-        std::clog << "[SRV] llama offload=" << (use_gpu_offload ? "enabled" : "disabled") << '\n';
-        _model.reset(llama_model_load_from_file(path.c_str(), model_params));
-        if (!_model) throw std::runtime_error("Failed to load model: " + path);
-        _vocab = llama_model_get_vocab(_model.get());
-        std::clog << "[SRV] model loaded\n";
-    }
-
-public:
-    static void initialize() {
-        (void)instance();
-    }
-    static ModelManager& instance() {
-        static ModelManager e;
-        return e;
-    }
-    llama_model* model() {
-        return _model.get();
-    }
-    const llama_vocab* vocab() {
-        return _vocab;
-    }
-    llama_context* new_context(uint32_t n_ctx = 0, uint32_t n_batch = 0) {
-        std::clog << "[SRV] creating context\n";
-        auto params = llama_context_default_params();
-        if (n_ctx != 0) {
-            params.n_ctx = n_ctx;
-        } else if (RuntimePaths::context_length() != 0) {
-            params.n_ctx = RuntimePaths::context_length();
-        }
-        if (n_batch != 0) {
-            params.n_batch = n_batch;
-            params.n_ubatch = n_batch;
-        }
-        params.n_threads = static_cast<int32_t>(RuntimePaths::threads());
-        params.n_threads_batch = static_cast<int32_t>(RuntimePaths::threads());
-        auto ctx = llama_init_from_model(_model.get(), params);
-        if (!ctx) throw std::runtime_error("Failed to create llama context");
-        std::clog << "[SRV] context created threads=" << RuntimePaths::threads() << '\n';
-        return ctx;
-    }
-};
-
 class LlamaEngine : public IEngine {
+    std::shared_ptr<LlamaModelResources> resources_;
+    std::shared_ptr<SharedModelRuntime> runtime_;
     llama_context_ptr llama_ctx;
     llama_context_ptr warmup_ctx;
     struct AdapterDeleter {
@@ -208,27 +70,53 @@ class LlamaEngine : public IEngine {
         size_t decode_calls = 0;
     };
 
-public:
-    explicit LlamaEngine(std::shared_ptr<const AdapterGeneration> adapter_generation = {})
-        : adapter_generation_(std::move(adapter_generation)) {
-        ModelManager::initialize();
+    LlamaEngine(std::shared_ptr<LlamaModelResources> resources,
+                std::shared_ptr<SharedModelRuntime> runtime,
+                std::shared_ptr<const AdapterGeneration> adapter_generation)
+        : resources_(std::move(resources)), runtime_(std::move(runtime)),
+          adapter_generation_(std::move(adapter_generation)) {
+        if (!resources_) throw std::invalid_argument("llama engine requires shared model resources");
         if (adapter_generation_) {
-            adapter_.reset(llama_adapter_lora_init(ModelManager::instance().model(), adapter_generation_->path.c_str()));
+            adapter_.reset(llama_adapter_lora_init(resources_->model(), adapter_generation_->path.c_str()));
             if (!adapter_) throw std::runtime_error("llama.cpp rejected the active LoRA adapter");
         }
-        llama_ctx.reset(ModelManager::instance().new_context());
+        llama_ctx.reset(resources_->new_context());
         attach_adapter(llama_ctx.get());
         mem = llama_get_memory(llama_ctx.get());
         llama_memory_clear(mem, true);
         std::clog << "[SRV] engine ready\n";
     }
 
-    static void validate_adapter(const std::filesystem::path& path) {
-        ModelManager::initialize();
+    static void validate_adapter_with_resources(const std::shared_ptr<LlamaModelResources>& resources,
+                                                const std::filesystem::path& path) {
+        if (!resources) throw std::invalid_argument("adapter validation requires shared model resources");
         std::unique_ptr<llama_adapter_lora, AdapterDeleter> adapter(
-            llama_adapter_lora_init(ModelManager::instance().model(), path.c_str()));
+            llama_adapter_lora_init(resources->model(), path.c_str()));
         if (!adapter) throw std::runtime_error("llama.cpp rejected the GGUF LoRA adapter");
     }
+
+public:
+#if IMESVC_HAS_LLAMA
+    explicit LlamaEngine(std::shared_ptr<SharedModelRuntime> runtime,
+                         std::shared_ptr<const AdapterGeneration> adapter_generation = {})
+        : LlamaEngine(runtime ? runtime->llama_resources() : nullptr, std::move(runtime),
+                      std::move(adapter_generation)) {}
+
+    static void validate_adapter(const std::shared_ptr<SharedModelRuntime>& runtime,
+                                 const std::filesystem::path& path) {
+        if (!runtime) throw std::invalid_argument("adapter validation requires a shared model runtime");
+        validate_adapter_with_resources(runtime->llama_resources(), path);
+    }
+#endif
+
+#ifdef _WIN32
+    explicit LlamaEngine(std::shared_ptr<const AdapterGeneration> adapter_generation = {})
+        : LlamaEngine(legacy_llama_resources(), {}, std::move(adapter_generation)) {}
+
+    static void validate_adapter(const std::filesystem::path& path) {
+        validate_adapter_with_resources(legacy_llama_resources(), path);
+    }
+#endif
 
     void ready() override {
         const auto now = std::chrono::steady_clock::now();
@@ -238,7 +126,7 @@ public:
         }
 
         if (!warmup_ctx) {
-            warmup_ctx.reset(ModelManager::instance().new_context(8, 1));
+            warmup_ctx.reset(resources_->new_context(8, 1));
             attach_adapter(warmup_ctx.get());
         }
 
@@ -271,7 +159,7 @@ public:
         PredictTiming timing;
 
         const auto tokenize_start = std::chrono::steady_clock::now();
-        auto& tok = Tokenizer::instance();
+        const auto& tok = resources_->tokenizer();
         std::vector<int> new_tokens = tok.tokenize(context, padding);
         if (padding.size() > 191U) {
             throw std::runtime_error("prediction readings exceed the native 384-token model window");
@@ -310,7 +198,12 @@ public:
             PredictResult r;
             if (!entry.is_chosen) {
                 const auto candidate_start = std::chrono::steady_clock::now();
+#ifdef _WIN32
                 auto candidates = HanziMapEngine::instance().lookup_all(entry.bpmf);
+#else
+                if (!runtime_) throw std::logic_error("POSIX llama engine lost its shared runtime");
+                auto candidates = runtime_->lookup(entry.bpmf);
+#endif
                 if (!candidates.empty()) {
                     std::vector<llama_token> cand_tokens;
                     std::map<llama_token, char32_t> inv;
@@ -397,8 +290,8 @@ private:
         return static_cast<double>(us) / 1000.0;
     }
 
-    static llama_token warmup_token() {
-        const llama_vocab* vocab = ModelManager::instance().vocab();
+    llama_token warmup_token() const {
+        const llama_vocab* vocab = resources_->vocab();
         const llama_token candidates[] = {
             llama_vocab_bos(vocab),
             llama_vocab_eos(vocab),

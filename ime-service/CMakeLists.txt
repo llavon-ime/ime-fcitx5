@@ -21,6 +21,7 @@ set(IMESVC_LIBTORCH_SHA256 "${IMESVC_DEFAULT_LIBTORCH_SHA256}"
 set(IMESVC_TEST_BASE_SAFETENSORS "" CACHE FILEPATH "Optional F32 safetensors fixture for full trainer tests")
 set(IMESVC_TEST_BASE_SHA256 "" CACHE STRING "SHA256 of IMESVC_TEST_BASE_SAFETENSORS")
 set(IMESVC_TEST_BASE_GGUF "" CACHE FILEPATH "Optional F16/F32 GGUF fixture for llama.cpp parity tests")
+set(IMESVC_TEST_RUNTIME_GGUF "" CACHE FILEPATH "Optional deployed Q4 GGUF fixture for personalization-effect tests")
 
 set(IMESVC_TARGET llavon-ime-service)
 set(IMESVC_COMMON_SOURCES
@@ -31,6 +32,7 @@ set(IMESVC_COMMON_SOURCES
 if(WIN32)
     add_executable(${IMESVC_TARGET}
         ${IMESVC_COMMON_SOURCES}
+        src/engine/llama_resources.cpp
         src/platform/windows_named_pipe_server.hpp
     )
 else()
@@ -70,6 +72,7 @@ else()
             set(IMESVC_UTF8_TARGET utf8::cpp)
         endif()
         if(TARGET llama AND TARGET reflectcpp::reflectcpp AND IMESVC_UTF8_TARGET)
+            target_sources(${IMESVC_TARGET} PRIVATE src/engine/llama_resources.cpp)
             target_compile_definitions(${IMESVC_TARGET} PRIVATE IMESVC_HAS_LLAMA=1)
             target_link_libraries(${IMESVC_TARGET} PRIVATE llama reflectcpp::reflectcpp ${IMESVC_UTF8_TARGET})
             message(STATUS "ime-service: optional llama.cpp session engine enabled")
@@ -122,6 +125,19 @@ if(IMESVC_BUILD_TRAINER)
     endif()
     find_package(ggml CONFIG REQUIRED)
     find_package(llama CONFIG REQUIRED)
+    if(IMESVC_BUILD_TESTS)
+        find_package(reflectcpp CONFIG REQUIRED)
+        find_package(utf8cpp CONFIG REQUIRED)
+        if(NOT IMESVC_UTF8_TARGET)
+            if(TARGET utf8cpp::utf8cpp)
+                set(IMESVC_UTF8_TARGET utf8cpp::utf8cpp)
+            elseif(TARGET utf8::cpp)
+                set(IMESVC_UTF8_TARGET utf8::cpp)
+            else()
+                message(FATAL_ERROR "trainer tokenizer parity tests require utf8cpp")
+            endif()
+        endif()
+    endif()
     add_executable(llavon-ime-trainer
         src/trainer/main.cpp
         src/trainer/trainer.cpp
@@ -276,6 +292,7 @@ if(IMESVC_BUILD_TESTS AND NOT WIN32)
     if(IMESVC_BUILD_TRAINER)
         add_executable(ml_tests
             tests/ml_tests.cpp
+            src/ml/llama_model.cpp
             src/ml/lora_linear.cpp
             src/ml/training_dataset.cpp
             src/ml/checkpoint.cpp
@@ -288,7 +305,8 @@ if(IMESVC_BUILD_TESTS AND NOT WIN32)
         target_compile_definitions(ml_tests PRIVATE
             IMESVC_TEST_TABLES_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/table")
         target_link_libraries(ml_tests PRIVATE torch nlohmann_json::nlohmann_json
-                                              ${IMESVC_SQLITE_TARGET} ggml::ggml llama)
+                                              ${IMESVC_SQLITE_TARGET} ggml::ggml llama
+                                              reflectcpp::reflectcpp ${IMESVC_UTF8_TARGET})
         if(TORCH_CXX_FLAGS)
             target_compile_options(ml_tests PRIVATE ${IMESVC_TORCH_CXX_FLAGS})
         endif()
@@ -346,6 +364,32 @@ if(IMESVC_BUILD_TESTS AND NOT WIN32)
         else()
             target_compile_options(trainer_smoke_test PRIVATE -Wall -Wextra -Wpedantic)
         endif()
+        add_executable(personalization_effect_test
+            tests/personalization_effect_test.cpp
+            src/trainer/trainer.cpp
+            src/ml/safetensors_reader.cpp
+            src/ml/llama_model.cpp
+            src/ml/lora_linear.cpp
+            src/ml/training_dataset.cpp
+            src/ml/checkpoint.cpp
+            src/ml/gguf_lora_writer.cpp
+            src/training/feedback_store.cpp
+            src/training/training_orchestrator.cpp
+            src/training/sha256.cpp
+        )
+        target_compile_features(personalization_effect_test PRIVATE cxx_std_23)
+        target_include_directories(personalization_effect_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        target_link_libraries(personalization_effect_test PRIVATE torch nlohmann_json::nlohmann_json
+                                                             ${IMESVC_SQLITE_TARGET} ggml::ggml llama
+                                                             ${IMESVC_UTF8_TARGET} Threads::Threads)
+        if(TORCH_CXX_FLAGS)
+            target_compile_options(personalization_effect_test PRIVATE ${IMESVC_TORCH_CXX_FLAGS})
+        endif()
+        if(MSVC)
+            target_compile_options(personalization_effect_test PRIVATE /W4 /WX /utf-8)
+        else()
+            target_compile_options(personalization_effect_test PRIVATE -Wall -Wextra -Wpedantic)
+        endif()
         if(IMESVC_TEST_BASE_SAFETENSORS AND IMESVC_TEST_BASE_SHA256 AND IMESVC_TEST_BASE_GGUF)
             set(IMESVC_TEST_TABLES_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/table")
             if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../tables/bopomofo_char.json")
@@ -358,6 +402,16 @@ if(IMESVC_BUILD_TESTS AND NOT WIN32)
                 "${IMESVC_TEST_BASE_SAFETENSORS}" "${IMESVC_TEST_BASE_SHA256}"
                 "${IMESVC_TEST_BASE_GGUF}" "${IMESVC_TEST_TABLES_DIRECTORY}")
             set_tests_properties(model_parity_test trainer_smoke_test PROPERTIES TIMEOUT 900)
+        endif()
+        if(IMESVC_TEST_BASE_SAFETENSORS AND IMESVC_TEST_BASE_SHA256 AND IMESVC_TEST_RUNTIME_GGUF)
+            set(IMESVC_TEST_TABLES_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/table")
+            if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../tables/bopomofo_char.json")
+                set(IMESVC_TEST_TABLES_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../tables")
+            endif()
+            add_test(NAME personalization_effect_test COMMAND personalization_effect_test
+                "${IMESVC_TEST_BASE_SAFETENSORS}" "${IMESVC_TEST_BASE_SHA256}"
+                "${IMESVC_TEST_RUNTIME_GGUF}" "${IMESVC_TEST_TABLES_DIRECTORY}")
+            set_tests_properties(personalization_effect_test PROPERTIES TIMEOUT 1800 LABELS "slow;personalization")
         endif()
     endif()
 endif()

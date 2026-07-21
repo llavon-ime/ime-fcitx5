@@ -361,7 +361,7 @@ public:
         std::clog << "[SRV] engine backend: llama\n";
 
         try {
-            ModelManager::initialize();
+            (void)legacy_llama_resources();
             std::clog << "[SRV] model loaded\n";
         } catch (const std::exception& e) {
             std::cerr << "[ERR] model load failed: " << e.what() << std::endl;

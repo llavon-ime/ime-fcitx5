@@ -12,7 +12,15 @@
 #include <unordered_map>
 #include <vector>
 
+#ifndef IMESVC_HAS_LLAMA
+#define IMESVC_HAS_LLAMA 0
+#endif
+
 namespace imesvc {
+
+#if IMESVC_HAS_LLAMA
+class LlamaModelResources;
+#endif
 
 struct RuntimeConfig {
     std::filesystem::path model_path;
@@ -53,6 +61,9 @@ public:
     [[nodiscard]] ModelRuntimeStatus status() const;
     void record_inference_loaded(bool adapter_loaded) noexcept;
     void record_inference_failure(std::string error) noexcept;
+#if IMESVC_HAS_LLAMA
+    [[nodiscard]] std::shared_ptr<LlamaModelResources> llama_resources() const;
+#endif
 
     std::vector<char32_t> lookup(std::u16string_view bopomofo) const;
     [[nodiscard]] std::shared_ptr<const AdapterGeneration> adapter_generation() const;
@@ -79,6 +90,10 @@ private:
     std::shared_ptr<const AdapterGeneration> adapter_generation_;
     std::uint64_t next_adapter_revision_ = 1;
     std::function<void(std::string)> adapter_failure_handler_;
+#if IMESVC_HAS_LLAMA
+    mutable std::once_flag llama_resources_once_;
+    mutable std::shared_ptr<LlamaModelResources> llama_resources_;
+#endif
 };
 
 }  // namespace imesvc
