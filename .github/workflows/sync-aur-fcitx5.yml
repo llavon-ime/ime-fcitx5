@@ -1,4 +1,4 @@
-name: Sync fcitx5 AUR package repo
+name: Publish fcitx5 AUR package
 
 on:
   push:
@@ -10,16 +10,14 @@ permissions:
   contents: read
 
 env:
-  AUR_GITHUB_REPO: llavon-ime/aur-llavon-ime-fcitx5-git
   AUR_PACKAGE_DIR: packaging/aur/llavon-ime-fcitx5-git
+  AUR_REPOSITORY: ssh://aur@aur.archlinux.org/llavon-ime-fcitx5-git.git
 
 jobs:
-  sync-aur-github-repo:
-    name: Sync GitHub AUR repo
+  publish-aur:
+    name: Publish package to AUR
     if: github.repository_owner == 'llavon-ime'
     runs-on: ubuntu-latest
-    env:
-      AUR_GITHUB_TOKEN: ${{ secrets.AUR_GITHUB_TOKEN }}
 
     steps:
       - name: Checkout ime-fcitx5
@@ -42,20 +40,57 @@ jobs:
           fi
           echo "pkgver=${pkgver}" >> "${GITHUB_OUTPUT}"
 
-      - name: Check AUR GitHub token
+      - name: Configure AUR SSH access
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          if [[ -z "${AUR_GITHUB_TOKEN}" ]]; then
-            echo "Set the AUR_GITHUB_TOKEN repository secret with write access to ${AUR_GITHUB_REPO}." >&2
+          if [[ -z "${AUR_SSH_PRIVATE_KEY}" ]]; then
+            echo "Set the AUR_SSH_PRIVATE_KEY repository secret to an SSH key registered with AUR." >&2
             exit 1
           fi
 
-      - name: Checkout AUR GitHub repo
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.AUR_GITHUB_REPO }}
-          path: aur-repo
-          token: ${{ secrets.AUR_GITHUB_TOKEN }}
+          ssh_dir="${HOME}/.ssh"
+          key_file="${ssh_dir}/aur"
+          known_hosts="${ssh_dir}/known_hosts"
+          install -d -m 700 "${ssh_dir}"
+          printf '%s\n' "${AUR_SSH_PRIVATE_KEY}" > "${key_file}"
+          chmod 600 "${key_file}"
+
+          ssh-keyscan -T 10 -t ed25519,ecdsa,rsa aur.archlinux.org > "${known_hosts}"
+          expected_fingerprints="$(
+            printf '%s\n' \
+              'SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4' \
+              'SHA256:uTa/0PndEgPZTf76e1DFqXKJEXKsn7m9ivhLQtzGOCI' \
+              'SHA256:5s5cIyReIfNNVGRFdDbe3hdYiI5OelHGpw2rOUud3Q8' |
+              LC_ALL=C sort
+          )"
+          actual_fingerprints="$(
+            ssh-keygen -lf "${known_hosts}" -E sha256 |
+              awk '{print $2}' |
+              LC_ALL=C sort -u
+          )"
+          if [[ "${actual_fingerprints}" != "${expected_fingerprints}" ]]; then
+            printf 'AUR SSH host key verification failed.\nExpected:\n%s\nActual:\n%s\n' \
+              "${expected_fingerprints}" "${actual_fingerprints}" >&2
+            exit 1
+          fi
+          chmod 600 "${known_hosts}"
+
+          cat > "${ssh_dir}/config" <<EOF
+          Host aur.archlinux.org
+            HostName aur.archlinux.org
+            User aur
+            IdentityFile ${key_file}
+            BatchMode yes
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ${known_hosts}
+          EOF
+          chmod 600 "${ssh_dir}/config"
+
+      - name: Clone AUR package repository
+        run: git clone "${AUR_REPOSITORY}" aur-repo
 
       - name: Update AUR package files
         env:
@@ -79,18 +114,18 @@ jobs:
           File.write(srcinfo, text)
           RUBY
 
-      - name: Push AUR GitHub repo update
+      - name: Push AUR package update
         working-directory: aur-repo
         env:
           PKGVER: ${{ steps.pkgver.outputs.pkgver }}
         run: |
           set -euo pipefail
-          if git diff --quiet -- PKGBUILD .SRCINFO README.md; then
-            echo "AUR GitHub repo is already up to date."
+          git add PKGBUILD .SRCINFO README.md
+          if git diff --cached --quiet; then
+            echo "AUR package repository is already up to date."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add PKGBUILD .SRCINFO README.md
           git commit -m "Update llavon-ime-fcitx5-git to ${PKGVER}"
-          git push
+          git push origin HEAD:master
