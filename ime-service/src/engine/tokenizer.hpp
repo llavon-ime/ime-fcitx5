@@ -41,6 +41,25 @@ public:
             rfl::json::load<std::unordered_map<std::string, int>>(resolve_table_path("bpmf.json").string()).value();
     }
 
+    void validate_vocab_size(std::size_t vocabulary_size) const {
+        if (vocabulary_size == 0) throw std::runtime_error("tokenizer vocabulary is empty");
+        const auto validate = [vocabulary_size](const auto& table) {
+            for (const auto& [text, token] : table) {
+                (void)text;
+                if (token < 0 || static_cast<std::size_t>(token) >= vocabulary_size) {
+                    throw std::runtime_error("tokenizer table contains an out-of-range token id");
+                }
+            }
+        };
+        validate(char_table);
+        validate(latin_table);
+        validate(special_table);
+        validate(bpmf_table);
+        for (const auto* required : {"<BOS>", "<SEP>", "<UNK>", "<LATIN>", "<SP>"}) {
+            if (!special_table.contains(required)) throw std::runtime_error("tokenizer table is missing a required special token");
+        }
+    }
+
 private:
     static bool is_alpha(int c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
     static bool is_digit(int c) { return (c >= '0' && c <= '9'); }

@@ -21,26 +21,30 @@ public:
     }
 
     std::vector<std::vector<char32_t>> predict(const protocol::PredictRequest& request) override {
+        auto current_generation = runtime_->adapter_generation();
+        if (current_generation != adapter_generation_) {
+            engine_.reset();
+            adapter_generation_ = std::move(current_generation);
+        }
         if (!engine_) {
             try {
                 engine_ = std::make_unique<LlamaEngine>(runtime_, adapter_generation_);
-                runtime_->record_inference_loaded(adapter_generation_ != nullptr);
-            } catch (const std::exception& error) {
-                if (!adapter_generation_) {
-                    runtime_->record_inference_failure(error.what());
-                    throw;
-                }
+                runtime_->record_inference_loaded(adapter_generation_);
+            } catch (const AdapterLoadError&) {
                 // A published adapter can become unreadable after an external filesystem fault.
                 // Drop the in-memory generation and keep inference available on the verified base model.
-                runtime_->reject_active_adapter(adapter_generation_->version);
+                runtime_->reject_active_adapter(adapter_generation_);
+                adapter_generation_.reset();
                 try {
                     engine_ = std::make_unique<LlamaEngine>(runtime_);
-                    adapter_generation_.reset();
-                    runtime_->record_inference_loaded(false);
+                    runtime_->record_inference_loaded(adapter_generation_);
                 } catch (const std::exception& error) {
-                    runtime_->record_inference_failure(error.what());
+                    runtime_->record_inference_failure(adapter_generation_, error.what());
                     throw;
                 }
+            } catch (const std::exception& error) {
+                runtime_->record_inference_failure(adapter_generation_, error.what());
+                throw;
             }
         }
         std::vector<PaddingEntry> padding;

@@ -12,6 +12,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -105,6 +106,25 @@ bool safe_regular_file(const std::filesystem::path& path) {
     return !error && !std::filesystem::is_symlink(status) && std::filesystem::is_regular_file(status);
 }
 
+void require_managed_directory_path(const std::filesystem::path& root,
+                                    const std::filesystem::path& candidate) {
+    const auto normalized_root = std::filesystem::absolute(root).lexically_normal();
+    const auto normalized_candidate = std::filesystem::absolute(candidate).lexically_normal();
+    const auto relative = normalized_candidate.lexically_relative(normalized_root);
+    if (relative.empty() || relative == "." || relative.is_absolute() || *relative.begin() == "..") {
+        throw std::runtime_error("adapter path escapes the private training data directory");
+    }
+    auto current = normalized_root;
+    for (const auto& component : relative) {
+        current /= component;
+        std::error_code error;
+        const auto status = std::filesystem::symlink_status(current, error);
+        if (error == std::errc::no_such_file_or_directory) break;
+        if (error) throw std::runtime_error("inspect adapter path component failed: " + error.message());
+        if (std::filesystem::is_symlink(status)) throw std::runtime_error("adapter path contains a symlink component");
+    }
+}
+
 void create_private_directory(const std::filesystem::path& directory) {
     std::error_code error;
     const auto existing = std::filesystem::symlink_status(directory, error);
@@ -157,6 +177,7 @@ void validate_manifest_identity(const nlohmann::json& manifest, const AdapterPub
         manifest.at("candidate_map_sha256").get<std::string>() != options.candidate_map_sha256 ||
         manifest.at("training_code_version").get<std::string>() != options.training_code_version ||
         manifest.at("seed").get<std::uint64_t>() != options.training_seed ||
+        manifest.at("rank").get<std::uint64_t>() != 8 || manifest.at("alpha").get<double>() != 16.0 ||
         manifest.at("epochs").get<std::uint64_t>() != 1 || manifest.at("warmup_steps").get<std::uint64_t>() == 0 ||
         !std::isfinite(manifest.at("training_loss").get<double>()) || manifest.at("training_loss").get<double>() < 0.0 ||
         manifest.at("created_at").get<std::int64_t>() <= 0) {
@@ -166,12 +187,28 @@ void validate_manifest_identity(const nlohmann::json& manifest, const AdapterPub
     if (!tensors.is_array() || tensors.size() != 20U * 7U * 2U) {
         throw std::runtime_error("adapter manifest tensor metadata is incomplete");
     }
+    std::unordered_map<std::string, std::vector<std::int64_t>> expected;
+    for (std::size_t layer = 0; layer < 20U; ++layer) {
+        const auto prefix = "blk." + std::to_string(layer) + ".";
+        const auto add = [&expected, &prefix](const char* projection, std::int64_t input, std::int64_t output) {
+            expected.emplace(prefix + projection + ".weight.lora_a", std::vector<std::int64_t>{8, input});
+            expected.emplace(prefix + projection + ".weight.lora_b", std::vector<std::int64_t>{output, 8});
+        };
+        add("attn_q", 1024, 1024);
+        add("attn_k", 1024, 1024);
+        add("attn_v", 1024, 1024);
+        add("attn_output", 1024, 1024);
+        add("ffn_gate", 1024, 2048);
+        add("ffn_up", 1024, 2048);
+        add("ffn_down", 2048, 1024);
+    }
     std::unordered_set<std::string> names;
     for (const auto& tensor : tensors) {
         const auto name = tensor.at("name").get<std::string>();
         const auto shape = tensor.at("shape").get<std::vector<std::int64_t>>();
-        if (name.empty() || !names.insert(name).second || tensor.at("dtype").get<std::string>() != "F32" ||
-            shape.size() != 2 || std::any_of(shape.begin(), shape.end(), [](std::int64_t dimension) { return dimension <= 0; })) {
+        const auto expected_tensor = expected.find(name);
+        if (!names.insert(name).second || expected_tensor == expected.end() || shape != expected_tensor->second ||
+            tensor.at("dtype").get<std::string>() != "F32") {
             throw std::runtime_error("adapter manifest tensor metadata is invalid");
         }
     }
@@ -217,26 +254,24 @@ ValidatedStage validate_stage(const TrainingRunContext& run, const AdapterPublis
 AdapterPublisher::AdapterPublisher(FeedbackStore& store, SharedModelRuntime& runtime, AdapterPublisherOptions options)
     : store_(store), runtime_(runtime), options_(std::move(options)) {
     if (options_.directory.empty()) options_.directory = store_.data_directory() / "adapters";
-    options_.directory = std::filesystem::absolute(options_.directory);
-    const auto data_directory = std::filesystem::absolute(store_.data_directory());
-    const auto relative = options_.directory.lexically_relative(data_directory);
-    if (relative.empty() || relative == "." || relative.is_absolute() || *relative.begin() == "..") {
-        throw std::invalid_argument("published LoRA adapters must stay inside the private training data directory");
-    }
-    auto current = data_directory;
-    for (const auto& component : relative) {
-        current /= component;
-        std::error_code path_error;
-        const auto status = std::filesystem::symlink_status(current, path_error);
-        if (!path_error && std::filesystem::is_symlink(status)) {
-            throw std::invalid_argument("published LoRA adapter path contains a symlink component");
-        }
-    }
+    options_.directory = std::filesystem::absolute(options_.directory).lexically_normal();
+    const auto data_directory = std::filesystem::absolute(store_.data_directory()).lexically_normal();
+    require_managed_directory_path(data_directory, options_.directory);
 }
 
 void AdapterPublisher::garbage_collect(std::string_view active_version) {
+    require_managed_directory_path(store_.data_directory(), options_.directory);
     std::error_code error;
     if (!std::filesystem::is_directory(options_.directory, error) || error) return;
+    std::unordered_set<std::string> protected_versions;
+    if (!active_version.empty()) {
+        const auto lineage = store_.adapter_lineage(std::string(active_version)).get();
+        if (!lineage.operation.succeeded) return;
+        constexpr std::size_t kRetainedLineageVersions = 3;
+        for (std::size_t index = 0; index < std::min(lineage.adapters.size(), kRetainedLineageVersions); ++index) {
+            protected_versions.insert(lineage.adapters[index].version);
+        }
+    }
     struct Candidate {
         std::filesystem::path path;
         std::filesystem::file_time_type modified;
@@ -245,7 +280,7 @@ void AdapterPublisher::garbage_collect(std::string_view active_version) {
     for (const auto& entry : std::filesystem::directory_iterator(options_.directory, error)) {
         if (error) return;
         const auto name = entry.path().filename().string();
-        if (name == active_version) continue;
+        if (name == active_version || protected_versions.contains(name)) continue;
         const auto status = entry.symlink_status(error);
         if (error) return;
         if (std::filesystem::is_symlink(status)) continue;
@@ -257,8 +292,9 @@ void AdapterPublisher::garbage_collect(std::string_view active_version) {
     std::sort(candidates.begin(), candidates.end(), [](const Candidate& left, const Candidate& right) {
         return left.modified > right.modified;
     });
-    const std::size_t inactive_to_keep = active_version.empty() ? 3U : 2U;
+    const std::size_t inactive_to_keep = active_version.empty() ? 3U : 0U;
     for (std::size_t index = inactive_to_keep; index < candidates.size(); ++index) {
+        require_managed_directory_path(store_.data_directory(), candidates[index].path);
         std::filesystem::remove_all(candidates[index].path, error);
         if (error) return;
     }
@@ -266,7 +302,6 @@ void AdapterPublisher::garbage_collect(std::string_view active_version) {
 
 StoreOperationResult AdapterPublisher::restore_active_adapter() {
     std::lock_guard lock(mutex_);
-    std::string version;
     try {
         const auto record = store_.active_adapter().get();
         if (!record.operation.succeeded) return record.operation;
@@ -274,21 +309,32 @@ StoreOperationResult AdapterPublisher::restore_active_adapter() {
             garbage_collect({});
             return success();
         }
-        version = record.adapter->version;
+        require_managed_directory_path(store_.data_directory(), options_.directory / record.adapter->version);
         const auto path = options_.directory / record.adapter->version / "adapter.gguf";
         const auto manifest_path = options_.directory / record.adapter->version / "manifest.json";
         if (record.adapter->base_model_hash != options_.base_model_sha256 || !safe_regular_file(path) ||
             !safe_regular_file(manifest_path) || sha256_file(path) != record.adapter->sha256) {
-            (void)store_.deactivate_adapter(record.adapter->version).get();
+            (void)store_.reject_adapter(record.adapter->version).get();
             return failure("active LoRA adapter failed integrity validation and was disabled");
         }
-        validate_manifest_identity(read_manifest(manifest_path), options_);
-        if (options_.validate_loadable) options_.validate_loadable(path);
+        try {
+            validate_manifest_identity(read_manifest(manifest_path), options_);
+        } catch (const std::exception& error) {
+            (void)store_.reject_adapter(record.adapter->version).get();
+            return failure(std::string("active LoRA adapter manifest is invalid: ") + error.what());
+        }
+        if (options_.validate_loadable) {
+            try {
+                options_.validate_loadable(path);
+            } catch (const AdapterLoadError& error) {
+                (void)store_.reject_adapter(record.adapter->version).get();
+                return failure(error.what());
+            }
+        }
         runtime_.activate_adapter(record.adapter->version, path, record.adapter->sha256);
         garbage_collect(record.adapter->version);
         return success();
     } catch (const std::exception& error) {
-        if (!version.empty()) (void)store_.deactivate_adapter(version).get();
         return failure(error.what());
     }
 }
@@ -302,7 +348,9 @@ StoreOperationResult AdapterPublisher::handle_completed_run(const TrainingRunCon
             std::filesystem::remove_all(run.staging_directory, error);
             return error ? failure("remove successful shadow-smoke staging failed: " + error.message()) : success();
         }
+        require_managed_directory_path(store_.data_directory(), options_.directory);
         create_private_directory(options_.directory);
+        require_managed_directory_path(store_.data_directory(), options_.directory);
         const auto version = "lora-" + run.run_id + "-" + stage.adapter_sha256.substr(0, 16);
         const auto destination = options_.directory / version;
         if (std::filesystem::exists(destination)) return failure("refusing to overwrite an existing LoRA adapter version");
@@ -311,13 +359,16 @@ StoreOperationResult AdapterPublisher::handle_completed_run(const TrainingRunCon
         if (error) return failure("atomic LoRA adapter publication failed: " + error.message());
         const auto published_adapter = destination / "adapter.gguf";
         const auto published_manifest = destination / "manifest.json";
+        bool activation_committed = false;
         try {
+            require_managed_directory_path(store_.data_directory(), destination);
             require_private_artifact(published_adapter);
             require_private_artifact(published_manifest);
             flush_path(published_adapter);
             flush_path(published_manifest);
             flush_path(destination);
             flush_path(options_.directory);
+            auto prepared = runtime_.prepare_adapter(version, published_adapter, stage.adapter_sha256);
             const auto activate = [&]() -> StoreOperationResult {
                 AdapterRecord record;
                 record.version = version;
@@ -327,23 +378,29 @@ StoreOperationResult AdapterPublisher::handle_completed_run(const TrainingRunCon
                 record.active = true;
                 const auto stored = store_.record_adapter_and_finish_training(std::move(record), run.run_id).get();
                 if (!stored.succeeded) return stored;
-                try {
-                    runtime_.activate_adapter(version, published_adapter, stage.adapter_sha256);
-                } catch (...) {
-                    (void)store_.deactivate_adapter(version).get();
-                    throw;
-                }
+                activation_committed = true;
+                runtime_.install_prepared_adapter(std::move(prepared));
                 return success();
             };
             const auto activated = options_.transition_activation ? options_.transition_activation(run, activate) : activate();
             if (!activated.succeeded) {
-                std::filesystem::remove_all(destination, error);
+                if (activation_committed) return success();
+                try {
+                    require_managed_directory_path(store_.data_directory(), destination);
+                    std::filesystem::remove_all(destination, error);
+                } catch (...) {
+                }
                 return activated;
             }
             garbage_collect(version);
             return success();
         } catch (...) {
-            std::filesystem::remove_all(destination, error);
+            if (activation_committed) return success();
+            try {
+                require_managed_directory_path(store_.data_directory(), destination);
+                std::filesystem::remove_all(destination, error);
+            } catch (...) {
+            }
             throw;
         }
     } catch (const std::exception& error) {
@@ -354,10 +411,14 @@ StoreOperationResult AdapterPublisher::handle_completed_run(const TrainingRunCon
 StoreOperationResult AdapterPublisher::delete_all_artifacts() {
     std::lock_guard lock(mutex_);
     try {
-        runtime_.clear_active_adapter();
-        std::error_code error;
-        std::filesystem::remove_all(options_.directory, error);
-        return error ? failure("remove published LoRA adapters failed: " + error.message()) : success();
+        const auto remove = [&]() -> StoreOperationResult {
+            runtime_.clear_active_adapter();
+            require_managed_directory_path(store_.data_directory(), options_.directory);
+            std::error_code error;
+            std::filesystem::remove_all(options_.directory, error);
+            return error ? failure("remove published LoRA adapters failed: " + error.message()) : success();
+        };
+        return options_.transition_adapter ? options_.transition_adapter(remove) : remove();
     } catch (const std::exception& error) {
         return failure(error.what());
     }
@@ -389,29 +450,43 @@ StoreOperationResult AdapterPublisher::evaluate_rollback() {
                                    static_cast<double>(previous_stats.eligible_target_characters);
         if (current_rate <= previous_rate * kMaximumCorrectionRateRatio) return success();
 
+        const auto rollback = [&]() -> StoreOperationResult {
         if (previous.adapter) {
+            require_managed_directory_path(store_.data_directory(), options_.directory / previous.adapter->version);
             const auto path = options_.directory / previous.adapter->version / "adapter.gguf";
             const auto manifest = options_.directory / previous.adapter->version / "manifest.json";
             if (previous.adapter->base_model_hash != options_.base_model_sha256 || !safe_regular_file(path) ||
                 !safe_regular_file(manifest) || sha256_file(path) != previous.adapter->sha256) {
+                (void)store_.reject_adapter(previous.adapter->version).get();
                 return failure("rollback adapter failed integrity validation");
             }
-            validate_manifest_identity(read_manifest(manifest), options_);
-            if (options_.validate_loadable) options_.validate_loadable(path);
-            const auto stored = store_.activate_adapter(previous.adapter->version).get();
-            if (!stored.succeeded) return stored;
             try {
-                runtime_.activate_adapter(previous.adapter->version, path, previous.adapter->sha256);
-            } catch (...) {
-                (void)store_.activate_adapter(active.adapter->version).get();
-                throw;
+                validate_manifest_identity(read_manifest(manifest), options_);
+            } catch (const std::exception& error) {
+                (void)store_.reject_adapter(previous.adapter->version).get();
+                return failure(std::string("rollback adapter manifest is invalid: ") + error.what());
             }
+            if (options_.validate_loadable) {
+                try {
+                    options_.validate_loadable(path);
+                } catch (const AdapterLoadError& error) {
+                    (void)store_.reject_adapter(previous.adapter->version).get();
+                    return failure(error.what());
+                }
+            }
+            auto prepared = runtime_.prepare_adapter(previous.adapter->version, path, previous.adapter->sha256);
+            const auto stored = store_.rollback_adapter(active.adapter->version, previous.adapter->version).get();
+            if (!stored.succeeded) return stored;
+            runtime_.install_prepared_adapter(std::move(prepared));
         } else {
-            const auto stored = store_.activate_adapter({}).get();
+            const auto stored = store_.rollback_adapter(active.adapter->version, {}).get();
             if (!stored.succeeded) return stored;
             runtime_.clear_active_adapter();
         }
+        garbage_collect(previous.adapter ? previous.adapter->version : std::string_view{});
         return success();
+        };
+        return options_.transition_adapter ? options_.transition_adapter(rollback) : rollback();
     } catch (const std::exception& error) {
         return failure(error.what());
     }

@@ -89,8 +89,10 @@ Config to_shared_config(const ImeFcitxConfig& config) {
     shared.esc_clears_entire_buffer = *config.escKeyClearsEntireComposingBuffer;
     shared.caps_lock_inputs_bopomofo = *config.capsLockInputsBopomofo;
     shared.personal_learning_enabled = *config.personalLearningEnabled;
+#if IME_FCITX5_ENABLE_LORA_CONFIG
     shared.lora_training_enabled = *config.loraTrainingEnabled;
     shared.training_base_safetensors_path = *config.trainingBaseSafetensorsPath;
+#endif
     return shared;
 }
 
@@ -113,8 +115,12 @@ void apply_shared_config(ImeFcitxConfig& target, const Config& source) {
     (void)target.escKeyClearsEntireComposingBuffer.setValue(source.esc_clears_entire_buffer);
     (void)target.capsLockInputsBopomofo.setValue(source.caps_lock_inputs_bopomofo);
     (void)target.personalLearningEnabled.setValue(source.personal_learning_enabled);
+#if IME_FCITX5_ENABLE_LORA_CONFIG
     (void)target.loraTrainingEnabled.setValue(source.lora_training_enabled);
     (void)target.trainingBaseSafetensorsPath.setValue(source.training_base_safetensors_path);
+#else
+    (void)source;
+#endif
 }
 
 }  // namespace ime::fcitx5

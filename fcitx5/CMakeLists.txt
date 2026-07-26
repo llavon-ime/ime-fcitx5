@@ -10,6 +10,7 @@ include(GNUInstallDirs)
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 
 option(IME_FCITX5_BUILD_TESTS "Build fcitx5 tests" ON)
+option(IME_FCITX5_ENABLE_LORA_CONFIG "Expose LoRA training controls for builds that package the native trainer" OFF)
 set(IME_FCITX5_SERVICE_NAME "llavon-ime-service" CACHE STRING "Installed fcitx5 service executable name")
 set(IME_FCITX5_DISPLAY_VERSION "${PROJECT_VERSION}" CACHE STRING "Version displayed in the fcitx5 configuration UI")
 set(IME_FCITX5_FCITX_PLUGIN_DIR "plugin" CACHE STRING "macOS fcitx5-macos plugin metadata install directory")
@@ -95,6 +96,7 @@ if(Fcitx5_FOUND AND NOT WIN32)
         IME_FCITX5_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
         IME_FCITX5_INSTALLED_TABLE_PATH="${IME_FCITX5_INSTALLED_TABLE_PATH}"
         IME_FCITX5_DISPLAY_VERSION="${IME_FCITX5_DISPLAY_VERSION}"
+        IME_FCITX5_ENABLE_LORA_CONFIG=$<BOOL:${IME_FCITX5_ENABLE_LORA_CONFIG}>
     )
     target_compile_options(llavon-ime-addon PRIVATE -Wall -Wextra -Wpedantic)
     set_target_properties(llavon-ime-addon PROPERTIES PREFIX "")

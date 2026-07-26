@@ -2,6 +2,7 @@
 
 #include <fcitx/inputcontextproperty.h>
 
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <functional>
@@ -31,9 +32,11 @@ public:
     std::optional<std::uint64_t> inflight_request_id;
     std::uint64_t inflight_revision = 0;
     std::u16string prediction_key;
+    std::size_t prediction_revision = 0;
     std::u16string prediction_context;
     std::string prediction_base_model_hash;
     protocol::EventId prediction_feedback_token{};
+    std::u16string prediction_feedback_key;
     bool feedback_sensitive = false;
     std::vector<std::size_t> inflight_segment_indices;
     bool prediction_pending = false;
@@ -45,12 +48,14 @@ public:
     void invalidate_generation() {
         ++generation;
         inflight_request_id.reset();
+        prediction_revision = 0;
         prediction_pending = false;
         prediction_dirty = false;
         inflight_segment_indices.clear();
         prediction_context.clear();
         prediction_base_model_hash.clear();
         prediction_feedback_token = {};
+        prediction_feedback_key.clear();
         feedback_sensitive = false;
     }
 

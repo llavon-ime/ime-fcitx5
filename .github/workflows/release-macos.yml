@@ -16,8 +16,12 @@ permissions:
 
 env:
   FCITX5_MACOS_VERSION: "0.3.4"
+  FCITX5_MACOS_SHA256: "f52bf3a6cb407368ccaf841a7a1b8da433ae1c7771dae250f283c9966f0e1280"
   MODEL_REPOSITORY: "tony65535/llavon-ime-llama-250m-GGUF"
+  MODEL_REVISION: "fae44704fb1a7361bcc1150bf910c1d74fa367a4"
   MODEL_FILE_NAME: "llavon-ime-llama-250m-Q4_K_M.gguf"
+  MODEL_SHA256: "e0205904a65b735ed735b709d5e1502ebbe31fbd1393042573af9843d39e2ab8"
+  MODEL_LICENSE_SHA256: "41003d4a74749c0220e33dd415042164b5a1093ed401f36277234f772d22d3d0"
   HOMEBREW_TAP_REPO: "llavon-ime/homebrew-llavon-ime"
   HOMEBREW_CASK_PATH: "Casks/llavon-ime.rb"
   RELEASE_REPOSITORY: ${{ github.repository }}
@@ -25,7 +29,7 @@ env:
 jobs:
   release-macos:
     name: Build pkg and update Homebrew tap
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       GH_TOKEN: ${{ github.token }}
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -57,10 +61,13 @@ jobs:
 
       - name: Resolve version
         id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            version="${{ inputs.version }}"
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${INPUT_VERSION}"
             tag="v${version}"
           else
             tag="${GITHUB_REF_NAME}"
@@ -68,6 +75,10 @@ jobs:
           fi
           if [[ -z "${version}" || "${version}" == "${tag}" ]]; then
             echo "Release tags must use the v<version> format, for example v0.1.0." >&2
+            exit 1
+          fi
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z]+)*$ ]]; then
+            echo "Release version contains unsupported characters: ${version}" >&2
             exit 1
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
@@ -94,6 +105,11 @@ jobs:
           curl -L \
             -o "${runtime}" \
             "https://github.com/fcitx/fcitx5-macos/releases/download/${FCITX5_MACOS_VERSION}/Fcitx5-arm64.tar.bz2"
+          actual_sha256="$(shasum -a 256 "${runtime}" | awk '{print $1}')"
+          if [[ "${actual_sha256}" != "${FCITX5_MACOS_SHA256}" ]]; then
+            echo "fcitx5-macos runtime SHA-256 mismatch." >&2
+            exit 1
+          fi
           sudo mkdir -p "/Library/Input Methods"
           sudo tar -xjf "${runtime}" -C "/Library/Input Methods"
           test -f "/Library/Input Methods/Fcitx5.app/Contents/lib/libFcitx5Core.dylib"
@@ -137,8 +153,21 @@ jobs:
           model_path="models/${MODEL_FILE_NAME}"
           curl --fail --location --retry 3 \
             --output "${model_path}" \
-            "https://huggingface.co/${MODEL_REPOSITORY}/resolve/main/${MODEL_FILE_NAME}"
+            "https://huggingface.co/${MODEL_REPOSITORY}/resolve/${MODEL_REVISION}/${MODEL_FILE_NAME}"
           test -s "${model_path}"
+          actual_sha256="$(shasum -a 256 "${model_path}" | awk '{print $1}')"
+          if [[ "${actual_sha256}" != "${MODEL_SHA256}" ]]; then
+            echo "Bundled model SHA-256 mismatch: expected ${MODEL_SHA256}, got ${actual_sha256}." >&2
+            exit 1
+          fi
+          curl --fail --location --retry 3 \
+            --output "models/LICENSE.llavon-ime-model" \
+            "https://huggingface.co/${MODEL_REPOSITORY}/resolve/${MODEL_REVISION}/LICENSE"
+          actual_license_sha256="$(shasum -a 256 models/LICENSE.llavon-ime-model | awk '{print $1}')"
+          if [[ "${actual_license_sha256}" != "${MODEL_LICENSE_SHA256}" ]]; then
+            echo "Bundled model license SHA-256 mismatch." >&2
+            exit 1
+          fi
           case "${model_path}" in
             *.gguf) ;;
             *)
@@ -149,14 +178,16 @@ jobs:
 
       - name: Build package
         id: package
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          IME_FCITX5_VERSION="${{ steps.version.outputs.version }}" \
+          IME_FCITX5_VERSION="${RELEASE_VERSION}" \
           FCITX5_MACOS_SOURCE_DIR="${RUNNER_TEMP}/fcitx5-macos" \
           ./scripts/package-macos.sh
 
-          unsigned_pkg="dist/macos/llavon-ime-${{ steps.version.outputs.version }}-arm64.pkg"
-          signed_pkg="dist/macos/llavon-ime-${{ steps.version.outputs.version }}-arm64-signed.pkg"
+          unsigned_pkg="dist/macos/llavon-ime-${RELEASE_VERSION}-arm64.pkg"
+          signed_pkg="dist/macos/llavon-ime-${RELEASE_VERSION}-arm64-signed.pkg"
           if [[ -f "${signed_pkg}" ]]; then
             mv "${signed_pkg}" "${unsigned_pkg}"
           fi
@@ -164,9 +195,11 @@ jobs:
 
       - name: Notarize package
         if: env.APPLE_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_APP_SPECIFIC_PASSWORD != ''
+        env:
+          PACKAGE_PATH: ${{ steps.package.outputs.pkg }}
         run: |
           set -euo pipefail
-          pkg="${{ steps.package.outputs.pkg }}"
+          pkg="${PACKAGE_PATH}"
           xcrun notarytool submit "${pkg}" \
             --apple-id "${APPLE_ID}" \
             --team-id "${APPLE_TEAM_ID}" \
@@ -176,18 +209,23 @@ jobs:
 
       - name: Compute sha256
         id: sha
+        env:
+          PACKAGE_PATH: ${{ steps.package.outputs.pkg }}
         run: |
           set -euo pipefail
-          pkg="${{ steps.package.outputs.pkg }}"
+          pkg="${PACKAGE_PATH}"
           sha="$(shasum -a 256 "${pkg}" | awk '{print $1}')"
           echo "sha256=${sha}" >> "${GITHUB_OUTPUT}"
           echo "${sha}  ${pkg}"
 
       - name: Create or update GitHub release
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          PACKAGE_PATH: ${{ steps.package.outputs.pkg }}
         run: |
           set -euo pipefail
-          tag="${{ steps.version.outputs.tag }}"
-          pkg="${{ steps.package.outputs.pkg }}"
+          tag="${RELEASE_TAG}"
+          pkg="${PACKAGE_PATH}"
           if gh release view "${tag}" >/dev/null 2>&1; then
             gh release upload "${tag}" "${pkg}" --clobber
           elif git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
@@ -218,11 +256,12 @@ jobs:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       - name: Update Homebrew Cask
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.sha.outputs.sha256 }}
         run: |
           set -euo pipefail
           cask="homebrew-tap/${HOMEBREW_CASK_PATH}"
-          VERSION="${{ steps.version.outputs.version }}" \
-          SHA256="${{ steps.sha.outputs.sha256 }}" \
           CASK="${cask}" \
           RELEASE_REPOSITORY="${RELEASE_REPOSITORY}" \
           ruby <<'RUBY'
@@ -242,6 +281,8 @@ jobs:
 
       - name: Push Homebrew tap update
         working-directory: homebrew-tap
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           if git diff --quiet -- "${HOMEBREW_CASK_PATH}"; then
@@ -251,5 +292,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "${HOMEBREW_CASK_PATH}"
-          git commit -m "Update llavon-ime to ${{ steps.version.outputs.version }}"
+          git commit -m "Update llavon-ime to ${RELEASE_VERSION}"
           git push

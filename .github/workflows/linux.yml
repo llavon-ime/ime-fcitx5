@@ -34,6 +34,81 @@ jobs:
         run: |
           cmake -S fcitx5 -B build/fcitx -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DIME_FCITX5_ENABLE_LORA_CONFIG=ON \
             -DIME_FCITX5_BUILD_TESTS=ON
           cmake --build build/fcitx
           ctest --test-dir build/fcitx --output-on-failure
+
+  native-trainer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      LIBTORCH_VERSION: "2.7.1"
+      LIBTORCH_SHA256: "63d572598c8d532128a335018913e795c1bbb32602ce378896dc8cfbb5590976"
+      LIBTORCH_ARCHIVE: ${{ github.workspace }}/.cache/libtorch/libtorch-2.7.1-cpu.zip
+      LIBTORCH_PREFIX: ${{ github.workspace }}/.cache/libtorch/libtorch-2.7.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ curl unzip pkg-config
+
+      - name: Cache LibTorch SDK
+        uses: actions/cache@v4
+        with:
+          path: .cache/libtorch
+          key: libtorch-linux-x86_64-${{ env.LIBTORCH_VERSION }}-${{ env.LIBTORCH_SHA256 }}
+
+      - name: Install pinned LibTorch SDK
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "${LIBTORCH_ARCHIVE}")"
+          if [[ ! -f "${LIBTORCH_ARCHIVE}" ]]; then
+            curl --fail --location --retry 3 \
+              --output "${LIBTORCH_ARCHIVE}" \
+              "https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-${LIBTORCH_VERSION}%2Bcpu.zip"
+          fi
+          actual_sha256="$(sha256sum "${LIBTORCH_ARCHIVE}" | awk '{print $1}')"
+          if [[ "${actual_sha256}" != "${LIBTORCH_SHA256}" ]]; then
+            echo "LibTorch SHA-256 mismatch: expected ${LIBTORCH_SHA256}, got ${actual_sha256}." >&2
+            exit 1
+          fi
+          if [[ ! -f "${LIBTORCH_PREFIX}/share/cmake/Torch/TorchConfig.cmake" ]]; then
+            rm -rf "${LIBTORCH_PREFIX}" "${LIBTORCH_PREFIX}.unpack"
+            mkdir -p "${LIBTORCH_PREFIX}.unpack"
+            unzip -q "${LIBTORCH_ARCHIVE}" -d "${LIBTORCH_PREFIX}.unpack"
+            mv "${LIBTORCH_PREFIX}.unpack/libtorch" "${LIBTORCH_PREFIX}"
+            rmdir "${LIBTORCH_PREFIX}.unpack"
+          fi
+
+      - name: Cache vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-trainer-${{ hashFiles('vcpkg-configuration.json', 'ime-service/vcpkg.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-vcpkg-trainer-
+
+      - name: Bootstrap vcpkg
+        run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Build native trainer and tests
+        run: |
+          cmake -S ime-service -B build/trainer -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="${GITHUB_WORKSPACE}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DIMESVC_ENABLE_LLAMA=ON \
+            -DIMESVC_REQUIRE_LLAMA=ON \
+            -DIMESVC_BUILD_TRAINER=ON \
+            -DIMESVC_BUILD_TESTS=ON \
+            -DIMESVC_LIBTORCH_PREFIX="${LIBTORCH_PREFIX}" \
+            -DIMESVC_LIBTORCH_ARCHIVE="${LIBTORCH_ARCHIVE}" \
+            -DIMESVC_LIBTORCH_SHA256="${LIBTORCH_SHA256}"
+          cmake --build build/trainer --parallel 2 --target \
+            llavon-ime-trainer ml_tests model_parity_test trainer_smoke_test personalization_effect_test
+          ctest --test-dir build/trainer --output-on-failure -R '^ml_tests$'

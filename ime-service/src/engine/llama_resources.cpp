@@ -112,6 +112,7 @@ LlamaModelResources::LlamaModelResources(RuntimeConfig config)
     if (!model_) throw std::runtime_error("Failed to load model: " + path);
     vocab_ = llama_model_get_vocab(model_.get());
     if (vocab_ == nullptr) throw std::runtime_error("loaded llama model has no vocabulary");
+    tokenizer_.validate_vocab_size(static_cast<std::size_t>(llama_vocab_n_tokens(vocab_)));
     std::clog << "[SRV] model loaded\n";
 }
 

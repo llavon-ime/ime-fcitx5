@@ -61,5 +61,9 @@ cmake --install build/macos
 
 Release packages include the Q4 GGUF model. Development builds require a local
 model configured through the fcitx5 settings page or `IME_FCITX5_MODEL_PATH`.
+The bundled model is distributed under CC BY-NC 4.0, separately from the
+BSD-2-Clause application code. Review that license before redistribution or use.
+Release packages do not bundle the optional LibTorch trainer or F32 training
+weights, so their configuration UI hides background LoRA training controls.
 
 https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF

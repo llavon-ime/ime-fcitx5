@@ -1,5 +1,6 @@
 #pragma once
 
+#include <gguf.h>
 #include <llama-cpp.h>
 #include <utf8/cpp20.h>
 
@@ -13,6 +14,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #ifdef _WIN32
@@ -43,6 +45,11 @@ class LlamaEngine : public IEngine {
     struct AdapterDeleter {
         void operator()(llama_adapter_lora* adapter) const noexcept {
             if (adapter != nullptr) llama_adapter_lora_free(adapter);
+        }
+    };
+    struct GgufDeleter {
+        void operator()(gguf_context* context) const noexcept {
+            if (context != nullptr) gguf_free(context);
         }
     };
     std::shared_ptr<const AdapterGeneration> adapter_generation_;
@@ -78,7 +85,7 @@ class LlamaEngine : public IEngine {
         if (!resources_) throw std::invalid_argument("llama engine requires shared model resources");
         if (adapter_generation_) {
             adapter_.reset(llama_adapter_lora_init(resources_->model(), adapter_generation_->path.c_str()));
-            if (!adapter_) throw std::runtime_error("llama.cpp rejected the active LoRA adapter");
+            if (!adapter_) throw AdapterLoadError("llama.cpp rejected the active LoRA adapter");
         }
         llama_ctx.reset(resources_->new_context());
         attach_adapter(llama_ctx.get());
@@ -88,11 +95,46 @@ class LlamaEngine : public IEngine {
     }
 
     static void validate_adapter_with_resources(const std::shared_ptr<LlamaModelResources>& resources,
-                                                const std::filesystem::path& path) {
+                                                 const std::filesystem::path& path) {
         if (!resources) throw std::invalid_argument("adapter validation requires shared model resources");
+        std::unordered_map<std::string, std::size_t> expected;
+        for (std::size_t layer = 0; layer < 20U; ++layer) {
+            const auto prefix = "blk." + std::to_string(layer) + ".";
+            const auto add = [&expected, &prefix](const char* projection, std::int64_t input, std::int64_t output) {
+                expected.emplace(prefix + projection + ".weight.lora_a",
+                                 static_cast<std::size_t>(input) * 8U * sizeof(float));
+                expected.emplace(prefix + projection + ".weight.lora_b",
+                                 static_cast<std::size_t>(output) * 8U * sizeof(float));
+            };
+            add("attn_q", 1024, 1024);
+            add("attn_k", 1024, 1024);
+            add("attn_v", 1024, 1024);
+            add("attn_output", 1024, 1024);
+            add("ffn_gate", 1024, 2048);
+            add("ffn_up", 1024, 2048);
+            add("ffn_down", 2048, 1024);
+        }
+        std::unique_ptr<gguf_context, GgufDeleter> gguf(
+            gguf_init_from_file(path.c_str(), {.no_alloc = true, .ctx = nullptr}));
+        const auto alpha_key = gguf ? gguf_find_key(gguf.get(), "adapter.lora.alpha") : -1;
+        if (!gguf || gguf_get_n_tensors(gguf.get()) != static_cast<std::int64_t>(expected.size()) ||
+            alpha_key < 0 || gguf_get_kv_type(gguf.get(), alpha_key) != GGUF_TYPE_FLOAT32 ||
+            std::abs(gguf_get_val_f32(gguf.get(), alpha_key) - 16.0F) > 1e-6F) {
+            throw AdapterLoadError("GGUF LoRA adapter metadata does not match the fixed training contract");
+        }
+        for (std::int64_t index = 0; index < gguf_get_n_tensors(gguf.get()); ++index) {
+            const auto* name = gguf_get_tensor_name(gguf.get(), index);
+            const auto tensor = name == nullptr ? expected.end() : expected.find(name);
+            if (tensor == expected.end() || gguf_get_tensor_type(gguf.get(), index) != GGML_TYPE_F32 ||
+                gguf_get_tensor_size(gguf.get(), index) != tensor->second) {
+                throw AdapterLoadError("GGUF LoRA adapter tensors do not match the fixed training contract");
+            }
+            expected.erase(tensor);
+        }
+        if (!expected.empty()) throw AdapterLoadError("GGUF LoRA adapter is missing fixed-contract tensors");
         std::unique_ptr<llama_adapter_lora, AdapterDeleter> adapter(
             llama_adapter_lora_init(resources->model(), path.c_str()));
-        if (!adapter) throw std::runtime_error("llama.cpp rejected the GGUF LoRA adapter");
+        if (!adapter) throw AdapterLoadError("llama.cpp rejected the GGUF LoRA adapter");
     }
 
 public:
@@ -273,7 +315,7 @@ private:
         llama_adapter_lora* adapters[] = {adapter_.get()};
         float scales[] = {1.0F};
         if (llama_set_adapters_lora(context, adapters, 1, scales) != 0) {
-            throw std::runtime_error("llama.cpp failed to attach the active LoRA adapter");
+            throw AdapterLoadError("llama.cpp failed to attach the active LoRA adapter");
         }
     }
 
@@ -321,13 +363,13 @@ private:
                   << " decode_calls=" << timing.decode_calls << std::defaultfloat << '\n';
     }
 
-    static void log_slow_decode(const char* stage, llama_pos pos, size_t token_count, llama_token last_token,
+    static void log_slow_decode(const char* stage, llama_pos pos, size_t token_count,
                                 long long decode_us, long long sync_us) {
         const long long total_us = decode_us + sync_us;
         if (total_us < kSlowDecodeLogThresholdUs) return;
 
         std::clog << std::fixed << std::setprecision(3) << "[TIME] slow_decode stage=" << stage
-                  << " pos=" << pos << " tokens=" << token_count << " last_token=" << last_token
+                  << " pos=" << pos << " tokens=" << token_count
                   << " decode_ms=" << ms(decode_us) << " sync_ms=" << ms(sync_us)
                   << " total_ms=" << ms(total_us) << std::defaultfloat << '\n';
     }
@@ -427,7 +469,7 @@ private:
         llama_synchronize(llama_ctx.get());
         const long long sync_us = elapsed_us(sync_start);
         timing.step_sync_us += sync_us;
-        log_slow_decode("step", next_pos, 1, token, decode_us, sync_us);
+        log_slow_decode("step", next_pos, 1, decode_us, sync_us);
 
         const auto free_start = std::chrono::steady_clock::now();
         llama_batch_free(batch);
@@ -483,7 +525,7 @@ private:
             llama_synchronize(llama_ctx.get());
             const long long sync_us = elapsed_us(sync_start);
             timing.cache_sync_us += sync_us;
-            log_slow_decode("cache", next_pos, prompt_tokens.size(), prompt_tokens.back(), decode_us, sync_us);
+            log_slow_decode("cache", next_pos, prompt_tokens.size(), decode_us, sync_us);
 
             const auto free_start = std::chrono::steady_clock::now();
             llama_batch_free(batch);
@@ -502,7 +544,13 @@ private:
         if (!logits) throw std::runtime_error("llama_get_logits_ith error");
 
         std::vector<float> cand_logits(candidate.size());
-        for (size_t i = 0; i < candidate.size(); i++) cand_logits[i] = logits[candidate[i]];
+        const auto vocabulary_size = llama_vocab_n_tokens(resources_->vocab());
+        for (size_t i = 0; i < candidate.size(); i++) {
+            if (candidate[i] < 0 || candidate[i] >= vocabulary_size) {
+                throw std::runtime_error("candidate token is outside the model vocabulary");
+            }
+            cand_logits[i] = logits[candidate[i]];
+        }
 
         float max_logit = *std::ranges::max_element(cand_logits);
         std::vector<float> exps(candidate.size());

@@ -9,16 +9,25 @@ if [ -z "${console_user}" ] || [ "${console_user}" = "root" ] || [ "${console_us
 fi
 
 if [ -z "${console_user}" ] || ! id "${console_user}" >/dev/null 2>&1; then
-    echo "llavon-ime: no active user found; payload remains at ${PAYLOAD_ROOT}" >&2
-    exit 0
+    echo "llavon-ime: no active user found; refusing to record a successful per-user installation." >&2
+    exit 1
 fi
 
 user_home="$(dscl . -read "/Users/${console_user}" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
 if [ -z "${user_home}" ] || [ ! -d "${user_home}" ]; then
-    user_home="$(eval echo "~${console_user}")"
+    user_home="/Users/${console_user}"
+fi
+if [ ! -d "${user_home}" ]; then
+    echo "llavon-ime: home directory for ${console_user} was not found." >&2
+    exit 1
 fi
 
 uid="$(id -u "${console_user}")"
+
+if [ -L "${user_home}" ] || [ ! -d "${user_home}/Library" ] || [ -L "${user_home}/Library" ]; then
+    echo "llavon-ime: refusing unsafe user home or Library path." >&2
+    exit 1
+fi
 
 stop_user_process() {
     process_name="$1"
@@ -40,6 +49,14 @@ if [ ! -d "${PAYLOAD_ROOT}" ]; then
 fi
 
 target_root="${user_home}/Library/fcitx5"
+if [ -L "${target_root}" ] || { [ -e "${target_root}" ] && [ ! -d "${target_root}" ]; }; then
+    echo "llavon-ime: refusing unsafe target path: ${target_root}" >&2
+    exit 1
+fi
+if [ -d "${target_root}" ] && [ -n "$(/usr/bin/find "${target_root}" -type l -print -quit 2>/dev/null)" ]; then
+    echo "llavon-ime: refusing target tree containing symlinks: ${target_root}" >&2
+    exit 1
+fi
 
 # The addon and service are loaded into the logged-in user's processes. Stop
 # both before replacing their files so the restarted input method cannot retain

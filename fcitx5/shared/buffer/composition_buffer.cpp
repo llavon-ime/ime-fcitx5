@@ -252,6 +252,7 @@ bool CompositionBuffer::set_segment_candidates(size_t index, std::vector<char32_
 
     auto& segment = segments_[index];
     if (preserve_manual_choice && segment.manually_chosen) return false;
+    if (source == CandidateSource::Service && candidates.empty()) return false;
 
     segment.candidates = std::move(candidates);
     segment.selected_index = 0;

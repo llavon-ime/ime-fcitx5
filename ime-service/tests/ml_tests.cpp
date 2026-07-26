@@ -364,12 +364,50 @@ void test_checkpoint_and_gguf() {
                 "resumed optimizer step differs from uninterrupted training");
         require(!torch::equal(checkpoint_a, layer->lora_a) || !torch::equal(checkpoint_b, layer->lora_b),
                 "resume comparison did not perform another optimizer update");
-        std::filesystem::rename(directory / "checkpoint", directory / "checkpoint.previous");
+        imesvc::ml::Checkpoint::save_atomic(directory / "checkpoint", state, optimizer);
+        {
+            std::ofstream corrupted(directory / "checkpoint" / "state.json", std::ios::trunc);
+            corrupted << "{";
+        }
         imesvc::ml::LoraLinear recovered_layer(3, 4, config);
         torch::optim::AdamW recovered_optimizer(recovered_layer->adapter_parameters(), torch::optim::AdamWOptions(1e-2));
         const auto recovered = imesvc::ml::Checkpoint::load(directory / "checkpoint", recovered_optimizer);
         require(recovered.base_model_sha256 == "base-sha" && recovered.dataset_cursor == 9,
-                "checkpoint previous-generation recovery failed");
+                 "checkpoint previous-generation recovery failed");
+        require(!std::filesystem::exists(directory / "checkpoint.previous"),
+                "checkpoint recovery did not promote the known-good generation");
+        imesvc::ml::Checkpoint::save_atomic(directory / "checkpoint", recovered, recovered_optimizer);
+        {
+            nlohmann::json mutated;
+            {
+                std::ifstream input(directory / "checkpoint" / "state.json");
+                mutated = nlohmann::json::parse(input);
+            }
+            mutated["dataset_cursor"] = 10;
+            std::ofstream output(directory / "checkpoint" / "state.json", std::ios::trunc);
+            output << mutated;
+        }
+        const auto metadata_recovered = imesvc::ml::Checkpoint::load(directory / "checkpoint", recovered_optimizer);
+        require(metadata_recovered.dataset_cursor == 9,
+                "checkpoint metadata corruption did not recover the previous generation");
+        imesvc::ml::Checkpoint::save_atomic(directory / "checkpoint", metadata_recovered, recovered_optimizer);
+        {
+            nlohmann::json downgraded;
+            {
+                std::ifstream input(directory / "checkpoint" / "state.json");
+                downgraded = nlohmann::json::parse(input);
+            }
+            downgraded.erase("format_version");
+            {
+                std::ofstream output(directory / "checkpoint" / "state.json", std::ios::trunc);
+                output << downgraded;
+            }
+            std::ofstream checksum(directory / "checkpoint" / "state.sha256", std::ios::trunc);
+            checksum << imesvc::ml::SafetensorsReader::sha256_file(directory / "checkpoint" / "state.json") << '\n';
+        }
+        const auto downgrade_recovered = imesvc::ml::Checkpoint::load(directory / "checkpoint", recovered_optimizer);
+        require(downgrade_recovered.dataset_cursor == 9,
+                "checkpoint format downgrade did not recover the previous generation");
 
         const auto adapter = directory / "adapter.gguf";
         imesvc::ml::GgufLoraWriter::write_f32_atomic(

@@ -1,8 +1,6 @@
-#include "ml/gguf_lora_writer.hpp"
+#include "engine/llamaEngine.hpp"
 #include "trainer/trainer.hpp"
 #include "training/feedback_store.hpp"
-
-#include <llama.h>
 
 #include <chrono>
 #include <cstdlib>
@@ -11,15 +9,19 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace {
 
-struct ModelDeleter {
-    void operator()(llama_model* model) const { llama_model_free(model); }
-};
-
 void require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+std::string partition_context(std::size_t value) {
+    std::string context = " ";
+    for (std::size_t bit = 0; bit < 16U; ++bit) context += (value & (1U << bit)) != 0 ? "a " : "  ";
+    context += "你";
+    return context;
 }
 
 }  // namespace
@@ -39,13 +41,14 @@ int main(int argc, char** argv) {
             store_options.data_directory = root / "data";
             imesvc::training::FeedbackStore store(store_options);
             require(store.set_learning_enabled(true).get().succeeded, "could not enable smoke-test feedback store");
-            std::string event_id = "trainer-smoke-0";
-            for (int index = 1; imesvc::training::FeedbackStore::deterministic_validation_member(event_id); ++index) {
-                event_id = "trainer-smoke-" + std::to_string(index);
+            std::string training_context = partition_context(0);
+            for (int index = 1; imesvc::training::FeedbackStore::deterministic_validation_member(
+                                    argv[2], training_context, "ㄋㄧˇ"); ++index) {
+                training_context = partition_context(static_cast<std::size_t>(index));
             }
             imesvc::training::FeedbackEvent event;
-            event.event_id = event_id;
-            event.left_context = "你好";
+            event.event_id = "trainer-smoke-training";
+            event.left_context = training_context;
             event.bopomofo_sequence = "ㄋㄧˇ";
             event.committed_characters = "你";
             event.predicted_top1 = "你";
@@ -55,11 +58,13 @@ int main(int argc, char** argv) {
             event.created_at_unix_seconds = 1;
             event.eligibility = imesvc::training::FeedbackEligibility::approved_sample();
             require(store.enqueue(event).accepted(), "could not enqueue smoke-test feedback");
-            std::string validation_id = "trainer-smoke-validation-0";
-            for (int index = 1; !imesvc::training::FeedbackStore::deterministic_validation_member(validation_id); ++index) {
-                validation_id = "trainer-smoke-validation-" + std::to_string(index);
+            std::string validation_context = partition_context(10000);
+            for (int index = 1; !imesvc::training::FeedbackStore::deterministic_validation_member(
+                                    argv[2], validation_context, "ㄋㄧˇ"); ++index) {
+                validation_context = partition_context(10000U + static_cast<std::size_t>(index));
             }
-            event.event_id = validation_id;
+            event.event_id = "trainer-smoke-validation";
+            event.left_context = validation_context;
             event.created_at_unix_seconds = 2;
             require(store.enqueue(std::move(event)).accepted(), "could not enqueue smoke-test validation feedback");
             require(store.flush().get().succeeded, "could not flush smoke-test feedback");
@@ -91,13 +96,13 @@ int main(int argc, char** argv) {
                     std::filesystem::is_regular_file(options.staging_directory / "manifest.json"),
                 "trainer did not emit staged adapter artifacts");
 
-        llama_backend_init();
-        auto model_parameters = llama_model_default_params();
-        model_parameters.n_gpu_layers = 0;
-        std::unique_ptr<llama_model, ModelDeleter> model(llama_model_load_from_file(argv[3], model_parameters));
-        require(model != nullptr, "could not load llama.cpp smoke fixture");
-        imesvc::ml::GgufLoraWriter::validate_loadable(options.staging_directory / "adapter.gguf", model.get());
-        llama_backend_free();
+        imesvc::RuntimeConfig runtime_config;
+        runtime_config.model_path = argv[3];
+        runtime_config.tables_dir = argv[4];
+        runtime_config.threads = 4;
+        runtime_config.gpu_layers = 0;
+        const auto runtime = std::make_shared<imesvc::SharedModelRuntime>(std::move(runtime_config));
+        imesvc::LlamaEngine::validate_adapter(runtime, options.staging_directory / "adapter.gguf");
         std::filesystem::remove_all(root);
         std::cout << "trainer smoke test completed with snapshot " << snapshot_id << '\n';
         return EXIT_SUCCESS;

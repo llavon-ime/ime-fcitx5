@@ -8,6 +8,9 @@
 #ifndef IME_FCITX5_DISPLAY_VERSION
 #define IME_FCITX5_DISPLAY_VERSION "unknown"
 #endif
+#ifndef IME_FCITX5_ENABLE_LORA_CONFIG
+#define IME_FCITX5_ENABLE_LORA_CONFIG 0
+#endif
 
 namespace ime::fcitx5 {
 
@@ -27,6 +30,17 @@ FCITX_CONFIG_ENUM_NAME(CandidateLayout, "系統預設", "垂直", "水平");
 
 enum class SelectPhrase { BeforeCursor, AfterCursor };
 FCITX_CONFIG_ENUM_NAME(SelectPhrase, "游標前", "游標後");
+
+#if IME_FCITX5_ENABLE_LORA_CONFIG
+#define IME_FCITX5_LORA_OPTIONS                                                                                  \
+    fcitx::Option<bool> loraTrainingEnabled{this, "LoraTrainingEnabled", "啟用背景 LoRA 個人化微調",             \
+                                             default_config().lora_training_enabled};                             \
+    fcitx::Option<std::string> trainingBaseSafetensorsPath{                                                       \
+        this, "TrainingBaseSafetensorsPath", "LoRA 訓練基礎權重路徑（F32 Safetensors）",                       \
+        default_config().training_base_safetensors_path};
+#else
+#define IME_FCITX5_LORA_OPTIONS
+#endif
 
 FCITX_CONFIGURATION(ImeFcitxConfig,
     fcitx::Option<DisplayVersion> version{this, "Version", "版本", DisplayVersion::Current};
@@ -65,16 +79,14 @@ FCITX_CONFIGURATION(ImeFcitxConfig,
                                                            "逸出鍵清除整個組字區",
                                                            default_config().esc_clears_entire_buffer};
     fcitx::Option<bool> capsLockInputsBopomofo{this, "CapsLockInputsBopomofo",
-                                                "大寫鎖定時仍輸入注音",
-                                                default_config().caps_lock_inputs_bopomofo};
+                                                 "大寫鎖定時仍輸入注音",
+                                                 default_config().caps_lock_inputs_bopomofo};
     fcitx::Option<bool> personalLearningEnabled{this, "PersonalLearningEnabled", "收集本機個人化回饋",
                                                    default_config().personal_learning_enabled};
-    fcitx::Option<bool> loraTrainingEnabled{this, "LoraTrainingEnabled", "啟用背景 LoRA 個人化微調",
-                                             default_config().lora_training_enabled};
-    fcitx::Option<std::string> trainingBaseSafetensorsPath{this, "TrainingBaseSafetensorsPath",
-                                                            "LoRA 訓練基礎權重路徑（F32 Safetensors）",
-                                                            default_config().training_base_safetensors_path};
+    IME_FCITX5_LORA_OPTIONS
     fcitx::Option<bool> deletePersonalData{this, "DeletePersonalData", "刪除所有本機個人化資料（套用後執行）", false};);
+
+#undef IME_FCITX5_LORA_OPTIONS
 
 Config to_shared_config(const ImeFcitxConfig& config);
 void apply_shared_config(ImeFcitxConfig& target, const Config& source);

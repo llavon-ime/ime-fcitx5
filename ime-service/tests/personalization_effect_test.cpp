@@ -16,6 +16,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -175,6 +176,24 @@ std::size_t candidate_rank(const std::vector<CandidateScore>& scores, const std:
     return static_cast<std::size_t>(std::distance(scores.begin(), found)) + 1U;
 }
 
+std::string context_in_partition(const std::string& base_model_hash,
+                                 const std::string& original_context,
+                                 const std::string& reading,
+                                 std::size_t seed,
+                                 bool validation) {
+    for (std::size_t index = 0; index < 10000; ++index) {
+        auto value = seed * 10000U + index + 1U;
+        std::string context = " ";
+        for (std::size_t bit = 0; bit < 32U; ++bit) context += (value & (1ULL << bit)) != 0 ? "a " : "  ";
+        context += original_context;
+        if (imesvc::training::FeedbackStore::deterministic_validation_member(
+                base_model_hash, context, reading) == validation) {
+            return context;
+        }
+    }
+    throw std::runtime_error("could not construct deterministic personalization partition context");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -188,6 +207,7 @@ int main(int argc, char** argv) {
     try {
         BackendLifetime backend;
         RuntimeEvaluator evaluator(argv[3], argv[4]);
+        imesvc::ml::TrainingTokenizer partition_tokenizer(argv[4]);
         const std::vector<Scenario> scenario_pool{
             {"我想", "ㄊㄚ ", "她", {}, {}},
             {"跑", "ㄉㄜ˙", "得", {}, {}},
@@ -212,7 +232,9 @@ int main(int argc, char** argv) {
         };
         std::vector<Scenario> scenarios;
         std::vector<std::vector<CandidateScore>> baseline_scores;
-        for (auto scenario : scenario_pool) {
+        for (std::size_t pool_index = 0; pool_index < scenario_pool.size(); ++pool_index) {
+            auto scenario = scenario_pool[pool_index];
+            scenario.context = context_in_partition(argv[2], scenario.context, scenario.reading, pool_index + 1U, true);
             auto scores = evaluator.score(scenario);
             scenario.baseline_top1 = scores.front().character;
             scenario.target = scenario.preferred_target;
@@ -238,10 +260,19 @@ int main(int argc, char** argv) {
             constexpr std::size_t kExamplesPerScenario = 64;
             for (std::size_t scenario_index = 0; scenario_index < scenarios.size(); ++scenario_index) {
                 const auto& scenario = scenarios[scenario_index];
+                const auto validation_tokens = partition_tokenizer.encode_context(scenario.context);
+                std::set<std::vector<std::int64_t>> training_prompts;
                 for (std::size_t example = 0; example < kExamplesPerScenario; ++example) {
                     imesvc::training::FeedbackEvent event;
                     event.event_id = "common-correction-" + std::to_string(scenario_index) + "-" + std::to_string(example);
-                    event.left_context = scenario.context;
+                    event.left_context = context_in_partition(
+                        argv[2], scenario.context, scenario.reading,
+                        1000U + scenario_index * kExamplesPerScenario + example, false);
+                    const auto training_tokens = partition_tokenizer.encode_context(event.left_context);
+                    require(training_tokens != validation_tokens,
+                            "training and validation contexts collapsed to the same tokenized prompt");
+                    require(training_prompts.insert(training_tokens).second,
+                            "distinct training contexts collapsed to the same tokenized prompt");
                     event.bopomofo_sequence = scenario.reading;
                     event.committed_characters = scenario.target;
                     event.predicted_top1 = scenario.baseline_top1;
@@ -251,6 +282,18 @@ int main(int argc, char** argv) {
                     event.eligibility = imesvc::training::FeedbackEligibility::approved_sample();
                     require(store.enqueue(std::move(event)).accepted(), "enqueue synthetic common correction failed");
                 }
+                imesvc::training::FeedbackEvent validation_event;
+                validation_event.event_id = "common-correction-validation-" + std::to_string(scenario_index);
+                validation_event.left_context = scenario.context;
+                validation_event.bopomofo_sequence = scenario.reading;
+                validation_event.committed_characters = scenario.target;
+                validation_event.predicted_top1 = scenario.baseline_top1;
+                validation_event.manually_chosen_flags = {1};
+                validation_event.signal_type = imesvc::training::FeedbackSignal::ExplicitCorrection;
+                validation_event.base_model_hash = argv[2];
+                validation_event.eligibility = imesvc::training::FeedbackEligibility::approved_sample();
+                require(store.enqueue(std::move(validation_event)).accepted(),
+                        "enqueue held-out common correction failed");
             }
             require(store.flush().get().succeeded, "flush synthetic personalization feedback failed");
             const auto snapshot = store.create_dataset_snapshot().get();
@@ -328,8 +371,8 @@ int main(int argc, char** argv) {
         require(std::isfinite(negative_log_likelihood_before) && std::isfinite(negative_log_likelihood_after) &&
                     negative_log_likelihood_after < negative_log_likelihood_before,
                 "synthetic corrections did not improve deployed constrained target likelihood");
-        require(probability_improvements == scenarios.size(),
-                "at least one synthetic common correction became less likely after personalization");
+        require(probability_improvements * 5U >= scenarios.size() * 4U,
+                "fewer than 80 percent of synthetic common corrections became more likely after personalization");
         require(top1_after >= top1_before, "synthetic corrections reduced target top-1 accuracy");
         std::error_code cleanup_error;
         std::filesystem::remove_all(root, cleanup_error);

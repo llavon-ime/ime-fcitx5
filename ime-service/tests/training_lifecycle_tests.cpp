@@ -60,17 +60,49 @@ imesvc::training::FeedbackEvent event(std::string id, std::int64_t created_at) {
     return value;
 }
 
+std::string partition_context(std::size_t value) {
+    std::string context = " ";
+    for (std::size_t bit = 0; bit < 16U; ++bit) context += (value & (1U << bit)) != 0 ? "a " : "  ";
+    context += "你";
+    return context;
+}
+
 bool enqueue_training_and_validation(imesvc::training::FeedbackStore& store) {
-    std::string training_id = "lifecycle-training-0";
-    for (int index = 1; imesvc::training::FeedbackStore::deterministic_validation_member(training_id); ++index) {
-        training_id = "lifecycle-training-" + std::to_string(index);
+    std::string training_context = partition_context(0);
+    for (int index = 1; imesvc::training::FeedbackStore::deterministic_validation_member(
+                            "base", training_context, "ㄋㄧˇ"); ++index) {
+        training_context = partition_context(static_cast<std::size_t>(index));
     }
-    std::string validation_id = "lifecycle-validation-0";
-    for (int index = 1; !imesvc::training::FeedbackStore::deterministic_validation_member(validation_id); ++index) {
-        validation_id = "lifecycle-validation-" + std::to_string(index);
+    std::string validation_context = partition_context(10000);
+    for (int index = 1; !imesvc::training::FeedbackStore::deterministic_validation_member(
+                                    "base", validation_context, "ㄋㄧˇ"); ++index) {
+        validation_context = partition_context(10000U + static_cast<std::size_t>(index));
     }
-    return store.enqueue(event(std::move(training_id), 1)).accepted() &&
-           store.enqueue(event(std::move(validation_id), 2)).accepted() && store.flush().get().succeeded;
+    auto training = event("lifecycle-training", 1);
+    training.left_context = std::move(training_context);
+    auto validation = event("lifecycle-validation", 2);
+    validation.left_context = std::move(validation_context);
+    return store.enqueue(std::move(training)).accepted() && store.enqueue(std::move(validation)).accepted() &&
+           store.flush().get().succeeded;
+}
+
+nlohmann::json adapter_tensor_metadata() {
+    auto metadata = nlohmann::json::array();
+    for (std::size_t layer = 0; layer < 20U; ++layer) {
+        const auto prefix = "blk." + std::to_string(layer) + ".";
+        const auto add = [&metadata, &prefix](const char* projection, std::int64_t input, std::int64_t output) {
+            metadata.push_back({{"name", prefix + projection + ".weight.lora_a"}, {"shape", {8, input}}, {"dtype", "F32"}});
+            metadata.push_back({{"name", prefix + projection + ".weight.lora_b"}, {"shape", {output, 8}}, {"dtype", "F32"}});
+        };
+        add("attn_q", 1024, 1024);
+        add("attn_k", 1024, 1024);
+        add("attn_v", 1024, 1024);
+        add("attn_output", 1024, 1024);
+        add("ffn_gate", 1024, 2048);
+        add("ffn_up", 1024, 2048);
+        add("ffn_down", 2048, 1024);
+    }
+    return metadata;
 }
 
 class PermissiveEnvironment final : public imesvc::training::TrainingEnvironmentProvider {
@@ -106,6 +138,7 @@ bool publisher_test() {
     run.kind = imesvc::training::TrainingRunKind::FirstAdapter;
     run.eligible_samples = snapshot.snapshot.total_samples;
     run.eligible_target_characters = snapshot.snapshot.total_target_characters;
+    run.cumulative_target_characters = store.training_accounting().get().cumulative_target_characters;
     if (!store.record_training_started(std::move(run)).get().succeeded) return fail("training run setup");
 
     const auto staging = temporary.path() / "staging";
@@ -115,10 +148,6 @@ bool publisher_test() {
         adapter << "abc";
     }
     {
-        auto tensor_metadata = nlohmann::json::array();
-        for (std::size_t index = 0; index < 20U * 7U * 2U; ++index) {
-            tensor_metadata.push_back({{"name", "tensor-" + std::to_string(index)}, {"shape", {8, 8}}, {"dtype", "F32"}});
-        }
         std::ofstream manifest(staging / "manifest.json");
         manifest << nlohmann::json{{"format_version", 2},
                                    {"base_model_sha256", "base"},
@@ -136,7 +165,7 @@ bool publisher_test() {
                                    {"epochs", 1},
                                    {"warmup_steps", 1},
                                    {"training_loss", 0.5},
-                                   {"tensor_metadata", std::move(tensor_metadata)},
+                                   {"tensor_metadata", adapter_tensor_metadata()},
                                    {"created_at", 1},
                                    {"validation_target_characters", snapshot.snapshot.validation_target_characters},
                                    {"validation_samples", snapshot.snapshot.validation_samples},
@@ -148,6 +177,7 @@ bool publisher_test() {
     imesvc::SharedModelRuntime runtime(runtime_config);
     bool validator_called = false;
     bool runtime_validator_called = false;
+    bool post_commit_transition_reached = false;
     imesvc::training::AdapterPublisherOptions options;
     options.directory = temporary.path() / "data" / "adapters";
     options.base_model_sha256 = "base";
@@ -161,10 +191,21 @@ bool publisher_test() {
         runtime_validator_called = !samples.empty();
         return imesvc::training::StoreOperationResult{runtime_validator_called, runtime_validator_called ? "" : "no samples"};
     };
+    options.transition_activation = [&post_commit_transition_reached](
+                                        const imesvc::training::TrainingRunContext&,
+                                        const std::function<imesvc::training::StoreOperationResult()>& activate) {
+        const auto result = activate();
+        if (result.succeeded) {
+            post_commit_transition_reached = true;
+            throw std::runtime_error("synthetic post-commit transition failure");
+        }
+        return result;
+    };
     imesvc::training::AdapterPublisher publisher(store, runtime, options);
     const auto published = publisher.handle_completed_run(
         {"run-1", snapshot.snapshot.snapshot_id, imesvc::training::TrainingRunKind::FirstAdapter, staging});
-    if (!published.succeeded || !validator_called || !runtime_validator_called || runtime.active_adapter_version().empty()) {
+    if (!published.succeeded || !validator_called || !runtime_validator_called || !post_commit_transition_reached ||
+        runtime.active_adapter_version().empty()) {
         if (!published.succeeded) std::cerr << "publisher result: " << published.error << '\n';
         return fail("promotion");
     }

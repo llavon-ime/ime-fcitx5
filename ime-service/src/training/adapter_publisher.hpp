@@ -31,7 +31,9 @@ struct AdapterPublisherOptions {
                                        TrainingRunKind)> validate_runtime;
     // The server provides a short prediction-arrival barrier around the final DB/runtime swap.
     std::function<StoreOperationResult(const TrainingRunContext&,
-                                       const std::function<StoreOperationResult()>&)> transition_activation;
+                                        const std::function<StoreOperationResult()>&)> transition_activation;
+    // Rollback and deletion use the same prediction barrier and engine reset.
+    std::function<StoreOperationResult(const std::function<StoreOperationResult()>&)> transition_adapter;
 };
 
 class AdapterPublisher final {

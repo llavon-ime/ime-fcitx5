@@ -13,6 +13,7 @@
 #include <random>
 #include <string_view>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -101,10 +102,28 @@ bool write_heartbeat(const std::filesystem::path& path, std::int64_t heartbeat) 
             ::unlink(temporary.c_str());
             return false;
         }
+        const auto parent = path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path();
+        int directory_flags = O_RDONLY;
+#ifdef O_DIRECTORY
+        directory_flags |= O_DIRECTORY;
+#endif
+        const int directory = ::open(parent.c_str(), directory_flags);
+        if (directory < 0) return false;
+        const bool directory_flushed = ::fsync(directory) == 0;
+        (void)::close(directory);
+        if (!directory_flushed) return false;
         return true;
     } catch (...) {
         return false;
     }
+}
+
+pid_t waitpid_nointr(pid_t process_id, int* status, int options) noexcept {
+    pid_t result = -1;
+    do {
+        result = ::waitpid(process_id, status, options);
+    } while (result < 0 && errno == EINTR);
+    return result;
 }
 #endif
 
@@ -198,10 +217,14 @@ private:
                 evaluate();
 #endif
             }
+            auto wait_millis = std::max<std::int64_t>(1, evaluation_interval_millis());
+            if (pending_heartbeat_.load(std::memory_order_acquire) != written_heartbeat_) {
+                wait_millis = std::min<std::int64_t>(wait_millis, 1000);
+            }
             std::unique_lock lock(wake_mutex_);
-            wake_.wait_for(lock, std::chrono::milliseconds(std::max<std::int64_t>(1, evaluation_interval_millis())), [this] {
+            wake_.wait_for(lock, std::chrono::milliseconds(wait_millis), [this] {
                 return stop_.load(std::memory_order_acquire) || evaluation_requested_.load(std::memory_order_acquire) ||
-                       pending_heartbeat_.load(std::memory_order_acquire) != written_heartbeat_;
+                       pending_heartbeat_.load(std::memory_order_acquire) != attempted_heartbeat_;
             });
         }
 #ifndef _WIN32
@@ -218,6 +241,7 @@ private:
     void flush_heartbeat() noexcept {
         const auto heartbeat = pending_heartbeat_.load(std::memory_order_acquire);
         if (heartbeat == 0 || heartbeat == written_heartbeat_) return;
+        attempted_heartbeat_ = heartbeat;
 #ifndef _WIN32
         if (write_heartbeat(options_.heartbeat_path, heartbeat)) written_heartbeat_ = heartbeat;
 #else
@@ -309,7 +333,13 @@ private:
                 return;
             }
             if (const auto idle_reason = idle_block_reason(); idle_reason.has_value()) {
+                const auto discarded = store_.discard_dataset_snapshot(snapshot.snapshot.snapshot_id).get();
                 release_lock();
+                if (!discarded.succeeded) {
+                    set_status(TrainingOrchestratorState::Error,
+                               "discard abandoned training snapshot failed: " + discarded.error, {}, 0, &accounting);
+                    return;
+                }
                 set_status(TrainingOrchestratorState::Blocked, *idle_reason, {}, 0, &accounting);
                 return;
             }
@@ -320,8 +350,10 @@ private:
             run.started_at_unix_seconds = unix_seconds();
             run.eligible_target_characters = accounting.eligible_target_characters;
             run.eligible_samples = accounting.eligible_samples;
+            run.cumulative_target_characters = accounting.cumulative_target_characters;
             const auto recorded = store_.record_training_started(run).get();
             if (!recorded.succeeded) {
+                (void)store_.discard_dataset_snapshot(snapshot.snapshot.snapshot_id).get();
                 release_lock();
                 set_status(TrainingOrchestratorState::Error, "record training start failed: " + recorded.error, {}, 0, &accounting);
                 return;
@@ -338,6 +370,7 @@ private:
             const auto process_id = launch(snapshot.snapshot.snapshot_id, staging_directory);
             if (process_id <= 0) {
                 (void)store_.record_training_finished(run.run_id, false).get();
+                remove_staging(staging_directory);
                 release_lock();
                 active_staging_directory_.clear();
                 set_status(TrainingOrchestratorState::Error, "launch trainer process failed", run.run_id, 0, &accounting);
@@ -371,8 +404,10 @@ private:
             }
             return std::nullopt;
         }
-        const auto new_characters = accounting.eligible_target_characters >= accounting.eligible_target_characters_at_last_success
-                                        ? accounting.eligible_target_characters - accounting.eligible_target_characters_at_last_success
+        const auto new_characters = accounting.cumulative_target_characters >=
+                                            accounting.cumulative_target_characters_at_last_success
+                                        ? accounting.cumulative_target_characters -
+                                              accounting.cumulative_target_characters_at_last_success
                                         : 0;
         if (new_characters < thresholds.later_training_new_characters ||
             accounting.validation_target_characters < thresholds.minimum_validation_characters) {
@@ -389,6 +424,9 @@ private:
     }
 
     std::optional<std::string> idle_block_reason() const noexcept {
+        if (pending_heartbeat_.load(std::memory_order_acquire) != written_heartbeat_) {
+            return "inference heartbeat update is not durable";
+        }
         const auto heartbeat = TrainingOrchestrator::read_inference_heartbeat(options_.heartbeat_path);
         if (!heartbeat.has_value()) return "inference heartbeat is unavailable";
         const auto now = TrainingOrchestrator::current_unix_millis();
@@ -419,18 +457,46 @@ private:
 
 #ifndef _WIN32
     void recover_incomplete_runs() noexcept {
+        bool recovery_lock_acquired = false;
         try {
+            if (!acquire_lock()) {
+                set_status(TrainingOrchestratorState::Blocked,
+                           "another trainer owns the process lock during recovery");
+                return;
+            }
+            recovery_lock_acquired = true;
             const auto incomplete = store_.incomplete_training_runs().get();
             if (!incomplete.operation.succeeded) {
+                release_lock();
                 set_status(TrainingOrchestratorState::Error,
                            "recover incomplete training runs failed: " + incomplete.operation.error);
                 return;
+            }
+            std::unordered_set<std::string> recoverable_run_ids;
+            for (const auto& run : incomplete.runs) recoverable_run_ids.insert(run.run_id);
+            std::error_code scan_error;
+            const auto root_status = std::filesystem::symlink_status(options_.staging_directory, scan_error);
+            if (!scan_error && std::filesystem::is_symlink(root_status)) {
+                release_lock();
+                recovery_lock_acquired = false;
+                set_status(TrainingOrchestratorState::Error, "training staging root is a symlink");
+                return;
+            }
+            if (!scan_error && std::filesystem::is_directory(root_status)) {
+                for (std::filesystem::directory_iterator entries(options_.staging_directory, scan_error), end;
+                     !scan_error && entries != end; entries.increment(scan_error)) {
+                    const auto name = entries->path().filename().string();
+                    if (!recoverable_run_ids.contains(name)) remove_staging(entries->path());
+                }
             }
             for (std::size_t index = 1; index < incomplete.runs.size(); ++index) {
                 (void)store_.record_training_finished(incomplete.runs[index].run_id, false).get();
                 remove_staging(options_.staging_directory / incomplete.runs[index].run_id);
             }
-            if (incomplete.runs.empty()) return;
+            if (incomplete.runs.empty()) {
+                release_lock();
+                return;
+            }
             const auto& run = incomplete.runs.front();
             const auto staging = options_.staging_directory / run.run_id;
             std::error_code error;
@@ -438,6 +504,7 @@ private:
             if (error || std::filesystem::is_symlink(status) || !std::filesystem::is_directory(status)) {
                 (void)store_.record_training_finished(run.run_id, false).get();
                 remove_staging(staging);
+                release_lock();
                 return;
             }
             paused_run_id_ = run.run_id;
@@ -445,10 +512,13 @@ private:
             paused_kind_ = run.kind;
             paused_staging_directory_ = staging;
             set_status(TrainingOrchestratorState::Waiting, "recovered interrupted training run", run.run_id);
+            release_lock();
         } catch (const std::exception& error) {
+            if (recovery_lock_acquired) release_lock();
             set_status(TrainingOrchestratorState::Error,
                        std::string("recover incomplete training runs failed: ") + error.what());
         } catch (...) {
+            if (recovery_lock_acquired) release_lock();
             set_status(TrainingOrchestratorState::Error, "recover incomplete training runs failed");
         }
     }
@@ -456,11 +526,13 @@ private:
     void remove_staging(const std::filesystem::path& path) noexcept {
         if (path.empty()) return;
         try {
-            const auto root = std::filesystem::absolute(options_.staging_directory);
-            const auto candidate = std::filesystem::absolute(path);
+            const auto root = std::filesystem::absolute(options_.staging_directory).lexically_normal();
+            const auto candidate = std::filesystem::absolute(path).lexically_normal();
             const auto relative = candidate.lexically_relative(root);
             if (relative.empty() || relative.is_absolute() || *relative.begin() == ".." || relative == ".") return;
             std::error_code error;
+            const auto root_status = std::filesystem::symlink_status(root, error);
+            if (error || std::filesystem::is_symlink(root_status) || !std::filesystem::is_directory(root_status)) return;
             std::filesystem::remove_all(candidate, error);
         } catch (...) {
         }
@@ -562,8 +634,28 @@ private:
     void poll_child() noexcept {
         if (child_process_id_ <= 0) return;
         int process_status = 0;
-        const auto waited = ::waitpid(static_cast<pid_t>(child_process_id_), &process_status, WNOHANG);
+        const auto waited = waitpid_nointr(static_cast<pid_t>(child_process_id_), &process_status, WNOHANG);
         if (waited == 0) return;
+        if (waited < 0) {
+            const auto failed_run_id = active_run_id_;
+            const auto failed_process_id = child_process_id_;
+            if (!active_run_id_.empty()) {
+                try {
+                    (void)store_.record_training_finished(active_run_id_, false).get();
+                } catch (...) {
+                }
+            }
+            remove_staging(active_staging_directory_);
+            release_lock();
+            child_process_id_ = 0;
+            active_run_id_.clear();
+            active_snapshot_id_.clear();
+            active_staging_directory_.clear();
+            active_launch_heartbeat_ = 0;
+            set_status(TrainingOrchestratorState::Error, "wait for trainer process failed", failed_run_id,
+                       failed_process_id);
+            return;
+        }
         const bool paused = waited == child_process_id_ && WIFEXITED(process_status) && WEXITSTATUS(process_status) == 2;
         if (paused) {
             paused_run_id_ = active_run_id_;
@@ -640,14 +732,23 @@ private:
         (void)::kill(-static_cast<pid_t>(child_process_id_), SIGTERM);
         (void)::kill(static_cast<pid_t>(child_process_id_), SIGTERM);
         int process_status = 0;
+        bool reaped = false;
         for (int attempt = 0; attempt < 100; ++attempt) {
-            if (::waitpid(static_cast<pid_t>(child_process_id_), &process_status, WNOHANG) == child_process_id_) break;
+            const auto waited = waitpid_nointr(static_cast<pid_t>(child_process_id_), &process_status, WNOHANG);
+            if (waited == child_process_id_ || (waited < 0 && errno == ECHILD)) {
+                reaped = true;
+                break;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-        if (::waitpid(static_cast<pid_t>(child_process_id_), &process_status, WNOHANG) == 0) {
+        if (!reaped) {
+            const auto waited = waitpid_nointr(static_cast<pid_t>(child_process_id_), &process_status, WNOHANG);
+            reaped = waited == child_process_id_ || (waited < 0 && errno == ECHILD);
+        }
+        if (!reaped) {
             (void)::kill(-static_cast<pid_t>(child_process_id_), SIGKILL);
             (void)::kill(static_cast<pid_t>(child_process_id_), SIGKILL);
-            (void)::waitpid(static_cast<pid_t>(child_process_id_), &process_status, 0);
+            (void)waitpid_nointr(static_cast<pid_t>(child_process_id_), &process_status, 0);
         }
         if (!active_run_id_.empty()) (void)store_.record_training_finished(active_run_id_, false).get();
         remove_staging(active_staging_directory_);
@@ -667,6 +768,7 @@ private:
     std::atomic<bool> stop_{false};
     std::atomic<bool> evaluation_requested_{false};
     std::atomic<std::int64_t> pending_heartbeat_{0};
+    std::int64_t attempted_heartbeat_ = 0;
     std::int64_t written_heartbeat_ = 0;
     std::int64_t last_evaluation_millis_ = 0;
     std::mutex wake_mutex_;

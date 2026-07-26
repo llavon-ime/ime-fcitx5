@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -17,6 +18,11 @@
 #endif
 
 namespace imesvc {
+
+class AdapterLoadError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 #if IMESVC_HAS_LLAMA
 class LlamaModelResources;
@@ -59,8 +65,9 @@ public:
     bool loaded() const noexcept;
     std::string load_error() const;
     [[nodiscard]] ModelRuntimeStatus status() const;
-    void record_inference_loaded(bool adapter_loaded) noexcept;
-    void record_inference_failure(std::string error) noexcept;
+    void record_inference_loaded(const std::shared_ptr<const AdapterGeneration>& generation) noexcept;
+    void record_inference_failure(const std::shared_ptr<const AdapterGeneration>& generation,
+                                  std::string error) noexcept;
 #if IMESVC_HAS_LLAMA
     [[nodiscard]] std::shared_ptr<LlamaModelResources> llama_resources() const;
 #endif
@@ -68,10 +75,13 @@ public:
     std::vector<char32_t> lookup(std::u16string_view bopomofo) const;
     [[nodiscard]] std::shared_ptr<const AdapterGeneration> adapter_generation() const;
     [[nodiscard]] std::string active_adapter_version() const;
+    [[nodiscard]] std::shared_ptr<AdapterGeneration> prepare_adapter(
+        std::string version, std::filesystem::path path, std::string sha256) const;
+    void install_prepared_adapter(std::shared_ptr<AdapterGeneration> generation) noexcept;
     void activate_adapter(std::string version, std::filesystem::path path, std::string sha256);
     void clear_active_adapter() noexcept;
     void set_adapter_failure_handler(std::function<void(std::string)> handler);
-    void reject_active_adapter(const std::string& version);
+    void reject_active_adapter(const std::shared_ptr<const AdapterGeneration>& generation);
 
 private:
     void load_tables() const;

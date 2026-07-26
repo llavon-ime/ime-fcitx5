@@ -85,15 +85,18 @@ ModelRuntimeStatus SharedModelRuntime::status() const {
     return result;
 }
 
-void SharedModelRuntime::record_inference_loaded(bool adapter_loaded) noexcept {
+void SharedModelRuntime::record_inference_loaded(const std::shared_ptr<const AdapterGeneration>& generation) noexcept {
     std::lock_guard lock(state_mutex_);
+    if (adapter_generation_ != generation) return;
     inference_model_loaded_ = true;
-    adapter_loaded_ = adapter_loaded;
+    adapter_loaded_ = generation != nullptr;
     inference_load_error_.clear();
 }
 
-void SharedModelRuntime::record_inference_failure(std::string error) noexcept {
+void SharedModelRuntime::record_inference_failure(const std::shared_ptr<const AdapterGeneration>& generation,
+                                                  std::string error) noexcept {
     std::lock_guard lock(state_mutex_);
+    if (adapter_generation_ != generation) return;
     inference_model_loaded_ = false;
     adapter_loaded_ = false;
     inference_load_error_ = std::move(error);
@@ -126,7 +129,8 @@ std::string SharedModelRuntime::active_adapter_version() const {
     return adapter_generation_ ? adapter_generation_->version : std::string{};
 }
 
-void SharedModelRuntime::activate_adapter(std::string version, std::filesystem::path path, std::string sha256) {
+std::shared_ptr<AdapterGeneration> SharedModelRuntime::prepare_adapter(
+    std::string version, std::filesystem::path path, std::string sha256) const {
     std::error_code error;
     const auto status = std::filesystem::symlink_status(path, error);
     if (error || std::filesystem::is_symlink(status) || !std::filesystem::is_regular_file(status) || version.empty() || sha256.empty()) {
@@ -136,16 +140,29 @@ void SharedModelRuntime::activate_adapter(std::string version, std::filesystem::
     generation->version = std::move(version);
     generation->path = std::filesystem::absolute(std::move(path));
     generation->sha256 = std::move(sha256);
+    return generation;
+}
+
+void SharedModelRuntime::install_prepared_adapter(std::shared_ptr<AdapterGeneration> generation) noexcept {
+    if (!generation) return;
     std::lock_guard lock(state_mutex_);
     generation->revision = next_adapter_revision_++;
     adapter_generation_ = std::move(generation);
+    inference_model_loaded_ = false;
     adapter_loaded_ = false;
+    inference_load_error_.clear();
+}
+
+void SharedModelRuntime::activate_adapter(std::string version, std::filesystem::path path, std::string sha256) {
+    install_prepared_adapter(prepare_adapter(std::move(version), std::move(path), std::move(sha256)));
 }
 
 void SharedModelRuntime::clear_active_adapter() noexcept {
     std::lock_guard lock(state_mutex_);
     adapter_generation_.reset();
+    inference_model_loaded_ = false;
     adapter_loaded_ = false;
+    inference_load_error_.clear();
 }
 
 void SharedModelRuntime::set_adapter_failure_handler(std::function<void(std::string)> handler) {
@@ -153,18 +170,21 @@ void SharedModelRuntime::set_adapter_failure_handler(std::function<void(std::str
     adapter_failure_handler_ = std::move(handler);
 }
 
-void SharedModelRuntime::reject_active_adapter(const std::string& version) {
+void SharedModelRuntime::reject_active_adapter(const std::shared_ptr<const AdapterGeneration>& generation) {
+    if (!generation) return;
     std::function<void(std::string)> handler;
     {
         std::lock_guard lock(state_mutex_);
-        if (!adapter_generation_ || adapter_generation_->version != version) return;
+        if (adapter_generation_ != generation) return;
         adapter_generation_.reset();
+        inference_model_loaded_ = false;
         adapter_loaded_ = false;
+        inference_load_error_.clear();
         handler = adapter_failure_handler_;
     }
     if (handler) {
         try {
-            handler(version);
+            handler(generation->version);
         } catch (...) {
         }
     }

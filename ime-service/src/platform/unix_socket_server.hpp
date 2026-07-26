@@ -62,6 +62,7 @@ private:
     class Connection;
 
     void request_stop() noexcept;
+    void shutdown_noexcept() noexcept;
     void accept_connections();
     void close_connections() noexcept;
     void reap_connections();
@@ -84,6 +85,7 @@ private:
     bool endpoint_owned_ = false;
     bool pid_owned_ = false;
     std::atomic_bool stopping_{false};
+    std::once_flag shutdown_once_;
     std::atomic_bool rollback_check_in_flight_{false};
     std::atomic<std::int64_t> last_prediction_activity_millis_{0};
     std::chrono::steady_clock::time_point last_rollback_check_{};

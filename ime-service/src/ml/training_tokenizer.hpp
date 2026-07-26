@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ml/model_config.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
@@ -51,7 +53,11 @@ private:
         std::unordered_map<std::string, std::int64_t> result;
         for (const auto& [key, value] : json.items()) {
             if (!value.is_number_integer()) throw std::runtime_error("invalid tokenizer ID");
-            result.emplace(key, value.get<std::int64_t>());
+            const auto token = value.get<std::int64_t>();
+            if (token < 0 || token >= LlamaModelConfig::kVocabularySize) {
+                throw std::runtime_error("tokenizer ID is outside the fixed model vocabulary");
+            }
+            result.emplace(key, token);
         }
         return result;
     }

@@ -14,6 +14,7 @@ PKG_IDENTIFIER="${IME_FCITX5_PKG_IDENTIFIER:-llavon-ime}"
 VCPKG_FEATURES="${IME_FCITX5_VCPKG_FEATURES:-llama-metal}"
 FCITX5_MACOS_SOURCE_DIR="${FCITX5_MACOS_SOURCE_DIR:-${1:-}}"
 MODEL_PATH="${IME_FCITX5_PACKAGE_MODEL_PATH:-}"
+MODEL_LICENSE_PATH="${IME_FCITX5_PACKAGE_MODEL_LICENSE_PATH:-${ROOT_DIR}/models/LICENSE.llavon-ime-model}"
 MODEL_INSTALL_DIR="/Library/Application Support/llavon-ime/models"
 MODEL_INSTALL_PATH=""
 
@@ -76,6 +77,10 @@ if [[ ! -f "${MODEL_PATH}" || "${MODEL_PATH}" != *.gguf ]]; then
     echo "IME_FCITX5_PACKAGE_MODEL_PATH must point to a .gguf file: ${MODEL_PATH}" >&2
     exit 2
 fi
+if [[ ! -f "${MODEL_LICENSE_PATH}" ]]; then
+    echo "IME_FCITX5_PACKAGE_MODEL_LICENSE_PATH must point to the bundled model license: ${MODEL_LICENSE_PATH}" >&2
+    exit 2
+fi
 
 MODEL_INSTALL_PATH="${MODEL_INSTALL_DIR}/$(basename "${MODEL_PATH}")"
 
@@ -107,6 +112,7 @@ cmake_args=(
     -DCMAKE_BUILD_TYPE=Release
     -DCMAKE_TOOLCHAIN_FILE="${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake"
     -DIME_FCITX5_BUILD_TESTS=ON
+    -DIME_FCITX5_ENABLE_LORA_CONFIG=OFF
     -DFCITX5_MACOS_SOURCE_DIR="${FCITX5_MACOS_SOURCE_DIR}"
     -DCMAKE_INSTALL_PREFIX="${PAYLOAD_PREFIX}"
     -DFCITX_INSTALL_ADDONDIR=lib/fcitx5
@@ -123,8 +129,13 @@ DESTDIR="${PKGROOT}" cmake --install "${BUILD_DIR}"
 
 payload_root="${PKGROOT}${PAYLOAD_PREFIX}"
 model_root="${PKGROOT}${MODEL_INSTALL_DIR}"
+license_root="${payload_root}/share/licenses/llavon-ime"
 mkdir -p "${model_root}"
 install -m 0644 "${MODEL_PATH}" "${model_root}/$(basename "${MODEL_PATH}")"
+mkdir -p "${license_root}"
+install -m 0644 "${ROOT_DIR}/LICENSE" "${license_root}/LICENSE.frontend"
+install -m 0644 "${ROOT_DIR}/ime-service/LICENSE" "${license_root}/LICENSE.service"
+install -m 0644 "${MODEL_LICENSE_PATH}" "${license_root}/LICENSE.model"
 
 if command -v xattr >/dev/null 2>&1; then
     xattr -cr "${PKGROOT}" || true
@@ -143,6 +154,9 @@ required_files=(
     "${payload_root}/share/llavon-ime/tables/tokens/special_tokens.json"
     "${payload_root}/plugin/llavon-ime.json"
     "${PKGROOT}${MODEL_INSTALL_PATH}"
+    "${license_root}/LICENSE.frontend"
+    "${license_root}/LICENSE.service"
+    "${license_root}/LICENSE.model"
 )
 
 for file in "${required_files[@]}"; do

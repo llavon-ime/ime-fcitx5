@@ -5,6 +5,7 @@
 #include <fcitx/inputcontextproperty.h>
 #include <fcitx/inputmethodengine.h>
 
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -90,7 +91,7 @@ private:
     std::unique_ptr<ServiceTransport> service_transport_;
     ImeFcitxConfig fcitx_config_;
     Config config_;
-    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
+    std::shared_ptr<std::atomic_bool> alive_ = std::make_shared<std::atomic_bool>(true);
     fcitx::Instance* instance_ = nullptr;
     std::unique_ptr<fcitx::EventDispatcher> event_dispatcher_;
     bool prediction_pending_ = false;
@@ -100,6 +101,7 @@ private:
     std::u16string prediction_context_;
     std::string prediction_base_model_hash_;
     protocol::EventId prediction_feedback_token_{};
+    std::u16string prediction_feedback_key_;
     bool feedback_sensitive_ = false;
     size_t prediction_revision_ = 0;
     std::vector<size_t> prediction_segment_indices_;

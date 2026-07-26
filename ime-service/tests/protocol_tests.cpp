@@ -70,13 +70,18 @@ bool protocol_test() {
 
 class MockEngine final : public imesvc::ISessionEngine {
 public:
+    explicit MockEngine(std::string adapter_version = "adapter-1") : adapter_version_(std::move(adapter_version)) {}
+
     std::vector<std::vector<char32_t>> predict(const imesvc::protocol::PredictRequest& request) override {
         std::vector<std::vector<char32_t>> result;
         for (const auto& entry : request.padding) result.push_back(entry.chosen ? std::vector<char32_t>{entry.chosen_char} : std::vector<char32_t>{U'你', U'妳'});
         return result;
     }
     bool loaded() const noexcept override { return true; }
-    std::string adapter_version() const override { return "adapter-1"; }
+    std::string adapter_version() const override { return adapter_version_; }
+
+private:
+    std::string adapter_version_;
 };
 
 bool session_test() {
@@ -88,19 +93,39 @@ bool session_test() {
     limits.max_idle_sessions = 2;
     limits.idle_timeout = std::chrono::seconds(60);
     limits.max_concurrent_predictions = 2;
-    imesvc::SessionManager manager(runtime, limits, []() { return std::make_unique<MockEngine>(); });
+    auto adapter_version = std::make_shared<std::string>("adapter-1");
+    imesvc::SessionManager manager(runtime, limits, [adapter_version]() {
+        return std::make_unique<MockEngine>(*adapter_version);
+    });
 
     const auto first = manager.open_session(1000);
     const auto second = manager.open_session(1000);
     if (!std::holds_alternative<imesvc::protocol::OpenSessionResponse>(first) ||
         !std::holds_alternative<imesvc::protocol::OpenSessionResponse>(second)) return false;
     const auto first_id = std::get<imesvc::protocol::OpenSessionResponse>(first).session_id;
+    const auto second_id = std::get<imesvc::protocol::OpenSessionResponse>(second).session_id;
 
     imesvc::protocol::PredictRequest request;
     request.session_id = first_id;
     request.request_id = 1;
     request.buffer_revision = 9;
     request.padding.push_back({false, u"ㄋㄧˇ", 0});
+    auto unauthorized_chosen = request;
+    unauthorized_chosen.session_id = second_id;
+    unauthorized_chosen.padding[0].chosen = true;
+    unauthorized_chosen.padding[0].chosen_char = U'妳';
+    const auto unauthorized_chosen_result = manager.predict(1000, unauthorized_chosen);
+    if (!std::holds_alternative<imesvc::protocol::Prediction>(unauthorized_chosen_result)) return false;
+    imesvc::protocol::FeedbackRequest fabricated_feedback;
+    fabricated_feedback.session_id = second_id;
+    fabricated_feedback.feedback_token =
+        std::get<imesvc::protocol::Prediction>(unauthorized_chosen_result).feedback_token;
+    fabricated_feedback.bopomofo_sequence = u"ㄋㄧˇ";
+    fabricated_feedback.committed_characters = u"妳";
+    fabricated_feedback.predicted_top1 = u"妳";
+    fabricated_feedback.manually_chosen_flags = {false};
+    fabricated_feedback.signal_type = imesvc::protocol::FeedbackSignal::AcceptedPrediction;
+    if (manager.consume_feedback_token(1000, fabricated_feedback).has_value()) return false;
     const auto prediction = manager.predict(1000, request);
     if (!std::holds_alternative<imesvc::protocol::Prediction>(prediction)) return false;
     const auto& value = std::get<imesvc::protocol::Prediction>(prediction);
@@ -114,7 +139,7 @@ bool session_test() {
     if (!std::holds_alternative<imesvc::protocol::Prediction>(chosen_prediction)) return false;
     imesvc::protocol::FeedbackRequest correlated_feedback;
     correlated_feedback.session_id = first_id;
-    correlated_feedback.feedback_token = std::get<imesvc::protocol::Prediction>(chosen_prediction).feedback_token;
+    correlated_feedback.feedback_token = value.feedback_token;
     correlated_feedback.bopomofo_sequence = u"ㄊㄚ";
     correlated_feedback.committed_characters = u"妳";
     correlated_feedback.predicted_top1 = u"你";
@@ -124,6 +149,24 @@ bool session_test() {
     correlated_feedback.bopomofo_sequence = u"ㄋㄧˇ";
     const auto adapter = manager.consume_feedback_token(1000, correlated_feedback);
     if (!adapter || *adapter != "adapter-1" || manager.consume_feedback_token(1000, correlated_feedback).has_value()) return false;
+
+    *adapter_version = "adapter-2";
+    manager.with_predictions_stopped([&manager]() { manager.reset_engines(); });
+    auto transitioned_request = request;
+    transitioned_request.request_id = 3;
+    transitioned_request.buffer_revision = 11;
+    const auto transitioned_prediction = manager.predict(1000, transitioned_request);
+    if (!std::holds_alternative<imesvc::protocol::Prediction>(transitioned_prediction)) return false;
+    imesvc::protocol::FeedbackRequest transitioned_feedback;
+    transitioned_feedback.session_id = first_id;
+    transitioned_feedback.feedback_token = std::get<imesvc::protocol::Prediction>(transitioned_prediction).feedback_token;
+    transitioned_feedback.bopomofo_sequence = u"ㄋㄧˇ";
+    transitioned_feedback.committed_characters = u"你";
+    transitioned_feedback.predicted_top1 = u"你";
+    transitioned_feedback.manually_chosen_flags = {false};
+    transitioned_feedback.signal_type = imesvc::protocol::FeedbackSignal::AcceptedPrediction;
+    const auto transitioned_adapter = manager.consume_feedback_token(1000, transitioned_feedback);
+    if (!transitioned_adapter || *transitioned_adapter != "adapter-2") return false;
 
     const auto duplicate = manager.predict(1000, chosen_request);
     if (!std::holds_alternative<imesvc::protocol::Error>(duplicate) ||

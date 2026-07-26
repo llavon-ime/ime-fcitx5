@@ -3,23 +3,28 @@
 _pkgname=llavon-ime-fcitx5
 _srcname=ime-fcitx5
 _model_file=llavon-ime-llama-250m-Q4_K_M.gguf
+_model_revision=fae44704fb1a7361bcc1150bf910c1d74fa367a4
+_model_license=LICENSE.llavon-ime-model
 pkgname=${_pkgname}-git
 pkgver=0.1.0.r3.g78fdc91
 pkgrel=1
 pkgdesc='Fcitx5 frontend and local inference service for Llavon IME'
 arch=('x86_64' 'aarch64')
 url='https://github.com/llavon-ime/ime-fcitx5'
-license=('BSD-2-Clause')
-depends=('fcitx5')
+license=('BSD-2-Clause' 'CC-BY-NC-4.0')
+depends=('fcitx5' 'vulkan-icd-loader')
 makedepends=('cmake' 'curl' 'git' 'ninja' 'pkgconf' 'tar' 'unzip' 'zip')
 optdepends=('fcitx5-configtool: graphical configuration for fcitx5')
 provides=("${_pkgname}")
 conflicts=("${_pkgname}")
 source=(
     "${_srcname}::git+https://github.com/llavon-ime/ime-fcitx5.git#branch=main"
-    "${_model_file}::https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF/resolve/main/${_model_file}"
+    "${_model_file}::https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF/resolve/${_model_revision}/${_model_file}"
+    "${_model_license}::https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF/resolve/${_model_revision}/LICENSE"
 )
-sha256sums=('SKIP' 'SKIP')
+sha256sums=('SKIP'
+            'e0205904a65b735ed735b709d5e1502ebbe31fbd1393042573af9843d39e2ab8'
+            '41003d4a74749c0220e33dd415042164b5a1093ed401f36277234f772d22d3d0')
 
 pkgver() {
     cd "${_srcname}"
@@ -56,6 +61,7 @@ build() {
         -DCMAKE_TOOLCHAIN_FILE="${srcdir}/${_srcname}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
         -DIME_FCITX5_INSTALLED_MODEL_PATH="/usr/share/llavon-ime/models/${_model_file}" \
         -DIME_FCITX5_DISPLAY_VERSION="${pkgver}" \
+        -DIME_FCITX5_ENABLE_LORA_CONFIG=OFF \
         -DIME_FCITX5_BUILD_TESTS=OFF
     cmake --build build
 }
@@ -66,4 +72,6 @@ package() {
     install -Dm644 "${srcdir}/${_model_file}" \
         "${pkgdir}/usr/share/llavon-ime/models/${_model_file}"
     install -Dm644 "${_srcname}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+    install -Dm644 "${_srcname}/ime-service/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE.service"
+    install -Dm644 "${srcdir}/${_model_license}" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE.model"
 }

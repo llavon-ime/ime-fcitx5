@@ -6,6 +6,7 @@
 #include <array>
 #include <cerrno>
 #include <charconv>
+#include <cctype>
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
@@ -18,6 +19,7 @@
 #include <string_view>
 #include <thread>
 #include <type_traits>
+#include <unordered_set>
 #include <utility>
 
 #ifndef _WIN32
@@ -29,7 +31,7 @@
 namespace imesvc::training {
 namespace {
 
-constexpr int kSchemaVersion = 2;
+constexpr int kSchemaVersion = 5;
 constexpr std::size_t kMaxEventIdBytes = 256;
 constexpr std::size_t kMaxMetadataBytes = 4096;
 
@@ -72,7 +74,8 @@ Result failed_result(std::string error) {
         Result result;
         result.operation = operation_failure(std::move(error));
         return result;
-    } else if constexpr (std::is_same_v<Result, AdapterLookupResult>) {
+    } else if constexpr (std::is_same_v<Result, AdapterLookupResult> ||
+                         std::is_same_v<Result, AdapterListResult>) {
         Result result;
         result.operation = operation_failure(std::move(error));
         return result;
@@ -420,10 +423,28 @@ std::string random_identifier() {
 }
 
 void validate_private_directory(const std::filesystem::path& path) {
+#ifndef _WIN32
+    const auto reject_symlink_components = [&path]() {
+        auto current = path.root_path();
+        for (const auto& component : path.relative_path()) {
+            current /= component;
+            struct stat information {};
+            if (::lstat(current.c_str(), &information) == 0) {
+                if (S_ISLNK(information.st_mode)) {
+                    throw std::runtime_error("feedback data path contains a symlink component");
+                }
+            } else if (errno != ENOENT) {
+                throw std::runtime_error("inspect feedback data path component failed");
+            }
+        }
+    };
+    reject_symlink_components();
+#endif
     std::error_code error;
     std::filesystem::create_directories(path, error);
     if (error) throw std::runtime_error("create feedback data directory failed: " + error.message());
 #ifndef _WIN32
+    reject_symlink_components();
     struct stat information {};
     if (::lstat(path.c_str(), &information) != 0 || !S_ISDIR(information.st_mode) || S_ISLNK(information.st_mode)) {
         throw std::runtime_error("feedback data path is not a directory");
@@ -461,7 +482,9 @@ void validate_database_path_before_open(const std::filesystem::path& path) {
 
 bool valid_filename(const std::string& filename) {
     const std::filesystem::path path(filename);
-    return !filename.empty() && !path.is_absolute() && path.parent_path().empty() && filename != "." && filename != "..";
+    return !filename.empty() && filename.find('\0') == std::string::npos && filename.find('/') == std::string::npos &&
+           filename.find('\\') == std::string::npos && !path.is_absolute() && path.parent_path().empty() &&
+           filename != "." && filename != "..";
 }
 
 DatasetSample sample_from_statement(sqlite3_stmt* statement, int offset) {
@@ -499,10 +522,23 @@ bool sane_sample(const DatasetSample& sample, const FeedbackStoreOptions& option
            sample.adapter_version.size() <= kMaxMetadataBytes && is_valid_utf8(sample.event_id) && is_valid_utf8(sample.left_context) &&
            is_valid_utf8(sample.bopomofo_sequence) && is_valid_utf8(sample.committed_characters, &target_characters) &&
            is_valid_utf8(sample.predicted_top1) && is_valid_utf8(sample.base_model_hash) && is_valid_utf8(sample.adapter_version) &&
-           sample.target_characters == target_characters && sample.manually_chosen_flags.size() == target_characters &&
-           std::all_of(sample.manually_chosen_flags.begin(), sample.manually_chosen_flags.end(),
-                       [](std::uint8_t value) { return value <= 1U; }) &&
-           sample.validation_member == FeedbackStore::deterministic_validation_member(sample.event_id) && valid_signal(sample.signal_type);
+            sample.target_characters == target_characters && sample.manually_chosen_flags.size() == target_characters &&
+            std::all_of(sample.manually_chosen_flags.begin(), sample.manually_chosen_flags.end(),
+                        [](std::uint8_t value) { return value <= 1U; }) &&
+            valid_signal(sample.signal_type);
+}
+
+AdapterRecord adapter_from_statement(sqlite3_stmt* statement, int offset = 0) {
+    AdapterRecord adapter;
+    adapter.version = column_text(statement, offset);
+    adapter.base_model_hash = column_text(statement, offset + 1);
+    adapter.dataset_snapshot_id = column_text(statement, offset + 2);
+    adapter.sha256 = column_text(statement, offset + 3);
+    adapter.created_at_unix_seconds = sqlite3_column_int64(statement, offset + 4);
+    adapter.active = sqlite3_column_int(statement, offset + 5) != 0;
+    adapter.parent_version = column_text(statement, offset + 6);
+    adapter.rejected = sqlite3_column_int(statement, offset + 7) != 0;
+    return adapter;
 }
 
 }  // namespace
@@ -653,6 +689,7 @@ public:
             Transaction transaction(database, "BEGIN IMMEDIATE");
             execute(database, "DELETE FROM dataset_snapshots", "delete dataset snapshots");
             execute(database, "DELETE FROM samples", "delete feedback samples");
+            execute(database, "DELETE FROM base_model_progress", "delete feedback ingestion progress");
             execute(database, "DELETE FROM training_runs", "delete training runs");
             execute(database, "DELETE FROM adapters", "delete adapter records");
             execute(database, "UPDATE learning_state SET learning_enabled = 0 WHERE id = 1", "disable personal learning");
@@ -671,6 +708,9 @@ public:
             if (database_ != nullptr) {
                 (void)sqlite3_close(database_);
                 database_ = nullptr;
+            }
+            if (!database_path_validated_) {
+                return operation_failure("refusing to delete an unvalidated feedback database path");
             }
             for (const auto& path : {database_path_, std::filesystem::path(database_path_.string() + "-wal"),
                                      std::filesystem::path(database_path_.string() + "-shm")}) {
@@ -714,15 +754,17 @@ public:
             SnapshotMetadata metadata;
             metadata.snapshot_id = random_identifier();
             metadata.created_at_unix_seconds = unix_seconds();
+            std::optional<std::string> base_model_hash;
+            if (!options_.base_model_hash.empty()) base_model_hash = options_.base_model_hash;
             std::vector<DatasetSample> samples;
             const char* source_sql = options_.base_model_hash.empty()
                                          ? "SELECT event_id, left_context, bopomofo_sequence, committed_characters, predicted_top1, "
                                            "manually_chosen_flags, signal_type, base_model_hash, adapter_version, created_at, "
-                                           "target_characters, validation_member FROM samples ORDER BY created_at ASC, event_id ASC"
+                                           "target_characters, validation_member FROM samples ORDER BY created_at DESC, event_id DESC"
                                          : "SELECT event_id, left_context, bopomofo_sequence, committed_characters, predicted_top1, "
                                            "manually_chosen_flags, signal_type, base_model_hash, adapter_version, created_at, "
                                            "target_characters, validation_member FROM samples WHERE base_model_hash = ? "
-                                           "ORDER BY created_at ASC, event_id ASC";
+                                           "ORDER BY created_at DESC, event_id DESC";
             Statement source(database, source_sql);
             if (!options_.base_model_hash.empty()) bind_text(source, 1, options_.base_model_hash, database);
             while (sqlite3_step(source.get()) == SQLITE_ROW) {
@@ -735,6 +777,11 @@ public:
                 if (metadata.total_target_characters > std::numeric_limits<std::uint64_t>::max() - sample.target_characters) {
                     throw std::runtime_error("snapshot target character count overflow");
                 }
+                if (!base_model_hash.has_value()) {
+                    base_model_hash = sample.base_model_hash;
+                } else if (*base_model_hash != sample.base_model_hash) {
+                    throw std::runtime_error("feedback samples span multiple base models");
+                }
                 samples.push_back(std::move(sample));
                 metadata.total_target_characters += samples.back().target_characters;
                 if (samples.back().validation_member) {
@@ -745,21 +792,25 @@ public:
                 }
             }
             if (sqlite3_errcode(database) != SQLITE_DONE) throw std::runtime_error(sqlite_error(database, "read feedback samples"));
+            // A bounded snapshot represents the newest retained learning state, not an old prefix.
+            std::reverse(samples.begin(), samples.end());
+            metadata.base_model_hash = base_model_hash.value_or(std::string{});
             metadata.total_samples = samples.size();
             metadata.sha256 = snapshot_digest(metadata, samples);
 
             Statement insert_snapshot(database,
-                                      "INSERT INTO dataset_snapshots (snapshot_id, sha256, created_at, total_samples, "
+                                      "INSERT INTO dataset_snapshots (snapshot_id, sha256, base_model_hash, created_at, total_samples, "
                                       "total_target_characters, training_target_characters, validation_target_characters, "
-                                      "validation_samples) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                                      "validation_samples, payload_available) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)");
             bind_text(insert_snapshot, 1, metadata.snapshot_id, database);
             bind_text(insert_snapshot, 2, metadata.sha256, database);
-            bind_i64(insert_snapshot, 3, metadata.created_at_unix_seconds, database);
-            bind_i64(insert_snapshot, 4, static_cast<std::int64_t>(metadata.total_samples), database);
-            bind_i64(insert_snapshot, 5, static_cast<std::int64_t>(metadata.total_target_characters), database);
-            bind_i64(insert_snapshot, 6, static_cast<std::int64_t>(metadata.training_target_characters), database);
-            bind_i64(insert_snapshot, 7, static_cast<std::int64_t>(metadata.validation_target_characters), database);
-            bind_i64(insert_snapshot, 8, static_cast<std::int64_t>(metadata.validation_samples), database);
+            bind_text(insert_snapshot, 3, metadata.base_model_hash, database);
+            bind_i64(insert_snapshot, 4, metadata.created_at_unix_seconds, database);
+            bind_i64(insert_snapshot, 5, static_cast<std::int64_t>(metadata.total_samples), database);
+            bind_i64(insert_snapshot, 6, static_cast<std::int64_t>(metadata.total_target_characters), database);
+            bind_i64(insert_snapshot, 7, static_cast<std::int64_t>(metadata.training_target_characters), database);
+            bind_i64(insert_snapshot, 8, static_cast<std::int64_t>(metadata.validation_target_characters), database);
+            bind_i64(insert_snapshot, 9, static_cast<std::int64_t>(metadata.validation_samples), database);
             step_done(insert_snapshot, database, "insert dataset snapshot");
 
             Statement insert_sample(database,
@@ -802,9 +853,10 @@ public:
         try {
             if (snapshot_id.empty() || snapshot_id.size() > kMaxEventIdBytes) throw std::runtime_error("invalid snapshot id");
             Statement metadata_statement(database,
-                                         "SELECT snapshot_id, sha256, created_at, total_samples, total_target_characters, "
-                                         "training_target_characters, validation_target_characters, validation_samples "
-                                         "FROM dataset_snapshots WHERE snapshot_id = ?");
+                                          "SELECT snapshot_id, sha256, created_at, total_samples, total_target_characters, "
+                                          "training_target_characters, validation_target_characters, validation_samples, "
+                                          "base_model_hash, payload_available "
+                                          "FROM dataset_snapshots WHERE snapshot_id = ?");
             bind_text(metadata_statement, 1, snapshot_id, database);
             if (sqlite3_step(metadata_statement.get()) != SQLITE_ROW) throw std::runtime_error("dataset snapshot does not exist");
             auto& metadata = result.snapshot;
@@ -816,6 +868,11 @@ public:
             metadata.training_target_characters = checked_u64(sqlite3_column_int64(metadata_statement.get(), 5), "snapshot training count");
             metadata.validation_target_characters = checked_u64(sqlite3_column_int64(metadata_statement.get(), 6), "snapshot validation count");
             metadata.validation_samples = checked_u64(sqlite3_column_int64(metadata_statement.get(), 7), "snapshot validation samples");
+            metadata.base_model_hash = column_text(metadata_statement.get(), 8);
+            const int payload_available = sqlite3_column_int(metadata_statement.get(), 9);
+            if (payload_available != 0 && payload_available != 1) throw std::runtime_error("invalid dataset snapshot payload state");
+            metadata.payload_available = payload_available != 0;
+            if (!metadata.payload_available) throw std::runtime_error("dataset snapshot payload is unavailable");
 
             Statement samples_statement(database,
                                         "SELECT event_id, left_context, bopomofo_sequence, committed_characters, predicted_top1, "
@@ -825,7 +882,9 @@ public:
             bind_text(samples_statement, 1, snapshot_id, database);
             while (sqlite3_step(samples_statement.get()) == SQLITE_ROW) {
                 DatasetSample sample = sample_from_statement(samples_statement.get(), 0);
-                if (!sane_sample(sample, options_)) throw std::runtime_error("dataset snapshot integrity check failed");
+                if (!sane_sample(sample, options_) || sample.base_model_hash != metadata.base_model_hash) {
+                    throw std::runtime_error("dataset snapshot integrity check failed");
+                }
                 result.samples.push_back(std::move(sample));
             }
             if (sqlite3_errcode(database) != SQLITE_DONE) throw std::runtime_error(sqlite_error(database, "read immutable snapshot"));
@@ -860,6 +919,26 @@ public:
         return result;
     }
 
+    StoreOperationResult discard_snapshot(sqlite3* database, const std::string& snapshot_id) {
+        try {
+            if (snapshot_id.empty() || snapshot_id.size() > kMaxEventIdBytes) {
+                return operation_failure("invalid dataset snapshot id");
+            }
+            Statement statement(database,
+                                "DELETE FROM dataset_snapshots WHERE snapshot_id = ? "
+                                "AND NOT EXISTS (SELECT 1 FROM training_runs WHERE training_runs.snapshot_id = ?) "
+                                "AND NOT EXISTS (SELECT 1 FROM adapters WHERE adapters.dataset_snapshot_id = ?)");
+            bind_text(statement, 1, snapshot_id, database);
+            bind_text(statement, 2, snapshot_id, database);
+            bind_text(statement, 3, snapshot_id, database);
+            step_done(statement, database, "discard unreferenced dataset snapshot");
+            return sqlite3_changes(database) == 1 ? operation_success()
+                                                   : operation_failure("dataset snapshot is missing or referenced");
+        } catch (const std::exception& error) {
+            return operation_failure(error.what());
+        }
+    }
+
     TrainingAccounting accounting(sqlite3* database) {
         TrainingAccounting result;
         try {
@@ -885,11 +964,23 @@ public:
             }
             {
                 const char* sql = options_.base_model_hash.empty()
+                                      ? "SELECT COALESCE(SUM(cumulative_target_characters), 0) FROM base_model_progress"
+                                      : "SELECT COALESCE(SUM(cumulative_target_characters), 0) FROM base_model_progress "
+                                        "WHERE base_model_hash = ?";
+                Statement statement(database, sql);
+                if (!options_.base_model_hash.empty()) bind_text(statement, 1, options_.base_model_hash, database);
+                if (sqlite3_step(statement.get()) != SQLITE_ROW) throw std::runtime_error(sqlite_error(database, "read ingestion progress"));
+                result.cumulative_target_characters =
+                    checked_u64(sqlite3_column_int64(statement.get(), 0), "cumulative target count");
+            }
+            {
+                const char* sql = options_.base_model_hash.empty()
                                       ? "SELECT EXISTS(SELECT 1 FROM adapters WHERE active = 1), "
-                                        "EXISTS(SELECT 1 FROM training_runs WHERE kind = 1 AND succeeded = 1)"
+                                        "EXISTS(SELECT 1 FROM training_runs r JOIN dataset_snapshots d ON d.snapshot_id = r.snapshot_id "
+                                        "WHERE r.kind = 1 AND r.succeeded = 1)"
                                       : "SELECT EXISTS(SELECT 1 FROM adapters WHERE active = 1 AND base_model_hash = ?), "
-                                        "EXISTS(SELECT 1 FROM training_runs r WHERE r.kind = 1 AND r.succeeded = 1 AND "
-                                        "EXISTS(SELECT 1 FROM dataset_snapshot_samples s WHERE s.snapshot_id = r.snapshot_id AND s.base_model_hash = ?))";
+                                        "EXISTS(SELECT 1 FROM training_runs r JOIN dataset_snapshots d ON d.snapshot_id = r.snapshot_id "
+                                        "WHERE r.kind = 1 AND r.succeeded = 1 AND d.base_model_hash = ?)";
                 Statement statement(database, sql);
                 if (!options_.base_model_hash.empty()) {
                     bind_text(statement, 1, options_.base_model_hash, database);
@@ -901,9 +992,11 @@ public:
             }
             {
                 const char* sql = options_.base_model_hash.empty()
-                                      ? "SELECT COALESCE(MAX(started_at), 0), COALESCE(MAX(completed_at), 0) FROM training_runs"
-                                      : "SELECT COALESCE(MAX(r.started_at), 0), COALESCE(MAX(r.completed_at), 0) FROM training_runs r "
-                                        "WHERE EXISTS(SELECT 1 FROM dataset_snapshot_samples s WHERE s.snapshot_id = r.snapshot_id AND s.base_model_hash = ?)";
+                                      ? "SELECT COALESCE(MAX(r.started_at), 0), COALESCE(MAX(r.completed_at), 0) "
+                                        "FROM training_runs r JOIN dataset_snapshots d ON d.snapshot_id = r.snapshot_id"
+                                      : "SELECT COALESCE(MAX(r.started_at), 0), COALESCE(MAX(r.completed_at), 0) "
+                                        "FROM training_runs r JOIN dataset_snapshots d ON d.snapshot_id = r.snapshot_id "
+                                        "WHERE d.base_model_hash = ?";
                 Statement statement(database, sql);
                 if (!options_.base_model_hash.empty()) bind_text(statement, 1, options_.base_model_hash, database);
                 if (sqlite3_step(statement.get()) != SQLITE_ROW) throw std::runtime_error(sqlite_error(database, "read training times"));
@@ -912,11 +1005,13 @@ public:
             }
             {
                 const char* sql = options_.base_model_hash.empty()
-                                      ? "SELECT succeeded FROM training_runs WHERE completed_at IS NOT NULL "
-                                        "ORDER BY completed_at DESC, started_at DESC LIMIT 1"
-                                      : "SELECT r.succeeded FROM training_runs r WHERE r.completed_at IS NOT NULL AND "
-                                        "EXISTS(SELECT 1 FROM dataset_snapshot_samples s WHERE s.snapshot_id = r.snapshot_id "
-                                        "AND s.base_model_hash = ?) ORDER BY r.completed_at DESC, r.started_at DESC LIMIT 1";
+                                      ? "SELECT r.succeeded FROM training_runs r "
+                                        "JOIN dataset_snapshots d ON d.snapshot_id = r.snapshot_id "
+                                        "WHERE r.completed_at IS NOT NULL ORDER BY r.completed_at DESC, r.started_at DESC LIMIT 1"
+                                      : "SELECT r.succeeded FROM training_runs r "
+                                        "JOIN dataset_snapshots d ON d.snapshot_id = r.snapshot_id "
+                                        "WHERE r.completed_at IS NOT NULL AND d.base_model_hash = ? "
+                                        "ORDER BY r.completed_at DESC, r.started_at DESC LIMIT 1";
                 Statement statement(database, sql);
                 if (!options_.base_model_hash.empty()) bind_text(statement, 1, options_.base_model_hash, database);
                 if (sqlite3_step(statement.get()) == SQLITE_ROW) {
@@ -925,16 +1020,18 @@ public:
             }
             {
                 const char* sql = options_.base_model_hash.empty()
-                                      ? "SELECT eligible_target_characters FROM training_runs WHERE succeeded = 1 "
-                                        "ORDER BY completed_at DESC, started_at DESC LIMIT 1"
-                                      : "SELECT r.eligible_target_characters FROM training_runs r WHERE r.succeeded = 1 AND "
-                                        "EXISTS(SELECT 1 FROM dataset_snapshot_samples s WHERE s.snapshot_id = r.snapshot_id AND s.base_model_hash = ?) "
+                                      ? "SELECT r.cumulative_target_characters FROM training_runs r "
+                                        "JOIN dataset_snapshots d ON d.snapshot_id = r.snapshot_id WHERE r.succeeded = 1 "
+                                        "ORDER BY r.completed_at DESC, r.started_at DESC LIMIT 1"
+                                      : "SELECT r.cumulative_target_characters FROM training_runs r "
+                                        "JOIN dataset_snapshots d ON d.snapshot_id = r.snapshot_id "
+                                        "WHERE r.succeeded = 1 AND d.base_model_hash = ? "
                                         "ORDER BY r.completed_at DESC, r.started_at DESC LIMIT 1";
                 Statement statement(database, sql);
                 if (!options_.base_model_hash.empty()) bind_text(statement, 1, options_.base_model_hash, database);
                 if (sqlite3_step(statement.get()) == SQLITE_ROW) {
-                    result.eligible_target_characters_at_last_success =
-                        checked_u64(sqlite3_column_int64(statement.get(), 0), "last successful training target count");
+                    result.cumulative_target_characters_at_last_success =
+                        checked_u64(sqlite3_column_int64(statement.get(), 0), "last successful training cumulative target count");
                 }
             }
         } catch (...) {
@@ -945,24 +1042,30 @@ public:
 
     StoreOperationResult record_training_started(sqlite3* database, TrainingRunStart run) {
         try {
-            if (run.run_id.empty() || run.run_id.size() > kMaxEventIdBytes || run.snapshot_id.empty() ||
+            if (run.run_id.empty() || !valid_filename(run.run_id) || run.run_id.size() > kMaxEventIdBytes || run.snapshot_id.empty() ||
                 run.snapshot_id.size() > kMaxEventIdBytes || run.started_at_unix_seconds < 0 ||
+                run.cumulative_target_characters > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
                 (run.kind != TrainingRunKind::ShadowSmoke && run.kind != TrainingRunKind::FirstAdapter && run.kind != TrainingRunKind::Incremental)) {
                 return operation_failure("invalid training run");
             }
             if (run.started_at_unix_seconds == 0) run.started_at_unix_seconds = unix_seconds();
-            Statement snapshot(database, "SELECT 1 FROM dataset_snapshots WHERE snapshot_id = ?");
+            Statement snapshot(database, "SELECT base_model_hash, payload_available FROM dataset_snapshots WHERE snapshot_id = ?");
             bind_text(snapshot, 1, run.snapshot_id, database);
             if (sqlite3_step(snapshot.get()) != SQLITE_ROW) return operation_failure("training dataset snapshot does not exist");
+            if (sqlite3_column_int(snapshot.get(), 1) != 1) return operation_failure("training dataset snapshot payload is unavailable");
+            if (!options_.base_model_hash.empty() && column_text(snapshot.get(), 0) != options_.base_model_hash) {
+                return operation_failure("training dataset snapshot belongs to a different base model");
+            }
             Statement statement(database, "INSERT INTO training_runs (run_id, snapshot_id, kind, started_at, completed_at, succeeded, "
-                                          "eligible_target_characters, eligible_samples) VALUES (?, ?, ?, ?, NULL, NULL, ?, ?) "
-                                          "ON CONFLICT(run_id) DO NOTHING");
+                                          "eligible_target_characters, eligible_samples, cumulative_target_characters) "
+                                          "VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?)");
             bind_text(statement, 1, run.run_id, database);
             bind_text(statement, 2, run.snapshot_id, database);
             bind_i64(statement, 3, static_cast<std::int64_t>(run.kind), database);
             bind_i64(statement, 4, run.started_at_unix_seconds, database);
             bind_i64(statement, 5, static_cast<std::int64_t>(run.eligible_target_characters), database);
             bind_i64(statement, 6, static_cast<std::int64_t>(run.eligible_samples), database);
+            bind_i64(statement, 7, static_cast<std::int64_t>(run.cumulative_target_characters), database);
             step_done(statement, database, "record training start");
             return operation_success();
         } catch (const std::exception& error) {
@@ -974,11 +1077,14 @@ public:
         IncompleteTrainingRunsResult result;
         try {
             const char* sql = options_.base_model_hash.empty()
-                                  ? "SELECT run_id, snapshot_id, kind, started_at, eligible_target_characters, eligible_samples "
-                                    "FROM training_runs WHERE completed_at IS NULL ORDER BY started_at DESC, run_id DESC"
-                                  : "SELECT r.run_id, r.snapshot_id, r.kind, r.started_at, r.eligible_target_characters, r.eligible_samples "
-                                    "FROM training_runs r WHERE r.completed_at IS NULL AND EXISTS("
-                                    "SELECT 1 FROM dataset_snapshot_samples s WHERE s.snapshot_id = r.snapshot_id AND s.base_model_hash = ?) "
+                                  ? "SELECT r.run_id, r.snapshot_id, r.kind, r.started_at, r.eligible_target_characters, "
+                                    "r.eligible_samples, r.cumulative_target_characters FROM training_runs r "
+                                    "JOIN dataset_snapshots d ON d.snapshot_id = r.snapshot_id "
+                                    "WHERE r.completed_at IS NULL ORDER BY r.started_at DESC, r.run_id DESC"
+                                  : "SELECT r.run_id, r.snapshot_id, r.kind, r.started_at, r.eligible_target_characters, "
+                                    "r.eligible_samples, r.cumulative_target_characters FROM training_runs r "
+                                    "JOIN dataset_snapshots d ON d.snapshot_id = r.snapshot_id "
+                                    "WHERE r.completed_at IS NULL AND d.base_model_hash = ? "
                                     "ORDER BY r.started_at DESC, r.run_id DESC";
             Statement statement(database, sql);
             if (!options_.base_model_hash.empty()) bind_text(statement, 1, options_.base_model_hash, database);
@@ -986,6 +1092,7 @@ public:
                 TrainingRunStart run;
                 run.run_id = column_text(statement.get(), 0);
                 run.snapshot_id = column_text(statement.get(), 1);
+                if (!valid_filename(run.run_id)) throw std::runtime_error("invalid incomplete training run id");
                 const auto kind = sqlite3_column_int64(statement.get(), 2);
                 if (kind < static_cast<std::int64_t>(TrainingRunKind::ShadowSmoke) ||
                     kind > static_cast<std::int64_t>(TrainingRunKind::Incremental)) {
@@ -995,6 +1102,8 @@ public:
                 run.started_at_unix_seconds = sqlite3_column_int64(statement.get(), 3);
                 run.eligible_target_characters = checked_u64(sqlite3_column_int64(statement.get(), 4), "training target count");
                 run.eligible_samples = checked_u64(sqlite3_column_int64(statement.get(), 5), "training sample count");
+                run.cumulative_target_characters =
+                    checked_u64(sqlite3_column_int64(statement.get(), 6), "training cumulative target count");
                 result.runs.push_back(std::move(run));
             }
             if (sqlite3_errcode(database) != SQLITE_DONE) throw std::runtime_error(sqlite_error(database, "read incomplete training runs"));
@@ -1034,7 +1143,9 @@ public:
         try {
             if (adapter.version.empty() || !valid_filename(adapter.version) || adapter.version.size() > kMaxEventIdBytes || adapter.dataset_snapshot_id.empty() ||
                 adapter.dataset_snapshot_id.size() > kMaxEventIdBytes || adapter.base_model_hash.size() > kMaxMetadataBytes ||
-                adapter.sha256.size() > kMaxMetadataBytes || !is_valid_utf8(adapter.version) || !is_valid_utf8(adapter.base_model_hash) ||
+                adapter.sha256.size() > kMaxMetadataBytes || adapter.parent_version.size() > kMaxEventIdBytes ||
+                (!adapter.parent_version.empty() && (!valid_filename(adapter.parent_version) || adapter.parent_version == adapter.version)) ||
+                !is_valid_utf8(adapter.version) || !is_valid_utf8(adapter.base_model_hash) ||
                 !is_valid_utf8(adapter.dataset_snapshot_id) || !is_valid_utf8(adapter.sha256) || adapter.created_at_unix_seconds < 0) {
                 return operation_failure("invalid adapter record");
             }
@@ -1044,20 +1155,50 @@ public:
             AdapterRecord stored = adapter;
             if (stored.created_at_unix_seconds == 0) stored.created_at_unix_seconds = unix_seconds();
             Transaction transaction(database, "BEGIN IMMEDIATE");
-            Statement snapshot(database, "SELECT 1 FROM dataset_snapshots WHERE snapshot_id = ?");
+            Statement snapshot(database, "SELECT base_model_hash FROM dataset_snapshots WHERE snapshot_id = ?");
             bind_text(snapshot, 1, stored.dataset_snapshot_id, database);
             if (sqlite3_step(snapshot.get()) != SQLITE_ROW) return operation_failure("adapter dataset snapshot does not exist");
+            if (column_text(snapshot.get(), 0) != stored.base_model_hash) {
+                return operation_failure("adapter base model hash does not match its dataset snapshot");
+            }
+            if (stored.active && stored.parent_version.empty()) {
+                Statement parent(database, "SELECT version FROM adapters WHERE active = 1 AND base_model_hash = ? LIMIT 1");
+                bind_text(parent, 1, stored.base_model_hash, database);
+                if (sqlite3_step(parent.get()) == SQLITE_ROW) stored.parent_version = column_text(parent.get(), 0);
+            }
+            if (!stored.parent_version.empty()) {
+                std::unordered_set<std::string> visited{stored.version};
+                auto ancestor_version = stored.parent_version;
+                bool immediate_parent = true;
+                while (!ancestor_version.empty()) {
+                    if (!visited.insert(ancestor_version).second) return operation_failure("adapter parent lineage contains a cycle");
+                    Statement ancestor(database,
+                                       "SELECT base_model_hash, parent_version, rejected FROM adapters WHERE version = ?");
+                    bind_text(ancestor, 1, ancestor_version, database);
+                    if (sqlite3_step(ancestor.get()) != SQLITE_ROW) {
+                        return operation_failure("adapter parent does not exist");
+                    }
+                    if (column_text(ancestor.get(), 0) != stored.base_model_hash) {
+                        return operation_failure("adapter parent belongs to a different base model");
+                    }
+                    if (immediate_parent && sqlite3_column_int(ancestor.get(), 2) != 0) {
+                        return operation_failure("adapter parent is rejected");
+                    }
+                    ancestor_version = column_text(ancestor.get(), 1);
+                    immediate_parent = false;
+                }
+            }
             if (stored.active) execute(database, "UPDATE adapters SET active = 0 WHERE active = 1", "deactivate adapters");
-            Statement statement(database, "INSERT INTO adapters (version, base_model_hash, dataset_snapshot_id, sha256, created_at, active) "
-                                          "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(version) DO UPDATE SET "
-                                          "base_model_hash = excluded.base_model_hash, dataset_snapshot_id = excluded.dataset_snapshot_id, "
-                                          "sha256 = excluded.sha256, created_at = excluded.created_at, active = excluded.active");
+            Statement statement(database, "INSERT INTO adapters (version, base_model_hash, dataset_snapshot_id, sha256, created_at, active, "
+                                          "parent_version, rejected) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
             bind_text(statement, 1, stored.version, database);
             bind_text(statement, 2, stored.base_model_hash, database);
             bind_text(statement, 3, stored.dataset_snapshot_id, database);
             bind_text(statement, 4, stored.sha256, database);
             bind_i64(statement, 5, stored.created_at_unix_seconds, database);
             require_sqlite(sqlite3_bind_int(statement.get(), 6, stored.active ? 1 : 0), database, "bind adapter active state");
+            bind_text(statement, 7, stored.parent_version, database);
+            require_sqlite(sqlite3_bind_int(statement.get(), 8, stored.rejected ? 1 : 0), database, "bind adapter rejected state");
             step_done(statement, database, "record adapter");
             if (completed_run_id != nullptr) {
                 if (completed_run_id->empty() || completed_run_id->size() > kMaxEventIdBytes) {
@@ -1082,22 +1223,16 @@ public:
         AdapterLookupResult result;
         try {
             const char* sql = options_.base_model_hash.empty()
-                                  ? "SELECT version, base_model_hash, dataset_snapshot_id, sha256, created_at, active "
+                                  ? "SELECT version, base_model_hash, dataset_snapshot_id, sha256, created_at, active, parent_version, rejected "
                                     "FROM adapters WHERE active = 1 LIMIT 1"
-                                  : "SELECT version, base_model_hash, dataset_snapshot_id, sha256, created_at, active "
+                                  : "SELECT version, base_model_hash, dataset_snapshot_id, sha256, created_at, active, parent_version, rejected "
                                     "FROM adapters WHERE active = 1 AND base_model_hash = ? LIMIT 1";
             Statement statement(database, sql);
             if (!options_.base_model_hash.empty()) bind_text(statement, 1, options_.base_model_hash, database);
             const auto step = sqlite3_step(statement.get());
             if (step == SQLITE_ROW) {
-                AdapterRecord adapter;
-                adapter.version = column_text(statement.get(), 0);
-                adapter.base_model_hash = column_text(statement.get(), 1);
-                adapter.dataset_snapshot_id = column_text(statement.get(), 2);
-                adapter.sha256 = column_text(statement.get(), 3);
-                adapter.created_at_unix_seconds = sqlite3_column_int64(statement.get(), 4);
-                adapter.active = sqlite3_column_int(statement.get(), 5) != 0;
-                if (!adapter.active) throw std::runtime_error("invalid inactive active-adapter record");
+                auto adapter = adapter_from_statement(statement.get());
+                if (!adapter.active || adapter.rejected) throw std::runtime_error("invalid active-adapter record");
                 result.adapter = std::move(adapter);
             } else if (step != SQLITE_DONE) {
                 throw std::runtime_error(sqlite_error(database, "read active adapter"));
@@ -1113,26 +1248,53 @@ public:
         AdapterLookupResult result;
         try {
             if (version.empty() || version.size() > kMaxEventIdBytes) throw std::runtime_error("invalid adapter version");
-            const char* sql = options_.base_model_hash.empty()
-                                  ? "SELECT version, base_model_hash, dataset_snapshot_id, sha256, created_at, active FROM adapters "
-                                    "WHERE rowid < (SELECT rowid FROM adapters WHERE version = ?) ORDER BY rowid DESC LIMIT 1"
-                                  : "SELECT version, base_model_hash, dataset_snapshot_id, sha256, created_at, active FROM adapters "
-                                    "WHERE base_model_hash = ? AND rowid < (SELECT rowid FROM adapters WHERE version = ?) "
-                                    "ORDER BY rowid DESC LIMIT 1";
-            Statement statement(database, sql);
-            int parameter = 1;
-            if (!options_.base_model_hash.empty()) bind_text(statement, parameter++, options_.base_model_hash, database);
-            bind_text(statement, parameter, version, database);
-            if (sqlite3_step(statement.get()) == SQLITE_ROW) {
-                AdapterRecord adapter;
-                adapter.version = column_text(statement.get(), 0);
-                adapter.base_model_hash = column_text(statement.get(), 1);
-                adapter.dataset_snapshot_id = column_text(statement.get(), 2);
-                adapter.sha256 = column_text(statement.get(), 3);
-                adapter.created_at_unix_seconds = sqlite3_column_int64(statement.get(), 4);
-                adapter.active = sqlite3_column_int(statement.get(), 5) != 0;
-                result.adapter = std::move(adapter);
+            std::unordered_set<std::string> visited;
+            auto current = version;
+            while (visited.insert(current).second) {
+                Statement parent(database, "SELECT parent_version FROM adapters WHERE version = ?");
+                bind_text(parent, 1, current, database);
+                if (sqlite3_step(parent.get()) != SQLITE_ROW) throw std::runtime_error("adapter lineage is incomplete");
+                current = column_text(parent.get(), 0);
+                if (current.empty()) break;
+                Statement candidate(database,
+                                    "SELECT version, base_model_hash, dataset_snapshot_id, sha256, created_at, active, "
+                                    "parent_version, rejected FROM adapters WHERE version = ?");
+                bind_text(candidate, 1, current, database);
+                if (sqlite3_step(candidate.get()) != SQLITE_ROW) throw std::runtime_error("adapter lineage is incomplete");
+                auto adapter = adapter_from_statement(candidate.get());
+                if (!adapter.rejected && (options_.base_model_hash.empty() || adapter.base_model_hash == options_.base_model_hash)) {
+                    result.adapter = std::move(adapter);
+                    break;
+                }
             }
+            if (!current.empty() && !visited.insert(current).second) throw std::runtime_error("adapter lineage contains a cycle");
+            result.operation = operation_success();
+        } catch (const std::exception& error) {
+            result.operation = operation_failure(error.what());
+        }
+        return result;
+    }
+
+    AdapterListResult adapter_lineage(sqlite3* database, const std::string& version) {
+        AdapterListResult result;
+        try {
+            if (version.empty() || version.size() > kMaxEventIdBytes) throw std::runtime_error("invalid adapter version");
+            std::unordered_set<std::string> visited;
+            auto current = version;
+            while (visited.insert(current).second) {
+                Statement statement(database,
+                                    "SELECT version, base_model_hash, dataset_snapshot_id, sha256, created_at, active, "
+                                    "parent_version, rejected FROM adapters WHERE version = ?");
+                bind_text(statement, 1, current, database);
+                if (sqlite3_step(statement.get()) != SQLITE_ROW) throw std::runtime_error("adapter lineage is incomplete");
+                auto adapter = adapter_from_statement(statement.get());
+                current = adapter.parent_version;
+                if (!adapter.rejected && (options_.base_model_hash.empty() || adapter.base_model_hash == options_.base_model_hash)) {
+                    result.adapters.push_back(std::move(adapter));
+                }
+                if (current.empty()) break;
+            }
+            if (!current.empty()) throw std::runtime_error("adapter lineage contains a cycle");
             result.operation = operation_success();
         } catch (const std::exception& error) {
             result.operation = operation_failure(error.what());
@@ -1144,21 +1306,14 @@ public:
         AdapterLookupResult result;
         try {
             const char* sql = options_.base_model_hash.empty()
-                                  ? "SELECT version, base_model_hash, dataset_snapshot_id, sha256, created_at, active "
-                                    "FROM adapters ORDER BY rowid DESC LIMIT 1"
-                                  : "SELECT version, base_model_hash, dataset_snapshot_id, sha256, created_at, active "
-                                    "FROM adapters WHERE base_model_hash = ? ORDER BY rowid DESC LIMIT 1";
+                                  ? "SELECT version, base_model_hash, dataset_snapshot_id, sha256, created_at, active, parent_version, rejected "
+                                    "FROM adapters WHERE rejected = 0 ORDER BY rowid DESC LIMIT 1"
+                                  : "SELECT version, base_model_hash, dataset_snapshot_id, sha256, created_at, active, parent_version, rejected "
+                                    "FROM adapters WHERE base_model_hash = ? AND rejected = 0 ORDER BY rowid DESC LIMIT 1";
             Statement statement(database, sql);
             if (!options_.base_model_hash.empty()) bind_text(statement, 1, options_.base_model_hash, database);
             if (sqlite3_step(statement.get()) == SQLITE_ROW) {
-                AdapterRecord adapter;
-                adapter.version = column_text(statement.get(), 0);
-                adapter.base_model_hash = column_text(statement.get(), 1);
-                adapter.dataset_snapshot_id = column_text(statement.get(), 2);
-                adapter.sha256 = column_text(statement.get(), 3);
-                adapter.created_at_unix_seconds = sqlite3_column_int64(statement.get(), 4);
-                adapter.active = sqlite3_column_int(statement.get(), 5) != 0;
-                result.adapter = std::move(adapter);
+                result.adapter = adapter_from_statement(statement.get());
             }
             result.operation = operation_success();
         } catch (const std::exception& error) {
@@ -1194,9 +1349,12 @@ public:
             if (version.size() > kMaxEventIdBytes || !is_valid_utf8(version)) return operation_failure("invalid adapter version");
             Transaction transaction(database, "BEGIN IMMEDIATE");
             if (!version.empty()) {
-                Statement existing(database, "SELECT 1 FROM adapters WHERE version = ?");
+                Statement existing(database, "SELECT base_model_hash FROM adapters WHERE version = ? AND rejected = 0");
                 bind_text(existing, 1, version, database);
                 if (sqlite3_step(existing.get()) != SQLITE_ROW) return operation_failure("adapter does not exist");
+                if (!options_.base_model_hash.empty() && column_text(existing.get(), 0) != options_.base_model_hash) {
+                    return operation_failure("adapter belongs to a different base model");
+                }
             }
             execute(database, "UPDATE adapters SET active = 0 WHERE active = 1", "deactivate current adapter");
             if (!version.empty()) {
@@ -1226,12 +1384,86 @@ public:
         }
     }
 
+    StoreOperationResult reject_adapter(sqlite3* database, const std::string& version) {
+        try {
+            if (version.empty() || version.size() > kMaxEventIdBytes || !is_valid_utf8(version)) {
+                return operation_failure("invalid adapter version");
+            }
+            Statement statement(database, "UPDATE adapters SET active = 0, rejected = 1 WHERE version = ?");
+            bind_text(statement, 1, version, database);
+            step_done(statement, database, "reject adapter");
+            if (sqlite3_changes(database) != 1) return operation_failure("adapter does not exist");
+            return operation_success();
+        } catch (const std::exception& error) {
+            return operation_failure(error.what());
+        }
+    }
+
+    StoreOperationResult rollback_adapter(sqlite3* database, const std::string& current_version,
+                                           const std::string& target_version) {
+        try {
+            if (current_version.empty() || current_version.size() > kMaxEventIdBytes ||
+                target_version.size() > kMaxEventIdBytes || !is_valid_utf8(current_version) ||
+                !is_valid_utf8(target_version) || current_version == target_version) {
+                return operation_failure("invalid adapter rollback");
+            }
+            Transaction transaction(database, "BEGIN IMMEDIATE");
+            Statement current(database, "SELECT base_model_hash, parent_version FROM adapters "
+                                        "WHERE version = ? AND active = 1 AND rejected = 0");
+            bind_text(current, 1, current_version, database);
+            if (sqlite3_step(current.get()) != SQLITE_ROW) return operation_failure("active rollback adapter changed");
+            const auto current_base_model = column_text(current.get(), 0);
+            auto ancestor_version = column_text(current.get(), 1);
+            if (!options_.base_model_hash.empty() && current_base_model != options_.base_model_hash) {
+                return operation_failure("active rollback adapter belongs to a different base model");
+            }
+            if (!target_version.empty()) {
+                std::unordered_set<std::string> visited{current_version};
+                bool found = false;
+                while (!ancestor_version.empty() && visited.insert(ancestor_version).second) {
+                    Statement ancestor(database, "SELECT base_model_hash, parent_version, rejected FROM adapters WHERE version = ?");
+                    bind_text(ancestor, 1, ancestor_version, database);
+                    if (sqlite3_step(ancestor.get()) != SQLITE_ROW) {
+                        return operation_failure("adapter rollback lineage is incomplete");
+                    }
+                    const auto ancestor_base_model = column_text(ancestor.get(), 0);
+                    const auto parent_version = column_text(ancestor.get(), 1);
+                    const bool rejected = sqlite3_column_int(ancestor.get(), 2) != 0;
+                    if (ancestor_base_model != current_base_model) {
+                        return operation_failure("adapter rollback lineage crosses base models");
+                    }
+                    if (ancestor_version == target_version) {
+                        if (rejected) return operation_failure("rollback target is unavailable");
+                        found = true;
+                        break;
+                    }
+                    ancestor_version = parent_version;
+                }
+                if (!found) return operation_failure("rollback target is not an ancestor of the active adapter");
+            }
+            Statement reject(database, "UPDATE adapters SET active = 0, rejected = 1 WHERE version = ?");
+            bind_text(reject, 1, current_version, database);
+            step_done(reject, database, "reject regressed adapter");
+            if (!target_version.empty()) {
+                Statement activate(database, "UPDATE adapters SET active = 1 WHERE version = ? AND rejected = 0");
+                bind_text(activate, 1, target_version, database);
+                step_done(activate, database, "activate known-good rollback adapter");
+                if (sqlite3_changes(database) != 1) throw std::runtime_error("rollback target changed the wrong row count");
+            }
+            transaction.commit();
+            return operation_success();
+        } catch (const std::exception& error) {
+            return operation_failure(error.what());
+        }
+    }
+
 private:
     StoreOperationResult initialize_database() {
         if (!initialization_error_.empty()) return operation_failure(initialization_error_);
         try {
             validate_private_directory(data_directory_);
             validate_database_path_before_open(database_path_);
+            database_path_validated_ = true;
             sqlite3* raw_database = nullptr;
             const int open_result = sqlite3_open_v2(database_path_.string().c_str(), &raw_database,
                                                     SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr);
@@ -1252,6 +1484,26 @@ private:
             execute(database_, "PRAGMA synchronous = NORMAL", "configure SQLite synchronous mode");
             execute(database_, "PRAGMA secure_delete = ON", "enable SQLite secure deletion");
             migrate(database_);
+            if (!options_.base_model_hash.empty()) {
+                Transaction transaction(database_, "BEGIN IMMEDIATE");
+                Statement invalidate(database_,
+                                     "UPDATE dataset_snapshots SET payload_available = 0 WHERE base_model_hash <> ? "
+                                     "AND EXISTS (SELECT 1 FROM training_runs WHERE training_runs.snapshot_id = "
+                                     "dataset_snapshots.snapshot_id AND training_runs.completed_at IS NULL)");
+                bind_text(invalidate, 1, options_.base_model_hash, database_);
+                step_done(invalidate, database_, "invalidate interrupted snapshots from other base models");
+                execute(database_,
+                        "DELETE FROM dataset_snapshot_samples WHERE snapshot_id IN ("
+                        "SELECT snapshot_id FROM dataset_snapshots WHERE payload_available = 0)",
+                        "purge unavailable interrupted snapshot payloads");
+                Statement fail_runs(database_,
+                                    "UPDATE training_runs SET completed_at = ?, succeeded = 0 WHERE completed_at IS NULL "
+                                    "AND snapshot_id IN (SELECT snapshot_id FROM dataset_snapshots WHERE base_model_hash <> ?)");
+                bind_i64(fail_runs, 1, unix_seconds(), database_);
+                bind_text(fail_runs, 2, options_.base_model_hash, database_);
+                step_done(fail_runs, database_, "fail interrupted runs from other base models");
+                transaction.commit();
+            }
             Statement state(database_, "SELECT learning_enabled FROM learning_state WHERE id = 1");
             if (sqlite3_step(state.get()) != SQLITE_ROW) throw std::runtime_error("feedback learning state is missing");
             learning_enabled_.store(sqlite3_column_int(state.get(), 0) != 0, std::memory_order_release);
@@ -1339,6 +1591,132 @@ private:
             step_done(migration, database, "record schema migration");
             execute(database, "PRAGMA user_version = 2", "set SQLite schema version");
         }
+        if (version < 3) {
+            execute(database, "ALTER TABLE dataset_snapshots ADD COLUMN base_model_hash TEXT NOT NULL DEFAULT ''",
+                    "add dataset snapshot base model provenance");
+            execute(database,
+                    "ALTER TABLE dataset_snapshots ADD COLUMN payload_available INTEGER NOT NULL DEFAULT 1 "
+                    "CHECK(payload_available IN (0, 1))",
+                    "add dataset snapshot payload state");
+            execute(database,
+                    "ALTER TABLE training_runs ADD COLUMN cumulative_target_characters INTEGER NOT NULL DEFAULT 0 "
+                    "CHECK(cumulative_target_characters >= 0)",
+                    "add training progress watermark");
+            execute(database,
+                    "CREATE TABLE IF NOT EXISTS base_model_progress ("
+                    "base_model_hash TEXT PRIMARY KEY, cumulative_target_characters INTEGER NOT NULL "
+                    "CHECK(cumulative_target_characters >= 0))",
+                    "create base model ingestion progress");
+            execute(database,
+                    "INSERT INTO base_model_progress(base_model_hash, cumulative_target_characters) "
+                    "SELECT base_model_hash, COALESCE(SUM(target_characters), 0) FROM samples GROUP BY base_model_hash",
+                    "initialize base model ingestion progress");
+            execute(database,
+                    "UPDATE dataset_snapshots SET base_model_hash = COALESCE(("
+                    "SELECT CASE WHEN COUNT(*) = 0 THEN '' "
+                    "WHEN MIN(snapshot_sample.base_model_hash) = MAX(snapshot_sample.base_model_hash) "
+                    "THEN MIN(snapshot_sample.base_model_hash) ELSE '' END "
+                    "FROM dataset_snapshot_samples snapshot_sample "
+                    "WHERE snapshot_sample.snapshot_id = dataset_snapshots.snapshot_id), '')",
+                    "initialize dataset snapshot base model provenance");
+            {
+                Statement fail_runs(database,
+                                    "UPDATE training_runs SET completed_at = ?, succeeded = 0 WHERE completed_at IS NULL");
+                bind_i64(fail_runs, 1, unix_seconds(), database);
+                step_done(fail_runs, database, "fail legacy training runs with obsolete snapshot partitions");
+            }
+            execute(database, "UPDATE dataset_snapshots SET payload_available = 0",
+                    "mark legacy snapshot payloads with obsolete partitions unavailable");
+            execute(database,
+                    "DELETE FROM dataset_snapshot_samples WHERE snapshot_id IN ("
+                    "SELECT snapshot_id FROM dataset_snapshots WHERE payload_available = 0)",
+                    "purge legacy snapshot payloads with obsolete partitions");
+            execute(database,
+                    "UPDATE training_runs SET cumulative_target_characters = MIN(eligible_target_characters, COALESCE(("
+                    "SELECT progress.cumulative_target_characters FROM dataset_snapshots snapshot "
+                    "JOIN base_model_progress progress ON progress.base_model_hash = snapshot.base_model_hash "
+                    "WHERE snapshot.snapshot_id = training_runs.snapshot_id), eligible_target_characters))",
+                    "initialize training progress watermarks");
+            {
+                std::vector<std::array<std::string, 4>> samples;
+                Statement source(database, "SELECT event_id, base_model_hash, left_context, bopomofo_sequence FROM samples");
+                while (sqlite3_step(source.get()) == SQLITE_ROW) {
+                    samples.push_back({column_text(source.get(), 0), column_text(source.get(), 1),
+                                       column_text(source.get(), 2), column_text(source.get(), 3)});
+                }
+                if (sqlite3_errcode(database) != SQLITE_DONE) {
+                    throw std::runtime_error(sqlite_error(database, "read legacy validation assignments"));
+                }
+                Statement update(database, "UPDATE samples SET validation_member = ? WHERE event_id = ?");
+                for (const auto& sample : samples) {
+                    require_sqlite(sqlite3_reset(update.get()), database, "reset validation migration statement");
+                    require_sqlite(sqlite3_clear_bindings(update.get()), database, "clear validation migration bindings");
+                    require_sqlite(sqlite3_bind_int(
+                                       update.get(), 1,
+                                       FeedbackStore::deterministic_validation_member(sample[1], sample[2], sample[3]) ? 1 : 0),
+                                   database, "bind grouped validation assignment");
+                    bind_text(update, 2, sample[0], database);
+                    step_done(update, database, "migrate grouped validation assignment");
+                }
+            }
+            execute(database,
+                    "CREATE INDEX IF NOT EXISTS dataset_snapshots_base_model_index ON dataset_snapshots(base_model_hash)",
+                    "index dataset snapshot base model provenance");
+            Statement migration(database, "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(3, ?)");
+            bind_i64(migration, 1, unix_seconds(), database);
+            step_done(migration, database, "record schema migration");
+            execute(database, "PRAGMA user_version = 3", "set SQLite schema version");
+        }
+        if (version < 4) {
+            execute(database,
+                    "ALTER TABLE adapters ADD COLUMN parent_version TEXT NOT NULL DEFAULT ''",
+                    "add adapter deployment lineage");
+            execute(database,
+                    "ALTER TABLE adapters ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0 CHECK(rejected IN (0, 1))",
+                    "add adapter rejection state");
+            Statement migration(database, "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(4, ?)");
+            bind_i64(migration, 1, unix_seconds(), database);
+            step_done(migration, database, "record schema migration");
+            execute(database, "PRAGMA user_version = 4", "set SQLite schema version");
+        }
+        if (version < 5) {
+            {
+                Statement fail_runs(database,
+                                    "UPDATE training_runs SET completed_at = ?, succeeded = 0 WHERE completed_at IS NULL");
+                bind_i64(fail_runs, 1, unix_seconds(), database);
+                step_done(fail_runs, database, "fail training runs with obsolete validation partitions");
+            }
+            execute(database, "UPDATE dataset_snapshots SET payload_available = 0",
+                    "mark snapshots with obsolete validation partitions unavailable");
+            execute(database, "DELETE FROM dataset_snapshot_samples",
+                    "purge snapshots with obsolete validation partitions");
+            std::vector<std::array<std::string, 4>> samples;
+            {
+                Statement source(database, "SELECT event_id, base_model_hash, left_context, bopomofo_sequence FROM samples");
+                while (sqlite3_step(source.get()) == SQLITE_ROW) {
+                    samples.push_back({column_text(source.get(), 0), column_text(source.get(), 1),
+                                       column_text(source.get(), 2), column_text(source.get(), 3)});
+                }
+                if (sqlite3_errcode(database) != SQLITE_DONE) {
+                    throw std::runtime_error(sqlite_error(database, "read obsolete validation assignments"));
+                }
+            }
+            Statement update(database, "UPDATE samples SET validation_member = ? WHERE event_id = ?");
+            for (const auto& sample : samples) {
+                require_sqlite(sqlite3_reset(update.get()), database, "reset validation repartition statement");
+                require_sqlite(sqlite3_clear_bindings(update.get()), database, "clear validation repartition bindings");
+                require_sqlite(sqlite3_bind_int(
+                                   update.get(), 1,
+                                   FeedbackStore::deterministic_validation_member(sample[1], sample[2], sample[3]) ? 1 : 0),
+                               database, "bind validation repartition assignment");
+                bind_text(update, 2, sample[0], database);
+                step_done(update, database, "repartition validation assignment");
+            }
+            Statement migration(database, "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(5, ?)");
+            bind_i64(migration, 1, unix_seconds(), database);
+            step_done(migration, database, "record schema migration");
+            execute(database, "PRAGMA user_version = 5", "set SQLite schema version");
+        }
         transaction.commit();
     }
 
@@ -1381,6 +1759,10 @@ private:
     }
 
     bool insert_event(sqlite3* database, const FeedbackEvent& event) {
+        std::size_t targets = 0;
+        (void)is_valid_utf8(event.committed_characters, &targets);
+        const auto corrections = correction_character_count(event);
+        Transaction transaction(database, "BEGIN IMMEDIATE");
         Statement statement(database,
                             "INSERT INTO samples (event_id, left_context, bopomofo_sequence, committed_characters, predicted_top1, "
                             "manually_chosen_flags, signal_type, base_model_hash, adapter_version, created_at, target_characters, "
@@ -1396,15 +1778,30 @@ private:
         bind_text(statement, 8, event.base_model_hash, database);
         bind_text(statement, 9, event.adapter_version, database);
         bind_i64(statement, 10, event.created_at_unix_seconds, database);
-        std::size_t targets = 0;
-        (void)is_valid_utf8(event.committed_characters, &targets);
         bind_i64(statement, 11, static_cast<std::int64_t>(targets), database);
         require_sqlite(sqlite3_bind_int(statement.get(), 12,
-                                        FeedbackStore::deterministic_validation_member(event.event_id) ? 1 : 0),
+                                        FeedbackStore::deterministic_validation_member(
+                                            event.base_model_hash, event.left_context, event.bopomofo_sequence)
+                                            ? 1
+                                            : 0),
                        database, "bind validation membership");
-        bind_i64(statement, 13, static_cast<std::int64_t>(correction_character_count(event)), database);
+        bind_i64(statement, 13, static_cast<std::int64_t>(corrections), database);
         step_done(statement, database, "store feedback event");
-        return sqlite3_changes(database) != 0;
+        const bool inserted = sqlite3_changes(database) != 0;
+        if (inserted) {
+            Statement progress(database,
+                               "INSERT INTO base_model_progress(base_model_hash, cumulative_target_characters) VALUES (?, ?) "
+                               "ON CONFLICT(base_model_hash) DO UPDATE SET cumulative_target_characters = "
+                               "cumulative_target_characters + excluded.cumulative_target_characters "
+                               "WHERE cumulative_target_characters <= ?");
+            bind_text(progress, 1, event.base_model_hash, database);
+            bind_i64(progress, 2, static_cast<std::int64_t>(targets), database);
+            bind_i64(progress, 3, std::numeric_limits<std::int64_t>::max() - static_cast<std::int64_t>(targets), database);
+            step_done(progress, database, "advance feedback ingestion progress");
+            if (sqlite3_changes(database) != 1) throw std::runtime_error("cumulative target character count overflow");
+        }
+        transaction.commit();
+        return inserted;
     }
 
     RetentionResult apply_retention_impl(sqlite3* database) {
@@ -1464,25 +1861,21 @@ private:
             bind_i64(insert, 2, static_cast<std::int64_t>(targets), database);
             step_done(insert, database, "record retention removal");
         }
-        {
-            Statement count(database,
-                            "SELECT COUNT(*) FROM dataset_snapshots WHERE EXISTS ("
-                            "SELECT 1 FROM dataset_snapshot_samples AS snapshot_sample "
-                            "JOIN retention_event_ids AS removed ON removed.event_id = snapshot_sample.event_id "
-                            "WHERE snapshot_sample.snapshot_id = dataset_snapshots.snapshot_id) "
-                            "AND NOT EXISTS (SELECT 1 FROM training_runs WHERE training_runs.snapshot_id = dataset_snapshots.snapshot_id "
-                            "AND training_runs.completed_at IS NULL)");
-            if (sqlite3_step(count.get()) != SQLITE_ROW) throw std::runtime_error(sqlite_error(database, "count invalidated snapshots"));
-            result.invalidated_snapshots = checked_u64(sqlite3_column_int64(count.get(), 0), "invalidated snapshot count");
-        }
         execute(database,
-                "DELETE FROM dataset_snapshots WHERE EXISTS ("
-                "SELECT 1 FROM dataset_snapshot_samples AS snapshot_sample "
-                "JOIN retention_event_ids AS removed ON removed.event_id = snapshot_sample.event_id "
-                "WHERE snapshot_sample.snapshot_id = dataset_snapshots.snapshot_id) "
+                "UPDATE dataset_snapshots SET payload_available = 0 WHERE payload_available = 1 AND EXISTS ("
+                "SELECT 1 FROM dataset_snapshot_samples AS snapshot_sample WHERE "
+                "snapshot_sample.snapshot_id = dataset_snapshots.snapshot_id AND ("
+                "EXISTS(SELECT 1 FROM retention_event_ids AS removed WHERE removed.event_id = snapshot_sample.event_id) "
+                "OR NOT EXISTS(SELECT 1 FROM samples AS retained WHERE retained.event_id = snapshot_sample.event_id))) "
                 "AND NOT EXISTS (SELECT 1 FROM training_runs WHERE training_runs.snapshot_id = dataset_snapshots.snapshot_id "
                 "AND training_runs.completed_at IS NULL)",
-                "delete invalidated snapshots");
+                "mark invalidated snapshot payloads unavailable");
+        result.invalidated_snapshots = static_cast<std::uint64_t>(sqlite3_changes(database));
+        execute(database,
+                "DELETE FROM dataset_snapshot_samples WHERE EXISTS ("
+                "SELECT 1 FROM dataset_snapshots WHERE dataset_snapshots.snapshot_id = dataset_snapshot_samples.snapshot_id "
+                "AND dataset_snapshots.payload_available = 0)",
+                "delete invalidated snapshot payloads");
         execute(database, "DELETE FROM samples WHERE event_id IN (SELECT event_id FROM retention_event_ids)", "delete retained feedback samples");
         {
             Statement count(database, "SELECT COUNT(*), COALESCE(SUM(target_characters), 0) FROM retention_event_ids");
@@ -1520,6 +1913,7 @@ private:
     FeedbackStoreOptions options_;
     std::filesystem::path data_directory_;
     std::filesystem::path database_path_;
+    bool database_path_validated_ = false;
     sqlite3* database_ = nullptr;
     std::string initialization_error_;
     std::atomic<bool> available_{false};
@@ -1556,6 +1950,12 @@ std::future<RetentionResult> FeedbackStore::apply_retention() {
 
 std::future<SnapshotResult> FeedbackStore::create_dataset_snapshot(SnapshotOptions options) {
     return impl_->submit<SnapshotResult>([this, options](sqlite3* database) { return impl_->create_snapshot(database, options); });
+}
+
+std::future<StoreOperationResult> FeedbackStore::discard_dataset_snapshot(std::string snapshot_id) {
+    return impl_->submit<StoreOperationResult>([this, snapshot_id = std::move(snapshot_id)](sqlite3* database) {
+        return impl_->discard_snapshot(database, snapshot_id);
+    });
 }
 
 std::future<SnapshotLoadResult> FeedbackStore::load_dataset_snapshot(std::string snapshot_id) {
@@ -1614,6 +2014,11 @@ std::future<AdapterLookupResult> FeedbackStore::previous_adapter(std::string ver
         [this, version = std::move(version)](sqlite3* database) { return impl_->previous_adapter(database, version); }, true);
 }
 
+std::future<AdapterListResult> FeedbackStore::adapter_lineage(std::string version) {
+    return impl_->submit<AdapterListResult>(
+        [this, version = std::move(version)](sqlite3* database) { return impl_->adapter_lineage(database, version); }, true);
+}
+
 std::future<AdapterFeedbackStatsResult> FeedbackStore::adapter_feedback_stats(std::string version) {
     return impl_->submit<AdapterFeedbackStatsResult>(
         [this, version = std::move(version)](sqlite3* database) { return impl_->adapter_feedback_stats(database, version); }, true);
@@ -1629,6 +2034,19 @@ std::future<StoreOperationResult> FeedbackStore::deactivate_adapter(std::string 
         [this, version = std::move(version)](sqlite3* database) { return impl_->deactivate_adapter(database, version); }, true);
 }
 
+std::future<StoreOperationResult> FeedbackStore::reject_adapter(std::string version) {
+    return impl_->submit<StoreOperationResult>(
+        [this, version = std::move(version)](sqlite3* database) { return impl_->reject_adapter(database, version); }, true);
+}
+
+std::future<StoreOperationResult> FeedbackStore::rollback_adapter(std::string current_version,
+                                                                   std::string target_version) {
+    return impl_->submit<StoreOperationResult>(
+        [this, current_version = std::move(current_version), target_version = std::move(target_version)](
+            sqlite3* database) { return impl_->rollback_adapter(database, current_version, target_version); },
+        true);
+}
+
 std::future<StoreOperationResult> FeedbackStore::flush() {
     return impl_->submit<StoreOperationResult>([](sqlite3*) { return operation_success(); }, true);
 }
@@ -1641,12 +2059,60 @@ const std::filesystem::path& FeedbackStore::data_directory() const noexcept { re
 
 const std::filesystem::path& FeedbackStore::database_path() const noexcept { return impl_->database_path(); }
 
-bool FeedbackStore::deterministic_validation_member(const std::string& event_id) noexcept {
+bool FeedbackStore::deterministic_validation_member(std::string_view base_model_hash,
+                                                     std::string_view left_context,
+                                                     std::string_view bopomofo_sequence) noexcept {
     std::uint64_t hash = 14695981039346656037ULL;
-    for (const unsigned char byte : event_id) {
-        hash ^= byte;
+    const auto append = [&hash](std::string_view value) {
+        for (const unsigned char byte : value) {
+            hash ^= byte;
+            hash *= 1099511628211ULL;
+        }
+        hash ^= 0xffU;
         hash *= 1099511628211ULL;
+    };
+    append("imesvc-validation-split-v3");
+    append(base_model_hash);
+    bool context_started = false;
+    for (std::size_t index = 0; index < left_context.size();) {
+        const auto byte = static_cast<unsigned char>(left_context[index]);
+        if (byte == static_cast<unsigned char>(' ')) {
+            append("S");
+            context_started = true;
+            ++index;
+            continue;
+        }
+        const bool semantic_latin = byte < 0x80U &&
+                                    (std::isalnum(byte) || byte == static_cast<unsigned char>('-') ||
+                                     byte == static_cast<unsigned char>('_') || byte == static_cast<unsigned char>('+'));
+        if (semantic_latin) {
+            do {
+                ++index;
+                if (index >= left_context.size()) break;
+                const auto next = static_cast<unsigned char>(left_context[index]);
+                if (!(next < 0x80U &&
+                      (std::isalnum(next) || next == static_cast<unsigned char>('-') ||
+                       next == static_cast<unsigned char>('_') || next == static_cast<unsigned char>('+')))) {
+                    break;
+                }
+            } while (true);
+            append("L");
+            context_started = true;
+            continue;
+        }
+        if (context_started) append("X");
+        if (byte < 0x80U) {
+            ++index;
+        } else if ((byte & 0xe0U) == 0xc0U) {
+            index = std::min(left_context.size(), index + 2U);
+        } else if ((byte & 0xf0U) == 0xe0U) {
+            index = std::min(left_context.size(), index + 3U);
+        } else {
+            index = std::min(left_context.size(), index + 4U);
+        }
     }
+    append("");
+    append(bopomofo_sequence);
     return hash % 10U == 0U;
 }
 

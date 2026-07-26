@@ -545,6 +545,8 @@ public:
             } else {
                 stopping_ = true;
             }
+            std::queue<std::function<void()>> pending;
+            queue_.swap(pending);
         }
         condition_.notify_all();
         for (auto& worker : workers_) {
@@ -697,13 +699,8 @@ private:
                     }
                 } else if constexpr (std::is_same_v<T, protocol::CloseSessionRequest>) {
                     const auto request = value;
-                    if (!server_.workers_->enqueue([self = shared_from_this(), request]() {
-                            const auto result = self->server_.sessions_->close_session(self->uid(), request.session_id);
-                            std::visit([&self](const auto& response) { self->send(protocol::Message{response}); }, result);
-                        })) {
-                        send_error(protocol::ErrorCode::ServiceShuttingDown, request.session_id, 0, 0,
-                                   "service is shutting down");
-                    }
+                    const auto result = server_.sessions_->close_session(uid_, request.session_id);
+                    std::visit([this](const auto& response) { send(protocol::Message{response}); }, result);
                 } else if constexpr (std::is_same_v<T, protocol::StatusRequest>) {
                     const auto result = server_.sessions_->status(uid_, value.session_id);
                     std::visit([this](const auto& response) { send(protocol::Message{response}); }, result);
@@ -822,13 +819,7 @@ UnixSocketServer::UnixSocketServer(UnixServerOptions options) : options_(std::mo
 }
 
 UnixSocketServer::~UnixSocketServer() {
-    request_stop();
-    close_connections();
-    if (listen_fd_ >= 0) {
-        ::close(listen_fd_);
-        listen_fd_ = -1;
-    }
-    cleanup_endpoint();
+    shutdown_noexcept();
 }
 
 const char* UnixSocketServer::name() const {
@@ -864,7 +855,7 @@ int UnixSocketServer::run() {
         try {
             feedback_store_ = std::make_unique<training::FeedbackStore>(std::move(store_options));
             runtime_->set_adapter_failure_handler([this](std::string version) {
-                if (feedback_store_) (void)feedback_store_->deactivate_adapter(std::move(version)).get();
+                if (feedback_store_) (void)feedback_store_->reject_adapter(std::move(version)).get();
             });
             const auto enabled = feedback_store_->set_learning_enabled(options_.personal_learning_enabled).get();
             if (!enabled.succeeded) {
@@ -969,21 +960,7 @@ int UnixSocketServer::run() {
         if (!training_active && sessions_->should_idle_shutdown()) request_stop();
     }
 
-    if (listen_fd_ >= 0) {
-        ::close(listen_fd_);
-        listen_fd_ = -1;
-    }
-    close_connections();
-    {
-        std::lock_guard lock(connections_mutex_);
-        for (auto& thread : connection_threads_) {
-            if (thread.joinable()) thread.join();
-        }
-        connection_threads_.clear();
-    }
-    if (workers_) workers_->shutdown();
-    if (sessions_) sessions_->shutdown();
-    cleanup_endpoint();
+    shutdown_noexcept();
     return 0;
 }
 
@@ -1031,7 +1008,7 @@ void UnixSocketServer::initialize_training() {
                                         options_.runtime.tables_dir / "bopomofo_char.json");
     };
     publisher_options.transition_activation = [this](const training::TrainingRunContext& run,
-                                                       const std::function<training::StoreOperationResult()>& activate) {
+                                                        const std::function<training::StoreOperationResult()>& activate) {
         std::lock_guard activation_lock(activation_mutex_);
         training::StoreOperationResult result{false, "adapter activation did not run"};
         sessions_->with_predictions_stopped([&]() {
@@ -1040,6 +1017,30 @@ void UnixSocketServer::initialize_training() {
                 return;
             }
             result = activate();
+            if (result.succeeded) {
+                try {
+                    sessions_->reset_engines();
+                } catch (const std::exception& error) {
+                    std::clog << "[SRV] reset session engines after adapter activation failed: " << error.what() << '\n';
+                } catch (...) {
+                    std::clog << "[SRV] reset session engines after adapter activation failed\n";
+                }
+            }
+        });
+        return result;
+    };
+    publisher_options.transition_adapter = [this](const std::function<training::StoreOperationResult()>& transition) {
+        std::lock_guard activation_lock(activation_mutex_);
+        training::StoreOperationResult result{false, "adapter transition did not run"};
+        sessions_->with_predictions_stopped([&]() {
+            result = transition();
+            try {
+                sessions_->reset_engines();
+            } catch (const std::exception& error) {
+                std::clog << "[SRV] reset session engines after adapter transition failed: " << error.what() << '\n';
+            } catch (...) {
+                std::clog << "[SRV] reset session engines after adapter transition failed\n";
+            }
         });
         return result;
     };
@@ -1120,6 +1121,16 @@ training::StoreOperationResult UnixSocketServer::delete_personal_data() {
     std::lock_guard deletion_lock(personal_data_mutex_);
     const auto data_directory = std::filesystem::absolute(
         options_.training_data_directory.value_or(training::FeedbackStore::default_data_directory())).lexically_normal();
+    auto data_component = data_directory.root_path();
+    for (const auto& component : data_directory.relative_path()) {
+        data_component /= component;
+        struct stat component_status {};
+        if (::lstat(data_component.c_str(), &component_status) != 0) {
+            if (errno == ENOENT) break;
+            return {false, "inspect personal-data path component failed: " + std::string(std::strerror(errno))};
+        }
+        if (S_ISLNK(component_status.st_mode)) return {false, "refusing symlink component in personal-data path"};
+    }
     struct stat data_status {};
     if (::lstat(data_directory.c_str(), &data_status) != 0) {
         if (errno != ENOENT) return {false, "inspect personal-data directory failed: " + std::string(std::strerror(errno))};
@@ -1132,6 +1143,19 @@ training::StoreOperationResult UnixSocketServer::delete_personal_data() {
         const auto relative = absolute.lexically_relative(data_directory);
         if (relative.empty() || relative == "." || relative.is_absolute() || *relative.begin() == "..") {
             return {false, "refusing " + std::string(description) + " outside the personal-data directory"};
+        }
+        auto component_path = data_directory;
+        for (const auto& component : relative) {
+            component_path /= component;
+            struct stat component_status {};
+            if (::lstat(component_path.c_str(), &component_status) != 0) {
+                if (errno == ENOENT) return {true, {}};
+                return {false, "inspect " + std::string(description) + " path component failed: " +
+                                   std::string(std::strerror(errno))};
+            }
+            if (S_ISLNK(component_status.st_mode)) {
+                return {false, "refusing " + std::string(description) + " with a symlink path component"};
+            }
         }
         std::error_code status_error;
         const auto status = std::filesystem::symlink_status(absolute, status_error);
@@ -1152,11 +1176,15 @@ training::StoreOperationResult UnixSocketServer::delete_personal_data() {
         training_orchestrator_.reset();
     }
     training::StoreOperationResult artifacts{true, {}};
-    sessions_->with_predictions_stopped([&]() {
-        if (adapter_publisher_) artifacts = adapter_publisher_->delete_all_artifacts();
-        if (artifacts.succeeded) sessions_->reset_engines();
-    });
+    if (adapter_publisher_) artifacts = adapter_publisher_->delete_all_artifacts();
     if (!adapter_publisher_ && artifacts.succeeded) {
+        if (sessions_) {
+            try {
+                sessions_->with_predictions_stopped([this]() { sessions_->reset_engines(); });
+            } catch (const std::exception& error) {
+                return {false, std::string("clear in-memory personal feedback state failed: ") + error.what()};
+            }
+        }
         const auto configured = options_.lora_training.adapter_directory.value_or(data_directory / "adapters");
         artifacts = remove_managed_tree(configured, "published LoRA adapters");
     }
@@ -1185,6 +1213,67 @@ training::StoreOperationResult UnixSocketServer::delete_personal_data() {
 
 void UnixSocketServer::request_stop() noexcept {
     stopping_.store(true, std::memory_order_release);
+}
+
+void UnixSocketServer::shutdown_noexcept() noexcept {
+    try {
+        std::call_once(shutdown_once_, [this]() {
+            request_stop();
+            if (listen_fd_ >= 0) {
+                (void)::shutdown(listen_fd_, SHUT_RDWR);
+                (void)::close(listen_fd_);
+                listen_fd_ = -1;
+            }
+            try {
+                close_connections();
+            } catch (...) {
+            }
+            try {
+                std::lock_guard lock(training_mutex_);
+                training_orchestrator_.reset();
+            } catch (...) {
+            }
+            try {
+                if (sessions_) sessions_->shutdown();
+            } catch (...) {
+            }
+            try {
+                if (workers_) workers_->shutdown();
+            } catch (...) {
+            }
+
+            std::vector<std::shared_ptr<Connection>> connections;
+            std::vector<std::thread> threads;
+            try {
+                std::lock_guard lock(connections_mutex_);
+                connections.swap(connections_);
+                threads.swap(connection_threads_);
+            } catch (...) {
+            }
+            for (auto& thread : threads) {
+                if (!thread.joinable()) continue;
+                try {
+                    thread.join();
+                } catch (...) {
+                    try {
+                        thread.detach();
+                    } catch (...) {
+                    }
+                }
+            }
+
+            try {
+                if (runtime_) runtime_->set_adapter_failure_handler({});
+            } catch (...) {
+            }
+            try {
+                cleanup_endpoint();
+            } catch (...) {
+            }
+        });
+    } catch (...) {
+        // Destruction must not allow a cleanup failure to terminate the process.
+    }
 }
 
 void UnixSocketServer::accept_connections() {

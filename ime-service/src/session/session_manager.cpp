@@ -98,6 +98,8 @@ OpenSessionResult SessionManager::open_session(std::uint64_t owner_uid) {
 
 PredictionResult SessionManager::predict(std::uint64_t owner_uid, const protocol::PredictRequest& request) {
     std::shared_ptr<Session> session;
+    std::optional<FeedbackRecord> previous_feedback;
+    std::vector<bool> chosen_authorized(request.padding.size(), false);
     {
         std::lock_guard lock(mutex_);
         if (shutting_down_) {
@@ -113,10 +115,7 @@ PredictionResult SessionManager::predict(std::uint64_t owner_uid, const protocol
             return error(protocol::ErrorCode::Unauthorized, request.session_id, request.request_id,
                          request.buffer_revision, "session belongs to another user");
         }
-    }
-
-    {
-        std::lock_guard lock(session->mutex);
+        std::lock_guard session_lock(session->mutex);
         if (session->state == SessionState::Closing) {
             return error(protocol::ErrorCode::SessionBusy, request.session_id, request.request_id,
                          request.buffer_revision, "session is closing");
@@ -133,6 +132,25 @@ PredictionResult SessionManager::predict(std::uint64_t owner_uid, const protocol
             return error(protocol::ErrorCode::SessionBusy, request.session_id, request.request_id,
                          request.buffer_revision, "session already has a prediction in flight");
         }
+        if (!session->feedback_records.empty() && request.context == session->feedback_records.back().context &&
+            Clock::now() - session->feedback_records.back().created_at <= std::chrono::minutes(10)) {
+            previous_feedback = session->feedback_records.back();
+        }
+        bool prefix_matches = previous_feedback.has_value();
+        for (std::size_t index = 0; index < request.padding.size(); ++index) {
+            if (request.padding[index].chosen && prefix_matches && index < previous_feedback->padding.size() &&
+                index < previous_feedback->candidates.size() &&
+                request.padding[index].bopomofo == previous_feedback->padding[index].bopomofo &&
+                std::find(previous_feedback->candidates[index].begin(), previous_feedback->candidates[index].end(),
+                          request.padding[index].chosen_char) != previous_feedback->candidates[index].end()) {
+                chosen_authorized[index] = true;
+            }
+            prefix_matches = prefix_matches && index < previous_feedback->padding.size() &&
+                             request.padding[index].bopomofo == previous_feedback->padding[index].bopomofo &&
+                             request.padding[index].chosen == previous_feedback->padding[index].chosen &&
+                             (!request.padding[index].chosen ||
+                              request.padding[index].chosen_char == previous_feedback->padding[index].chosen_char);
+        }
         session->prediction_in_flight = true;
         session->last_request_id = request.request_id;
         session->last_used = Clock::now();
@@ -145,18 +163,19 @@ PredictionResult SessionManager::predict(std::uint64_t owner_uid, const protocol
             return shutting_down_ || session->state == SessionState::Closing ||
                    (!model_transition_ && running_predictions_ < limits_.max_concurrent_predictions);
         });
+        bool cancelled = false;
         {
             std::lock_guard session_lock(session->mutex);
             if (session->state == SessionState::Closing) {
-                lock.unlock();
-                {
-                    std::lock_guard cancelled_lock(session->mutex);
-                    session->prediction_in_flight = false;
-                }
-                session->condition.notify_all();
-                return error(protocol::ErrorCode::SessionBusy, request.session_id, request.request_id,
-                             request.buffer_revision, "queued prediction was cancelled by close");
+                session->prediction_in_flight = false;
+                cancelled = true;
             }
+        }
+        if (cancelled) {
+            lock.unlock();
+            session->condition.notify_all();
+            return error(protocol::ErrorCode::SessionBusy, request.session_id, request.request_id,
+                         request.buffer_revision, "queued prediction was cancelled by close");
         }
         if (shutting_down_) {
             lock.unlock();
@@ -174,7 +193,7 @@ PredictionResult SessionManager::predict(std::uint64_t owner_uid, const protocol
             std::lock_guard lock(prediction_mutex_);
             if (running_predictions_ > 0) --running_predictions_;
         }
-        prediction_condition_.notify_one();
+        prediction_condition_.notify_all();
         {
             std::lock_guard lock(session->mutex);
             session->prediction_in_flight = false;
@@ -211,25 +230,19 @@ PredictionResult SessionManager::predict(std::uint64_t owner_uid, const protocol
         random_bytes(response.feedback_token);
         {
             std::lock_guard lock(session->mutex);
-            session->feedback_token = response.feedback_token;
-            session->feedback_request_id = request.request_id;
-            session->feedback_adapter_version = session->engine->adapter_version();
-            session->feedback_context = request.context;
             auto authenticated_candidates = response.candidates;
             for (std::size_t index = 0; index < request.padding.size(); ++index) {
-                if (!request.padding[index].chosen || index >= session->feedback_padding.size() ||
-                    index >= session->feedback_candidates.size() ||
-                    request.padding[index].bopomofo != session->feedback_padding[index].bopomofo) {
-                    continue;
-                }
-                const auto& previous = session->feedback_candidates[index];
-                if (std::find(previous.begin(), previous.end(), request.padding[index].chosen_char) != previous.end()) {
-                    authenticated_candidates[index] = previous;
-                }
+                if (!request.padding[index].chosen) continue;
+                if (chosen_authorized[index]) authenticated_candidates[index] = previous_feedback->candidates[index];
+                else authenticated_candidates[index].clear();
             }
-            session->feedback_padding = request.padding;
-            session->feedback_candidates = std::move(authenticated_candidates);
-            session->feedback_created_at = Clock::now();
+            session->feedback_records.push_back(FeedbackRecord{
+                response.feedback_token, session->engine->adapter_version(), request.context, request.padding,
+                std::move(authenticated_candidates), Clock::now()});
+            constexpr std::size_t kRetainedFeedbackRecords = 4;
+            while (session->feedback_records.size() > kRetainedFeedbackRecords) {
+                session->feedback_records.pop_front();
+            }
         }
         finish();
         return response;
@@ -250,8 +263,12 @@ std::optional<std::string> SessionManager::consume_feedback_token(std::uint64_t 
     const auto session = find_session_locked(request.session_id);
     if (!session || !owns(*session, owner_uid)) return std::nullopt;
     std::lock_guard session_lock(session->mutex);
-    if (request.feedback_token != session->feedback_token || protocol::is_zero(session->feedback_token) ||
-        request.left_context != session->feedback_context || Clock::now() - session->feedback_created_at > std::chrono::minutes(10)) {
+    const auto record = std::find_if(session->feedback_records.begin(), session->feedback_records.end(),
+                                     [&request](const FeedbackRecord& candidate) {
+                                         return candidate.token == request.feedback_token;
+                                     });
+    if (record == session->feedback_records.end() || protocol::is_zero(record->token) ||
+        request.left_context != record->context || Clock::now() - record->created_at > std::chrono::minutes(10)) {
         return std::nullopt;
     }
     const auto committed = utf16_scalars(request.committed_characters);
@@ -265,18 +282,18 @@ std::optional<std::string> SessionManager::consume_feedback_token(std::uint64_t 
         if (reading_end == std::u16string::npos) break;
         reading_begin = reading_end + 1;
     }
-    if (committed.size() != session->feedback_candidates.size() || predicted.size() != committed.size() ||
-        readings.size() != committed.size() || session->feedback_padding.size() != committed.size() ||
+    if (committed.size() != record->candidates.size() || predicted.size() != committed.size() ||
+        readings.size() != committed.size() || record->padding.size() != committed.size() ||
         request.manually_chosen_flags.size() != committed.size()) {
         return std::nullopt;
     }
     bool saw_manual = false;
     bool saw_difference = false;
     for (std::size_t index = 0; index < committed.size(); ++index) {
-        const auto& candidates = session->feedback_candidates[index];
+        const auto& candidates = record->candidates[index];
         const bool manual = request.manually_chosen_flags[index];
         const bool differs = committed[index] != predicted[index];
-        if (readings[index] != session->feedback_padding[index].bopomofo || candidates.empty() ||
+        if (readings[index] != record->padding[index].bopomofo || candidates.empty() ||
             candidates.front() != predicted[index] || (differs && !manual) ||
             std::find(candidates.begin(), candidates.end(), committed[index]) == candidates.end()) {
             return std::nullopt;
@@ -297,13 +314,8 @@ std::optional<std::string> SessionManager::consume_feedback_token(std::uint64_t 
         case protocol::FeedbackSignal::FallbackCommit:
             return std::nullopt;
     }
-    auto adapter_version = session->feedback_adapter_version;
-    session->feedback_token = {};
-    session->feedback_request_id = 0;
-    session->feedback_adapter_version.clear();
-    session->feedback_context.clear();
-    session->feedback_padding.clear();
-    session->feedback_candidates.clear();
+    auto adapter_version = record->adapter_version;
+    session->feedback_records.erase(record);
     return adapter_version;
 }
 
@@ -418,14 +430,8 @@ void SessionManager::reset_engines() {
     }
     for (const auto& session : sessions) {
         std::lock_guard lock(session->mutex);
-        if (session->state == SessionState::Closing) continue;
         session->engine.reset();
-        session->feedback_token = {};
-        session->feedback_request_id = 0;
-        session->feedback_adapter_version.clear();
-        session->feedback_context.clear();
-        session->feedback_padding.clear();
-        session->feedback_candidates.clear();
+        session->feedback_records.clear();
     }
 }
 
@@ -498,11 +504,15 @@ void SessionManager::evict_idle_locked(std::size_t target_count) {
 
     while (idle_count() > target_count) {
         auto oldest = sessions_.end();
+        Clock::time_point oldest_last_used{};
         for (auto it = sessions_.begin(); it != sessions_.end(); ++it) {
             const auto& session = it->second;
             std::lock_guard lock(session->mutex);
             if (session->state != SessionState::Active || session->prediction_in_flight) continue;
-            if (oldest == sessions_.end() || session->last_used < oldest->second->last_used) oldest = it;
+            if (oldest == sessions_.end() || session->last_used < oldest_last_used) {
+                oldest = it;
+                oldest_last_used = session->last_used;
+            }
         }
         if (oldest == sessions_.end()) break;
         sessions_.erase(oldest);

@@ -60,6 +60,11 @@ int run_buffer_tests() {
     ok = ok && buffer.rendered_composition() == std::u16string(u"你好");
     ok = ok && buffer.commit_text() == std::u16string(u"你好");
     ok = ok && buffer.completed_segment_indices().size() == 2;
+    const auto* fallback_candidates = buffer.segment_candidates(0);
+    ok = ok && fallback_candidates != nullptr && !fallback_candidates->empty();
+    const auto expected_fallback = fallback_candidates == nullptr ? std::vector<char32_t>{} : *fallback_candidates;
+    ok = ok && !buffer.set_segment_candidates(0, {}, true, ime::fcitx5::CandidateSource::Service);
+    ok = ok && buffer.segment_candidates(0) != nullptr && *buffer.segment_candidates(0) == expected_fallback;
 
     buffer.clear();
     ok = ok && type_keys(buffer, fallback, U"SU3CL3");

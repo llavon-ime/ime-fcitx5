@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace imesvc::training {
@@ -118,12 +119,14 @@ struct SnapshotOptions {
 struct SnapshotMetadata {
     std::string snapshot_id;
     std::string sha256;
+    std::string base_model_hash;
     std::int64_t created_at_unix_seconds = 0;
     std::uint64_t total_samples = 0;
     std::uint64_t total_target_characters = 0;
     std::uint64_t training_target_characters = 0;
     std::uint64_t validation_target_characters = 0;
     std::uint64_t validation_samples = 0;
+    bool payload_available = true;
 };
 
 struct SnapshotResult {
@@ -146,7 +149,8 @@ struct TrainingAccounting {
     std::uint64_t training_target_characters = 0;
     std::uint64_t validation_target_characters = 0;
     std::uint64_t validation_samples = 0;
-    std::uint64_t eligible_target_characters_at_last_success = 0;
+    std::uint64_t cumulative_target_characters = 0;
+    std::uint64_t cumulative_target_characters_at_last_success = 0;
     std::int64_t last_training_started_at_unix_seconds = 0;
     std::int64_t last_training_completed_at_unix_seconds = 0;
     bool last_training_failed = false;
@@ -165,6 +169,7 @@ struct TrainingRunStart {
     std::int64_t started_at_unix_seconds = 0;
     std::uint64_t eligible_target_characters = 0;
     std::uint64_t eligible_samples = 0;
+    std::uint64_t cumulative_target_characters = 0;
 };
 
 struct IncompleteTrainingRunsResult {
@@ -177,13 +182,20 @@ struct AdapterRecord {
     std::string base_model_hash;
     std::string dataset_snapshot_id;
     std::string sha256;
+    std::string parent_version;
     std::int64_t created_at_unix_seconds = 0;
     bool active = false;
+    bool rejected = false;
 };
 
 struct AdapterLookupResult {
     StoreOperationResult operation;
     std::optional<AdapterRecord> adapter;
+};
+
+struct AdapterListResult {
+    StoreOperationResult operation;
+    std::vector<AdapterRecord> adapters;
 };
 
 struct AdapterFeedbackStatsResult {
@@ -206,6 +218,7 @@ public:
     [[nodiscard]] std::future<StoreOperationResult> delete_all_personal_data();
     [[nodiscard]] std::future<RetentionResult> apply_retention();
     [[nodiscard]] std::future<SnapshotResult> create_dataset_snapshot(SnapshotOptions options = {});
+    [[nodiscard]] std::future<StoreOperationResult> discard_dataset_snapshot(std::string snapshot_id);
     [[nodiscard]] std::future<SnapshotLoadResult> load_dataset_snapshot(std::string snapshot_id);
     [[nodiscard]] std::future<TrainingAccounting> training_accounting();
     [[nodiscard]] std::future<StoreOperationResult> record_training_started(TrainingRunStart run);
@@ -218,9 +231,13 @@ public:
     [[nodiscard]] std::future<AdapterLookupResult> active_adapter();
     [[nodiscard]] std::future<AdapterLookupResult> latest_adapter();
     [[nodiscard]] std::future<AdapterLookupResult> previous_adapter(std::string version);
+    [[nodiscard]] std::future<AdapterListResult> adapter_lineage(std::string version);
     [[nodiscard]] std::future<AdapterFeedbackStatsResult> adapter_feedback_stats(std::string version);
     [[nodiscard]] std::future<StoreOperationResult> activate_adapter(std::string version);
     [[nodiscard]] std::future<StoreOperationResult> deactivate_adapter(std::string version);
+    [[nodiscard]] std::future<StoreOperationResult> reject_adapter(std::string version);
+    [[nodiscard]] std::future<StoreOperationResult> rollback_adapter(std::string current_version,
+                                                                      std::string target_version);
 
     // Resolves after every operation already accepted by the writer has completed.
     [[nodiscard]] std::future<StoreOperationResult> flush();
@@ -230,7 +247,9 @@ public:
     [[nodiscard]] const std::filesystem::path& data_directory() const noexcept;
     [[nodiscard]] const std::filesystem::path& database_path() const noexcept;
 
-    [[nodiscard]] static bool deterministic_validation_member(const std::string& event_id) noexcept;
+    [[nodiscard]] static bool deterministic_validation_member(std::string_view base_model_hash,
+                                                               std::string_view left_context,
+                                                               std::string_view bopomofo_sequence) noexcept;
     [[nodiscard]] static std::filesystem::path default_data_directory();
 
 private:

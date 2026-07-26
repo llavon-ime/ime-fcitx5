@@ -123,8 +123,12 @@ if(IMESVC_BUILD_TRAINER)
     if(NOT TARGET torch)
         message(FATAL_ERROR "The LibTorch SDK did not export the torch target")
     endif()
-    find_package(ggml CONFIG REQUIRED)
-    find_package(llama CONFIG REQUIRED)
+    if(NOT TARGET ggml::ggml)
+        find_package(ggml CONFIG REQUIRED)
+    endif()
+    if(NOT TARGET llama)
+        find_package(llama CONFIG REQUIRED)
+    endif()
     if(IMESVC_BUILD_TESTS)
         find_package(reflectcpp CONFIG REQUIRED)
         find_package(utf8cpp CONFIG REQUIRED)
@@ -341,6 +345,9 @@ if(IMESVC_BUILD_TESTS AND NOT WIN32)
 
         add_executable(trainer_smoke_test
             tests/trainer_smoke_test.cpp
+            src/pipe/protocol.cpp
+            src/engine/model_runtime.cpp
+            src/engine/llama_resources.cpp
             src/trainer/trainer.cpp
             src/ml/safetensors_reader.cpp
             src/ml/llama_model.cpp
@@ -354,8 +361,10 @@ if(IMESVC_BUILD_TESTS AND NOT WIN32)
         )
         target_compile_features(trainer_smoke_test PRIVATE cxx_std_23)
         target_include_directories(trainer_smoke_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        target_compile_definitions(trainer_smoke_test PRIVATE IMESVC_HAS_LLAMA=1)
         target_link_libraries(trainer_smoke_test PRIVATE torch nlohmann_json::nlohmann_json
-                                                       ${IMESVC_SQLITE_TARGET} ggml::ggml llama Threads::Threads)
+                                                       ${IMESVC_SQLITE_TARGET} ggml::ggml llama
+                                                       reflectcpp::reflectcpp ${IMESVC_UTF8_TARGET} Threads::Threads)
         if(TORCH_CXX_FLAGS)
             target_compile_options(trainer_smoke_test PRIVATE ${IMESVC_TORCH_CXX_FLAGS})
         endif()

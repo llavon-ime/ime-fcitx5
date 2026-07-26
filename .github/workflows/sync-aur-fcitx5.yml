@@ -40,6 +40,10 @@ jobs:
             base_version="${base_version:-0.1.0}"
             pkgver="${base_version}.r$(git rev-list --count HEAD).g$(git rev-parse --short=7 HEAD)"
           fi
+          if [[ ! "${pkgver}" =~ ^[0-9A-Za-z._+]+$ ]]; then
+            echo "Resolved pkgver contains characters that are unsafe in PKGBUILD: ${pkgver}" >&2
+            exit 1
+          fi
           echo "pkgver=${pkgver}" >> "${GITHUB_OUTPUT}"
 
       - name: Check AUR GitHub token
