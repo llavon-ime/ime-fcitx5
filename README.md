@@ -61,5 +61,8 @@ cmake --install build/macos
 
 Release packages include the Q4 GGUF model. Development builds require a local
 model configured through the fcitx5 settings page or `IME_FCITX5_MODEL_PATH`.
+The bundled model is licensed under CC BY-NC 4.0 and is limited to
+non-commercial use. Release packages include its attribution notice and the
+software dependency licenses.
 
 https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF

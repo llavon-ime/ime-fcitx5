@@ -126,6 +126,13 @@ model_root="${PKGROOT}${MODEL_INSTALL_DIR}"
 mkdir -p "${model_root}"
 install -m 0644 "${MODEL_PATH}" "${model_root}/$(basename "${MODEL_PATH}")"
 
+license_root="${payload_root}/share/llavon-ime/licenses"
+cmake \
+    -DVCPKG_INSTALLED_DIR="${SERVICE_BUILD_DIR}/vcpkg_installed" \
+    -DDESTINATION="${license_root}" \
+    -DPROJECT_ROOT="${ROOT_DIR}" \
+    -P "${ROOT_DIR}/scripts/install-licenses.cmake"
+
 if command -v xattr >/dev/null 2>&1; then
     xattr -cr "${PKGROOT}" || true
 fi
@@ -141,6 +148,11 @@ required_files=(
     "${payload_root}/share/llavon-ime/tables/tokens/chars.json"
     "${payload_root}/share/llavon-ime/tables/tokens/latin.json"
     "${payload_root}/share/llavon-ime/tables/tokens/special_tokens.json"
+    "${license_root}/llavon-ime/LICENSE"
+    "${license_root}/ime-service/LICENSE"
+    "${license_root}/nlohmann-json/LICENSE"
+    "${license_root}/llama-cpp/LICENSE"
+    "${license_root}/llavon-ime-model/NOTICE"
     "${payload_root}/plugin/llavon-ime.json"
     "${PKGROOT}${MODEL_INSTALL_PATH}"
 )

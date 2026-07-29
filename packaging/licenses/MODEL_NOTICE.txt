@@ -1,0 +1,21 @@
+Llavon IME LLaMA 250M GGUF Model Notice
+
+Component:
+  Llavon IME LLaMA 250M GGUF model weights, including the default
+  llavon-ime-llama-250m-Q4_K_M.gguf deployment build
+
+Creator and attribution:
+  tony65535 / Llavon IME project
+
+Source:
+  https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF
+
+License:
+  Creative Commons Attribution-NonCommercial 4.0 International
+  (CC BY-NC 4.0)
+  https://creativecommons.org/licenses/by-nc/4.0/legalcode
+
+The package redistributes the GGUF model without modification. The model may
+only be used and redistributed for non-commercial purposes, subject to the
+attribution and other conditions of CC BY-NC 4.0. The software source code is
+distributed under separate licenses.
