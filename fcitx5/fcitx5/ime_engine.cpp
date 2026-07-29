@@ -540,11 +540,7 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
     fcitx::Text preedit(to_utf8(buffer_.rendered_composition()));
     preedit.setCursor(static_cast<int>(to_utf8(buffer_.rendered_prefix_before_caret()).size()));
     input_context->inputPanel().setClientPreedit(preedit);
-    if (candidate_ui_hidden_) {
-        input_context->inputPanel().setPreedit(fcitx::Text());
-    } else {
-        input_context->inputPanel().setPreedit(preedit);
-    }
+    input_context->inputPanel().setPreedit(fcitx::Text());
     input_context->inputPanel().setAuxUp(fcitx::Text());
     input_context->inputPanel().setAuxDown(fcitx::Text());
     input_context->updatePreedit();
@@ -552,13 +548,6 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
     auto candidates = std::make_unique<fcitx::CommonCandidateList>();
     displayed_candidates_ = current_candidates();
     if (displayed_candidates_.empty()) {
-        if (!candidate_ui_hidden_) {
-            const auto target = current_candidate_target();
-            if (target && buffer_.segment_complete(*target)) {
-                input_context->inputPanel().setAuxDown(
-                    fcitx::Text("No candidates: " + to_utf8(buffer_.segment_reading(*target))));
-            }
-        }
         reset_candidate_view();
         input_context->inputPanel().setCandidateList(nullptr);
         input_context->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
