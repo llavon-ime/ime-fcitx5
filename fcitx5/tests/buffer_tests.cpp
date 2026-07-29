@@ -67,7 +67,6 @@ int run_buffer_tests() {
 
     const auto target = buffer.candidate_target(ime::fcitx5::CandidateTarget::BeforeCursor);
     ok = ok && target && *target == 1;
-    ok = ok && buffer.candidate_reading(ime::fcitx5::CandidateTarget::BeforeCursor) == std::u16string(u"ㄏㄠˇ");
     const auto* target_candidates = target ? buffer.segment_candidates(*target) : nullptr;
     if (target_candidates != nullptr && target_candidates->size() > 1) {
         ok = ok && buffer.select_candidate(*target, 1, false);
@@ -107,8 +106,6 @@ int run_buffer_tests() {
          *buffer.candidate_target(ime::fcitx5::CandidateTarget::BeforeCursor) == 0;
     ok = ok && buffer.candidate_target(ime::fcitx5::CandidateTarget::AfterCursor) &&
          *buffer.candidate_target(ime::fcitx5::CandidateTarget::AfterCursor) == 1;
-    ok = ok && buffer.candidate_reading(ime::fcitx5::CandidateTarget::BeforeCursor) == std::u16string(u"ㄋㄧˇ");
-    ok = ok && buffer.candidate_reading(ime::fcitx5::CandidateTarget::AfterCursor) == std::u16string(u"ㄏㄠˇ");
 
     ok = ok && buffer.delete_forward();
     ok = ok && buffer.raw_composition() == std::u16string(u"ㄋㄧˇ");

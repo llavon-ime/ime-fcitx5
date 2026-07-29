@@ -145,13 +145,8 @@ std::optional<char32_t> microsoft_punctuation_for_key(const fcitx::Key& key) {
 
 class SelectableCandidateWord final : public fcitx::CandidateWord {
 public:
-    SelectableCandidateWord(fcitx::Text text, fcitx::Text comment, std::function<void(fcitx::InputContext*)> callback)
-        : CandidateWord(std::move(text)), callback_(std::move(callback)) {
-        if (!comment.empty()) setComment(std::move(comment));
-    }
-
     SelectableCandidateWord(fcitx::Text text, std::function<void(fcitx::InputContext*)> callback)
-        : SelectableCandidateWord(std::move(text), fcitx::Text(), std::move(callback)) {}
+        : CandidateWord(std::move(text)), callback_(std::move(callback)) {}
 
     void select(fcitx::InputContext* input_context) const override {
         callback_(input_context);
@@ -547,14 +542,11 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
     input_context->inputPanel().setClientPreedit(preedit);
     if (candidate_ui_hidden_) {
         input_context->inputPanel().setPreedit(fcitx::Text());
-        input_context->inputPanel().setAuxUp(fcitx::Text());
-        input_context->inputPanel().setAuxDown(fcitx::Text());
     } else {
         input_context->inputPanel().setPreedit(preedit);
-        input_context->inputPanel().setAuxUp(
-            fcitx::Text(to_utf8(buffer_.candidate_reading(candidate_target_mode()))));
-        input_context->inputPanel().setAuxDown(fcitx::Text());
     }
+    input_context->inputPanel().setAuxUp(fcitx::Text());
+    input_context->inputPanel().setAuxDown(fcitx::Text());
     input_context->updatePreedit();
 
     auto candidates = std::make_unique<fcitx::CommonCandidateList>();
@@ -583,13 +575,11 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
     candidates->setSelectionKey(selection_key_list());
     candidates->setLayoutHint(candidate_layout_hint());
     const auto target = current_candidate_target();
-    const auto target_reading = target ? to_utf8(buffer_.segment_reading(*target)) : std::string();
     int index = 0;
     for (const auto candidate : displayed_candidates_) {
         candidates->append<SelectableCandidateWord>(
-            fcitx::Text(to_utf8(candidate)), fcitx::Text(target_reading), [this, index](fcitx::InputContext* context) {
-                select_candidate(context, index);
-            });
+            fcitx::Text(to_utf8(candidate)),
+            [this, index](fcitx::InputContext* context) { select_candidate(context, index); });
         ++index;
     }
     candidates->setPage(candidate_page_);
