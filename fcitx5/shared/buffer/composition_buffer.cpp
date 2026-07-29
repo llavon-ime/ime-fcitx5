@@ -200,6 +200,11 @@ std::optional<size_t> CompositionBuffer::candidate_target(CandidateTarget target
     return std::nullopt;
 }
 
+std::u16string CompositionBuffer::candidate_reading(CandidateTarget target) const {
+    const auto index = candidate_target(target);
+    return index ? segment_reading(*index) : std::u16string();
+}
+
 std::optional<size_t> CompositionBuffer::last_edited_segment() const noexcept {
     return last_edited_segment_;
 }

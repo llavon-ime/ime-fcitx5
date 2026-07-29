@@ -143,15 +143,6 @@ std::optional<char32_t> microsoft_punctuation_for_key(const fcitx::Key& key) {
     return lookup_microsoft_punctuation_key(symbol);
 }
 
-std::u16string spaced_readings(const CompositionBuffer& buffer) {
-    std::u16string result;
-    for (const auto& segment : buffer.segments()) {
-        if (!result.empty()) result.push_back(u' ');
-        result += segment.reading();
-    }
-    return result;
-}
-
 class SelectableCandidateWord final : public fcitx::CandidateWord {
 public:
     SelectableCandidateWord(fcitx::Text text, fcitx::Text comment, std::function<void(fcitx::InputContext*)> callback)
@@ -560,7 +551,8 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
         input_context->inputPanel().setAuxDown(fcitx::Text());
     } else {
         input_context->inputPanel().setPreedit(preedit);
-        input_context->inputPanel().setAuxUp(fcitx::Text(to_utf8(spaced_readings(buffer_))));
+        input_context->inputPanel().setAuxUp(
+            fcitx::Text(to_utf8(buffer_.candidate_reading(candidate_target_mode()))));
         input_context->inputPanel().setAuxDown(fcitx::Text());
     }
     input_context->updatePreedit();

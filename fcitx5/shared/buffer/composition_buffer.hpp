@@ -47,6 +47,7 @@ public:
     std::u16string commit_text() const;
     std::u16string candidate_commit_text() const;
     std::optional<size_t> candidate_target(CandidateTarget target) const;
+    std::u16string candidate_reading(CandidateTarget target) const;
     std::optional<size_t> last_edited_segment() const noexcept;
     size_t caret() const noexcept;
     size_t revision() const noexcept;
