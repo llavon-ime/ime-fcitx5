@@ -6,6 +6,7 @@ set(IME_FCITX5_TEST_SOURCES
     protocol_tests.cpp
     service_transport_tests.cpp
     keypad_tests.cpp
+    input_state_tests.cpp
 )
 
 add_executable(llavon_ime_tests ${IME_FCITX5_TEST_SOURCES})

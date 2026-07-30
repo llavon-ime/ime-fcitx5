@@ -15,6 +15,7 @@
 #include "engine/service_transport.hpp"
 #include "fcitx5/ime_config.hpp"
 #include "fcitx5/input_context_property.hpp"
+#include "input/input_state.hpp"
 
 namespace fcitx {
 class EventDispatcher;
@@ -60,13 +61,12 @@ private:
     int candidate_page_size() const;
     int candidate_page_offset() const;
     bool page_candidates(int delta, bool preserve_cursor_offset = false);
+    bool transition_to(InputState state);
     void reset_candidate_view();
-    void show_candidate_ui();
-    void hide_candidate_ui();
     void clamp_candidate_cursor();
     bool move_candidate_cursor_in_page(int delta);
     bool set_candidate_cursor(int index);
-    bool candidate_ui_active() const;
+    bool candidate_list_active() const;
     void mark_prediction_dirty();
     void apply_fallback_candidates(size_t segment_index);
     void request_prediction_if_ready(fcitx::InputContext* input_context);
@@ -74,7 +74,7 @@ private:
     void send_prediction(fcitx::InputContext* input_context, std::uint64_t generation);
     void schedule_response(fcitx::InputContext* input_context, std::uint64_t generation, protocol::Message response);
     bool poll_prediction(fcitx::InputContext* input_context);
-    std::vector<char32_t> current_candidates(bool include_hidden = false) const;
+    std::vector<char32_t> available_candidates() const;
     CandidateTarget candidate_target_mode() const;
     std::optional<size_t> current_candidate_target() const;
     std::optional<int> selection_index_for_key(fcitx::KeySym key) const;
@@ -98,7 +98,7 @@ private:
     int candidate_page_ = 0;
     int candidate_cursor_ = 0;
     bool candidate_expanded_ = false;
-    bool candidate_ui_hidden_ = true;
+    InputState input_state_ = InputState::Empty;
 
     protocol::SessionId session_id_{};
     std::uint64_t next_request_id_ = 1;

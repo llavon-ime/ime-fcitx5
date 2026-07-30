@@ -185,7 +185,7 @@ void ImeEngine::enter_context(fcitx::InputContext* input_context) {
     candidate_page_ = state->candidate_page;
     candidate_cursor_ = state->candidate_cursor;
     candidate_expanded_ = state->candidate_expanded;
-    candidate_ui_hidden_ = state->candidate_ui_hidden;
+    input_state_ = state->input_state;
     session_id_ = state->session_id;
     next_request_id_ = state->next_request_id;
     generation_ = state->generation;
@@ -207,7 +207,7 @@ void ImeEngine::leave_context() {
         state->candidate_page = candidate_page_;
         state->candidate_cursor = candidate_cursor_;
         state->candidate_expanded = candidate_expanded_;
-        state->candidate_ui_hidden = candidate_ui_hidden_;
+        state->input_state = input_state_;
         state->session_id = session_id_;
         state->next_request_id = next_request_id_;
         state->generation = generation_;
@@ -253,7 +253,7 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
 
     if (poll_prediction(input_context)) update_ui(input_context);
 
-    if (candidate_ui_active()) {
+    if (candidate_list_active()) {
         if (key == FcitxKey_Up) {
             if (move_candidate_cursor_in_page(-1)) update_ui(input_context);
             event.filterAndAccept();
@@ -306,15 +306,14 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
     if (microsoft_punctuation) {
         if (!buffer_.has_unfinished_reading()) {
             (void)buffer_.add_literal(*microsoft_punctuation);
-            hide_candidate_ui();
-            reset_candidate_view();
+            (void)transition_to(InputState::Inputting);
             update_ui(input_context);
         }
         event.filterAndAccept();
         return;
     }
 
-    if (const auto index = selection_index_for_key(key); index && candidate_ui_active()) {
+    if (const auto index = selection_index_for_key(key); index && candidate_list_active()) {
         (void)select_candidate(input_context, candidate_page_offset() + *index);
         event.filterAndAccept();
         return;
@@ -322,11 +321,10 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
 
     if (key == FcitxKey_space && !buffer_.empty()) {
         const bool target_complete = current_candidate_target().has_value();
-        const bool has_candidates = !current_candidates(true).empty();
+        const bool has_candidates = !available_candidates().empty();
         if (target_complete || has_candidates) {
-            if (candidate_ui_hidden_) {
-                reset_candidate_view();
-                show_candidate_ui();
+            if (input_state_ != InputState::ChoosingCandidate) {
+                (void)transition_to(InputState::ChoosingCandidate);
                 update_ui(input_context);
             } else if (config_.space_selects_candidate && !displayed_candidates_.empty()) {
                 (void)select_candidate(input_context, candidate_cursor_);
@@ -350,8 +348,7 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
 
     if (key == FcitxKey_BackSpace && !buffer_.empty()) {
         buffer_.backspace();
-        hide_candidate_ui();
-        reset_candidate_view();
+        (void)transition_to(buffer_.empty() ? InputState::Empty : InputState::Inputting);
         mark_prediction_dirty();
         update_ui(input_context);
         event.filterAndAccept();
@@ -360,8 +357,7 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
 
     if (key == FcitxKey_Delete && !buffer_.empty()) {
         buffer_.delete_forward();
-        hide_candidate_ui();
-        reset_candidate_view();
+        (void)transition_to(buffer_.empty() ? InputState::Empty : InputState::Inputting);
         mark_prediction_dirty();
         update_ui(input_context);
         event.filterAndAccept();
@@ -370,8 +366,7 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
 
     if (key == FcitxKey_Left && !buffer_.empty()) {
         if (buffer_.move_cursor_left()) {
-            hide_candidate_ui();
-            reset_candidate_view();
+            (void)transition_to(InputState::Inputting);
             update_ui(input_context);
         }
         event.filterAndAccept();
@@ -380,8 +375,7 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
 
     if (key == FcitxKey_Right && !buffer_.empty()) {
         if (buffer_.move_cursor_right()) {
-            hide_candidate_ui();
-            reset_candidate_view();
+            (void)transition_to(InputState::Inputting);
             update_ui(input_context);
         }
         event.filterAndAccept();
@@ -390,20 +384,18 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
 
     if (key == FcitxKey_Down && !buffer_.empty()) {
         const bool target_complete = current_candidate_target().has_value();
-        const bool has_candidates = !current_candidates(true).empty();
+        const bool has_candidates = !available_candidates().empty();
         if (target_complete || has_candidates) {
-            reset_candidate_view();
-            show_candidate_ui();
+            (void)transition_to(InputState::ChoosingCandidate);
             update_ui(input_context);
             event.filterAndAccept();
             return;
         }
     }
 
-    if (key == FcitxKey_Tab && !buffer_.empty() && !current_candidates(true).empty()) {
-        if (candidate_ui_hidden_) {
-            reset_candidate_view();
-            show_candidate_ui();
+    if (key == FcitxKey_Tab && !buffer_.empty() && !available_candidates().empty()) {
+        if (input_state_ != InputState::ChoosingCandidate) {
+            (void)transition_to(InputState::ChoosingCandidate);
         } else {
             candidate_expanded_ = !candidate_expanded_;
         }
@@ -424,8 +416,7 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
     const auto mapped = lookup_bopomofo_key(static_cast<char32_t>(key), config_.caps_lock_inputs_bopomofo);
     if (key == FcitxKey_space && buffer_.empty()) return;
     if (mapped && buffer_.add_bopomofo(*mapped)) {
-        hide_candidate_ui();
-        reset_candidate_view();
+        (void)transition_to(InputState::Inputting);
         mark_prediction_dirty();
         if (is_tone_key(*mapped)) {
             if (const auto segment = buffer_.last_edited_segment(); segment && buffer_.segment_complete(*segment)) {
@@ -460,14 +451,12 @@ void ImeEngine::reset(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& 
     }
 
     buffer_.clear();
-    displayed_candidates_.clear();
+    (void)transition_to(InputState::Empty);
     ++generation_;
     prediction_pending_ = false;
     prediction_dirty_ = false;
     inflight_request_id_.reset();
     prediction_segment_indices_.clear();
-    hide_candidate_ui();
-    reset_candidate_view();
     update_ui(event.inputContext());
 }
 
@@ -528,25 +517,27 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
     (void)poll_prediction(input_context);
 
     if (buffer_.empty()) {
-        displayed_candidates_.clear();
-        reset_candidate_view();
-        hide_candidate_ui();
+        (void)transition_to(InputState::Empty);
         input_context->inputPanel().reset();
         input_context->updatePreedit();
         input_context->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
         return;
     }
 
+    if (input_state_ == InputState::Empty) (void)transition_to(InputState::Inputting);
+
     fcitx::Text preedit(to_utf8(buffer_.rendered_composition()));
     preedit.setCursor(static_cast<int>(to_utf8(buffer_.rendered_prefix_before_caret()).size()));
-    input_context->inputPanel().setClientPreedit(preedit);
-    input_context->inputPanel().setPreedit(fcitx::Text());
+    const bool use_client_preedit = input_context->capabilityFlags().test(fcitx::CapabilityFlag::Preedit);
+    input_context->inputPanel().setClientPreedit(use_client_preedit ? preedit : fcitx::Text());
+    input_context->inputPanel().setPreedit(use_client_preedit ? fcitx::Text() : preedit);
     input_context->inputPanel().setAuxUp(fcitx::Text());
     input_context->inputPanel().setAuxDown(fcitx::Text());
     input_context->updatePreedit();
 
     auto candidates = std::make_unique<fcitx::CommonCandidateList>();
-    displayed_candidates_ = current_candidates();
+    displayed_candidates_ =
+        input_state_ == InputState::ChoosingCandidate ? available_candidates() : std::vector<char32_t>();
     if (displayed_candidates_.empty()) {
         reset_candidate_view();
         input_context->inputPanel().setCandidateList(nullptr);
@@ -581,25 +572,25 @@ void ImeEngine::commit_current(fcitx::InputContext* input_context) {
     StateScope state_scope(*this, input_context);
     input_context->commitString(to_utf8(buffer_.commit_text()));
     buffer_.clear();
-    displayed_candidates_.clear();
+    (void)transition_to(InputState::Empty);
     prediction_pending_ = false;
     prediction_dirty_ = false;
     prediction_segment_indices_.clear();
-    hide_candidate_ui();
     update_ui(input_context);
 }
 
 bool ImeEngine::select_candidate(fcitx::InputContext* input_context, int index) {
     StateScope state_scope(*this, input_context);
+    if (input_state_ != InputState::ChoosingCandidate) return false;
     const auto target = current_candidate_target();
     if (!target || index < 0) return false;
 
-    const auto candidates = current_candidates();
+    const auto candidates = available_candidates();
     if (index >= static_cast<int>(candidates.size())) return false;
 
     if (!buffer_.select_candidate(*target, static_cast<size_t>(index), config_.move_cursor_after_selection))
         return false;
-    hide_candidate_ui();
+    (void)transition_to(InputState::Inputting);
     mark_prediction_dirty();
     update_ui(input_context);
     return true;
@@ -609,36 +600,31 @@ bool ImeEngine::handle_escape(fcitx::InputContext* input_context) {
     StateScope state_scope(*this, input_context);
     if (config_.esc_clears_entire_buffer) {
         buffer_.clear();
-        displayed_candidates_.clear();
+        (void)transition_to(InputState::Empty);
         prediction_pending_ = false;
         prediction_dirty_ = false;
-        hide_candidate_ui();
         update_ui(input_context);
         return true;
     }
 
     const auto target = current_candidate_target();
-    if (!candidate_ui_hidden_ && !current_candidates(true).empty()) {
-        candidate_ui_hidden_ = true;
-        displayed_candidates_.clear();
-        reset_candidate_view();
+    if (input_state_ == InputState::ChoosingCandidate && !available_candidates().empty()) {
+        (void)transition_to(InputState::Inputting);
         update_ui(input_context);
         return true;
     }
 
     if (target && buffer_.cancel_candidate_selection(*target)) {
-        hide_candidate_ui();
-        reset_candidate_view();
+        (void)transition_to(InputState::Inputting);
         mark_prediction_dirty();
         update_ui(input_context);
         return true;
     }
 
     buffer_.clear();
-    displayed_candidates_.clear();
+    (void)transition_to(InputState::Empty);
     prediction_pending_ = false;
     prediction_dirty_ = false;
-    hide_candidate_ui();
     update_ui(input_context);
     return true;
 }
@@ -677,22 +663,23 @@ void ImeEngine::reset_candidate_view() {
     candidate_expanded_ = false;
 }
 
-void ImeEngine::show_candidate_ui() {
-    if (candidate_ui_hidden_) {
-        candidate_cursor_ = 0;
-        if (const auto target = current_candidate_target()) {
-            if (const auto selected = buffer_.segment_selected_index(*target)) {
-                candidate_cursor_ = static_cast<int>(*selected);
+bool ImeEngine::transition_to(InputState state) {
+    const auto previous = input_state_;
+    if (!transition_input_state(input_state_, state)) return false;
+    if (state == InputState::ChoosingCandidate) {
+        if (previous != InputState::ChoosingCandidate) {
+            reset_candidate_view();
+            if (const auto target = current_candidate_target()) {
+                if (const auto selected = buffer_.segment_selected_index(*target)) {
+                    candidate_cursor_ = static_cast<int>(*selected);
+                }
             }
         }
+    } else {
+        displayed_candidates_.clear();
+        reset_candidate_view();
     }
-    candidate_ui_hidden_ = false;
-    clamp_candidate_cursor();
-}
-
-void ImeEngine::hide_candidate_ui() {
-    candidate_ui_hidden_ = true;
-    candidate_cursor_ = 0;
+    return true;
 }
 
 void ImeEngine::clamp_candidate_cursor() {
@@ -740,8 +727,8 @@ bool ImeEngine::set_candidate_cursor(int index) {
     return true;
 }
 
-bool ImeEngine::candidate_ui_active() const {
-    return !candidate_ui_hidden_ && !displayed_candidates_.empty();
+bool ImeEngine::candidate_list_active() const {
+    return input_state_ == InputState::ChoosingCandidate && !displayed_candidates_.empty();
 }
 
 void ImeEngine::mark_prediction_dirty() {
@@ -921,9 +908,7 @@ bool ImeEngine::poll_prediction(fcitx::InputContext* input_context) {
     return false;
 }
 
-std::vector<char32_t> ImeEngine::current_candidates(bool include_hidden) const {
-    if (candidate_ui_hidden_ && !include_hidden) return {};
-
+std::vector<char32_t> ImeEngine::available_candidates() const {
     const auto target = current_candidate_target();
     if (!target) return {};
 

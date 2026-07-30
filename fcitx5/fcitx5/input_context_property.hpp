@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "buffer/composition_buffer.hpp"
+#include "input/input_state.hpp"
 #include "protocol/protocol.hpp"
 
 namespace ime::fcitx5 {
@@ -23,7 +24,7 @@ public:
     int candidate_page = 0;
     int candidate_cursor = 0;
     bool candidate_expanded = false;
-    bool candidate_ui_hidden = true;
+    InputState input_state = InputState::Empty;
 
     protocol::SessionId session_id{};
     std::uint64_t next_request_id = 1;
