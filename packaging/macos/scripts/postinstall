@@ -44,7 +44,7 @@ target_root="${user_home}/Library/fcitx5"
 # The addon and service are loaded into the logged-in user's processes. Stop
 # both before replacing their files so the restarted input method cannot retain
 # an old service binary or addon image.
-stop_user_process llavon-ime-service
+stop_user_process llavon-ime-unix-service
 stop_user_process Fcitx5
 
 /bin/mkdir -p "${target_root}"

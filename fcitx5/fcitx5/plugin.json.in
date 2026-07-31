@@ -1,6 +1,6 @@
 {
   "files": [
-    "bin/@IME_FCITX5_SERVICE_NAME@",
+    "bin/@IME_FCITX5_UNIX_SERVICE_NAME@",
     "lib/fcitx5/llavon-ime-addon.so",
     "share/fcitx5/addon/llavon-ime.conf",
     "share/fcitx5/inputmethod/llavon-ime.conf",

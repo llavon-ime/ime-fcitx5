@@ -157,7 +157,7 @@ const ServiceTransportOptions& ServiceTransport::options() const noexcept {
 }
 
 std::filesystem::path ServiceTransport::default_socket_path() {
-    if (auto value = env_path("IME_FCITX5_SOCKET_PATH"); !value.empty()) return value;
+    if (auto value = env_path("LLAVON_IME_UNIX_SOCKET_PATH"); !value.empty()) return value;
     const char* runtime = std::getenv("XDG_RUNTIME_DIR");
     if (runtime == nullptr || runtime[0] == '\0') runtime = std::getenv("TMPDIR");
     if (runtime == nullptr || runtime[0] == '\0') runtime = "/tmp";
@@ -165,13 +165,16 @@ std::filesystem::path ServiceTransport::default_socket_path() {
 }
 
 std::filesystem::path ServiceTransport::default_service_path() {
-    if (auto value = env_path("IME_FCITX5_SERVICE_PATH"); !value.empty()) return value;
-#ifdef IME_FCITX5_INSTALLED_SERVICE_PATH
-    if (std::filesystem::exists(IME_FCITX5_INSTALLED_SERVICE_PATH)) return IME_FCITX5_INSTALLED_SERVICE_PATH;
+    if (auto value = env_path("LLAVON_IME_UNIX_SERVICE_PATH"); !value.empty()) return value;
+#ifdef IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH
+    if (std::filesystem::exists(IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH)) {
+        return IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH;
+    }
 #endif
 #ifdef __APPLE__
     if (const char* home = std::getenv("HOME"); home != nullptr && home[0] != '\0') {
-        const auto candidate = std::filesystem::path(home) / "Library" / "fcitx5" / "bin" / "llavon-ime-service";
+        const auto candidate =
+            std::filesystem::path(home) / "Library" / "fcitx5" / "bin" / "llavon-ime-unix-service";
         if (std::filesystem::exists(candidate)) return candidate;
     }
 #endif
@@ -181,14 +184,14 @@ std::filesystem::path ServiceTransport::default_service_path() {
             const auto separator = paths.find(':');
             const auto part = paths.substr(0, separator);
             if (!part.empty()) {
-                const auto candidate = std::filesystem::path(std::string(part)) / "llavon-ime-service";
+                const auto candidate = std::filesystem::path(std::string(part)) / "llavon-ime-unix-service";
                 if (std::filesystem::exists(candidate)) return candidate;
             }
             if (separator == std::string_view::npos) break;
             paths.remove_prefix(separator + 1);
         }
     }
-    return "llavon-ime-service";
+    return "llavon-ime-unix-service";
 }
 
 void ServiceTransport::enqueue(RequestKind kind, protocol::Message message, Callback callback) {

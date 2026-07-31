@@ -1,8 +1,8 @@
 # Llavon IME for Fcitx5
 
-Linux and macOS fcitx5 frontend for Llavon IME. Inference runs in the `ime-service`
-submodule as a standalone `llavon-ime-service` process with session-based Unix
-socket IPC.
+Linux and macOS fcitx5 frontend for Llavon IME. Inference runs in the
+`ime-unix-service` submodule as a standalone `llavon-ime-unix-service` process
+with session-based Unix socket IPC.
 
 ## Linux Build
 
@@ -14,14 +14,14 @@ git clone --recurse-submodules https://github.com/llavon-ime/ime-fcitx5.git
 cd ime-fcitx5
 ./vcpkg/bootstrap-vcpkg.sh
 
-cmake -S ime-service -B build/ime-service -G Ninja \
+cmake -S ime-unix-service -B build/ime-unix-service -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_TOOLCHAIN_FILE="$PWD/vcpkg/scripts/buildsystems/vcpkg.cmake" \
   -DCMAKE_INSTALL_PREFIX=/usr \
-  -DIMESVC_BUILD_TESTS=ON
-cmake --build build/ime-service
-ctest --test-dir build/ime-service --output-on-failure
-sudo cmake --install build/ime-service
+  -DIME_UNIX_SERVICE_BUILD_TESTS=ON
+cmake --build build/ime-unix-service
+ctest --test-dir build/ime-unix-service --output-on-failure
+sudo cmake --install build/ime-unix-service
 
 cmake -S fcitx5 -B build/fcitx5 -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
@@ -32,7 +32,7 @@ sudo cmake --install build/fcitx5
 ```
 
 Enable `llavon-ime` in the fcitx5 configuration tool, then restart fcitx5 with
-`fcitx5 -r`. The addon starts `llavon-ime-service` on demand.
+`fcitx5 -r`. The addon starts `llavon-ime-unix-service` on demand.
 
 ## macOS Build
 
@@ -40,13 +40,13 @@ Install fcitx5-macos and clone its source checkout for headers, then build the
 service and addon:
 
 ```bash
-cmake -S ime-service -B build/ime-service-macos -G Ninja \
+cmake -S ime-unix-service -B build/ime-unix-service-macos -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_TOOLCHAIN_FILE="$PWD/vcpkg/scripts/buildsystems/vcpkg.cmake" \
   -DCMAKE_INSTALL_PREFIX="$HOME/Library/fcitx5" \
   -DVCPKG_MANIFEST_FEATURES=llama-metal
-cmake --build build/ime-service-macos
-cmake --install build/ime-service-macos
+cmake --build build/ime-unix-service-macos
+cmake --install build/ime-unix-service-macos
 
 cmake -S fcitx5 -B build/macos -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \

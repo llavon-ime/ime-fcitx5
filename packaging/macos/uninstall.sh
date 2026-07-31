@@ -24,11 +24,11 @@ fi
 
 target_root="${user_home}/Library/fcitx5"
 
-pkill -x llavon-ime-service >/dev/null 2>&1 || true
+pkill -x llavon-ime-unix-service >/dev/null 2>&1 || true
 pkill -x Fcitx5 >/dev/null 2>&1 || true
 
 rm -f \
-    "${target_root}/bin/llavon-ime-service" \
+    "${target_root}/bin/llavon-ime-unix-service" \
     "${target_root}/lib/fcitx5/llavon-ime-addon.so" \
     "${target_root}/share/fcitx5/addon/llavon-ime.conf" \
     "${target_root}/share/fcitx5/inputmethod/llavon-ime.conf" \

@@ -10,12 +10,12 @@ include(GNUInstallDirs)
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 
 option(IME_FCITX5_BUILD_TESTS "Build fcitx5 tests" ON)
-set(IME_FCITX5_SERVICE_NAME "llavon-ime-service" CACHE STRING "Installed fcitx5 service executable name")
+set(IME_FCITX5_UNIX_SERVICE_NAME "llavon-ime-unix-service" CACHE STRING "Installed Unix service executable name")
 set(IME_FCITX5_DISPLAY_VERSION "${PROJECT_VERSION}" CACHE STRING "Version displayed in the fcitx5 configuration UI")
 set(IME_FCITX5_FCITX_PLUGIN_DIR "plugin" CACHE STRING "macOS fcitx5-macos plugin metadata install directory")
 set(IME_FCITX5_INSTALLED_MODEL_PATH "" CACHE FILEPATH "Installed default GGUF model path")
 
-set(IME_FCITX5_INSTALLED_SERVICE_PATH "${CMAKE_INSTALL_FULL_BINDIR}/${IME_FCITX5_SERVICE_NAME}")
+set(IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH "${CMAKE_INSTALL_FULL_BINDIR}/${IME_FCITX5_UNIX_SERVICE_NAME}")
 set(IME_FCITX5_INSTALLED_TABLE_PATH "${CMAKE_INSTALL_FULL_DATADIR}/llavon-ime/tables/bopomofo_char.json")
 
 function(ime_fcitx5_install_destination output directory)
@@ -34,8 +34,8 @@ add_library(ime_fcitx5_shared STATIC shared/ime_fcitx5_shared.cpp)
 set_target_properties(ime_fcitx5_shared PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(ime_fcitx5_shared PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/shared")
 target_compile_definitions(ime_fcitx5_shared PRIVATE
-    IME_FCITX5_SERVICE_NAME="${IME_FCITX5_SERVICE_NAME}"
-    IME_FCITX5_INSTALLED_SERVICE_PATH="${IME_FCITX5_INSTALLED_SERVICE_PATH}"
+    IME_FCITX5_UNIX_SERVICE_NAME="${IME_FCITX5_UNIX_SERVICE_NAME}"
+    IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH="${IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH}"
     IME_FCITX5_INSTALLED_MODEL_PATH="${IME_FCITX5_INSTALLED_MODEL_PATH}"
 )
 target_compile_options(ime_fcitx5_shared PRIVATE -Wall -Wextra -Wpedantic)

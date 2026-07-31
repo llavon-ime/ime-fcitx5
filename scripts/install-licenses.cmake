@@ -50,10 +50,9 @@ function(copy_license source component output_name required)
     configure_file("${source}" "${DESTINATION}/${component}/${output_name}" COPYONLY)
 endfunction()
 
-# This is the target dependency closure used by ime-service. Build-only vcpkg
+# This is the target dependency closure used by ime-unix-service. Build-only vcpkg
 # helpers and shader compilers are intentionally excluded.
 set(required_vcpkg_ports
-    asio
     brotli
     cpp-httplib
     ctre
@@ -82,7 +81,7 @@ foreach(port IN LISTS optional_vcpkg_ports)
 endforeach()
 
 copy_license("${PROJECT_ROOT}/LICENSE" "llavon-ime" LICENSE true)
-copy_license("${PROJECT_ROOT}/ime-service/LICENSE" "ime-service" LICENSE true)
+copy_license("${PROJECT_ROOT}/ime-unix-service/LICENSE" "ime-unix-service" LICENSE true)
 copy_license(
     "${PROJECT_ROOT}/packaging/licenses/MODEL_NOTICE.txt"
     "llavon-ime-model"

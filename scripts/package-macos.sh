@@ -7,7 +7,7 @@ VERSION="${IME_FCITX5_VERSION:-0.2.1}"
 ARCH="$(uname -m)"
 PAYLOAD_PREFIX="${IME_FCITX5_MACOS_PAYLOAD_PREFIX:-/Library/Application Support/llavon-ime/payload}"
 BUILD_DIR="${IME_FCITX5_BUILD_DIR:-${ROOT_DIR}/build/package-llavon-ime-macos-${ARCH}}"
-SERVICE_BUILD_DIR="${IME_FCITX5_SERVICE_BUILD_DIR:-${ROOT_DIR}/build/package-llavon-ime-service-macos-${ARCH}}"
+UNIX_SERVICE_BUILD_DIR="${IME_FCITX5_UNIX_SERVICE_BUILD_DIR:-${ROOT_DIR}/build/package-llavon-ime-unix-service-macos-${ARCH}}"
 DIST_DIR="${IME_FCITX5_DIST_DIR:-${ROOT_DIR}/dist/macos}"
 PKGROOT="${DIST_DIR}/pkgroot"
 PKG_IDENTIFIER="${IME_FCITX5_PKG_IDENTIFIER:-llavon-ime}"
@@ -82,23 +82,23 @@ MODEL_INSTALL_PATH="${MODEL_INSTALL_DIR}/$(basename "${MODEL_PATH}")"
 rm -rf "${PKGROOT}"
 mkdir -p "${PKGROOT}" "${DIST_DIR}"
 
-service_cmake_args=(
-    -S "${ROOT_DIR}/ime-service"
-    -B "${SERVICE_BUILD_DIR}"
+unix_service_cmake_args=(
+    -S "${ROOT_DIR}/ime-unix-service"
+    -B "${UNIX_SERVICE_BUILD_DIR}"
     -G Ninja
     -DCMAKE_BUILD_TYPE=Release
     -DCMAKE_TOOLCHAIN_FILE="${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake"
     -DCMAKE_INSTALL_PREFIX="${PAYLOAD_PREFIX}"
-    -DIMESVC_REQUIRE_LLAMA=ON
-    -DIMESVC_BUILD_TESTS=ON
+    -DIME_UNIX_SERVICE_REQUIRE_LLAMA=ON
+    -DIME_UNIX_SERVICE_BUILD_TESTS=ON
 )
 if [[ -n "${VCPKG_FEATURES}" ]]; then
-    service_cmake_args+=(-DVCPKG_MANIFEST_FEATURES="${VCPKG_FEATURES}")
+    unix_service_cmake_args+=(-DVCPKG_MANIFEST_FEATURES="${VCPKG_FEATURES}")
 fi
-cmake "${service_cmake_args[@]}"
-cmake --build "${SERVICE_BUILD_DIR}"
-ctest --test-dir "${SERVICE_BUILD_DIR}" --output-on-failure
-DESTDIR="${PKGROOT}" cmake --install "${SERVICE_BUILD_DIR}"
+cmake "${unix_service_cmake_args[@]}"
+cmake --build "${UNIX_SERVICE_BUILD_DIR}"
+ctest --test-dir "${UNIX_SERVICE_BUILD_DIR}" --output-on-failure
+DESTDIR="${PKGROOT}" cmake --install "${UNIX_SERVICE_BUILD_DIR}"
 
 cmake_args=(
     -S "${ROOT_DIR}/fcitx5"
@@ -128,7 +128,7 @@ install -m 0644 "${MODEL_PATH}" "${model_root}/$(basename "${MODEL_PATH}")"
 
 license_root="${payload_root}/share/llavon-ime/licenses"
 cmake \
-    -DVCPKG_INSTALLED_DIR="${SERVICE_BUILD_DIR}/vcpkg_installed" \
+    -DVCPKG_INSTALLED_DIR="${UNIX_SERVICE_BUILD_DIR}/vcpkg_installed" \
     -DDESTINATION="${license_root}" \
     -DPROJECT_ROOT="${ROOT_DIR}" \
     -P "${ROOT_DIR}/scripts/install-licenses.cmake"
@@ -139,7 +139,7 @@ fi
 find "${PKGROOT}" -name '._*' -delete
 
 required_files=(
-    "${payload_root}/bin/llavon-ime-service"
+    "${payload_root}/bin/llavon-ime-unix-service"
     "${payload_root}/lib/fcitx5/llavon-ime-addon.so"
     "${payload_root}/share/fcitx5/addon/llavon-ime.conf"
     "${payload_root}/share/fcitx5/inputmethod/llavon-ime.conf"
@@ -149,7 +149,7 @@ required_files=(
     "${payload_root}/share/llavon-ime/tables/tokens/latin.json"
     "${payload_root}/share/llavon-ime/tables/tokens/special_tokens.json"
     "${license_root}/llavon-ime/LICENSE"
-    "${license_root}/ime-service/LICENSE"
+    "${license_root}/ime-unix-service/LICENSE"
     "${license_root}/nlohmann-json/LICENSE"
     "${license_root}/llama-cpp/LICENSE"
     "${license_root}/llavon-ime-model/NOTICE"
@@ -171,7 +171,7 @@ fi
 
 if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
     codesign --force --timestamp --options runtime --sign "${DEVELOPER_ID_APPLICATION}" \
-        "${payload_root}/bin/llavon-ime-service" \
+        "${payload_root}/bin/llavon-ime-unix-service" \
         "${payload_root}/lib/fcitx5/llavon-ime-addon.so"
 fi
 
