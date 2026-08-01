@@ -14,6 +14,15 @@ set(IME_FCITX5_UNIX_SERVICE_NAME "llavon-ime-unix-service" CACHE STRING "Install
 set(IME_FCITX5_DISPLAY_VERSION "${PROJECT_VERSION}" CACHE STRING "Version displayed in the fcitx5 configuration UI")
 set(IME_FCITX5_FCITX_PLUGIN_DIR "plugin" CACHE STRING "macOS fcitx5-macos plugin metadata install directory")
 set(IME_FCITX5_INSTALLED_MODEL_PATH "" CACHE FILEPATH "Installed default GGUF model path")
+set(IME_FCITX5_TABLE_SOURCE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/../ime-unix-service/ime-core/table"
+    CACHE PATH
+    "Source directory for the canonical ime-core tables"
+)
+
+if(NOT EXISTS "${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json")
+    message(FATAL_ERROR "ime-core tables are missing; initialize submodules recursively")
+endif()
 
 set(IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH "${CMAKE_INSTALL_FULL_BINDIR}/${IME_FCITX5_UNIX_SERVICE_NAME}")
 set(IME_FCITX5_INSTALLED_TABLE_PATH "${CMAKE_INSTALL_FULL_DATADIR}/llavon-ime/tables/bopomofo_char.json")
@@ -60,9 +69,9 @@ if(NOT WIN32)
     )
 endif()
 target_link_libraries(ime_fcitx5_shared PUBLIC nlohmann_json::nlohmann_json Threads::Threads)
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../tables/bopomofo_char.json"
+install(FILES "${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/llavon-ime/tables")
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../tables/tokens"
+install(DIRECTORY "${IME_FCITX5_TABLE_SOURCE_DIR}/tokens"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/llavon-ime/tables"
         FILES_MATCHING PATTERN "*.json")
 
@@ -92,7 +101,7 @@ if(Fcitx5_FOUND AND NOT WIN32)
     target_include_directories(llavon-ime-addon PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(llavon-ime-addon PRIVATE Fcitx5::Core ime_fcitx5_shared)
     target_compile_definitions(llavon-ime-addon PRIVATE
-        IME_FCITX5_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        IME_FCITX5_SOURCE_TABLE_PATH="${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json"
         IME_FCITX5_INSTALLED_TABLE_PATH="${IME_FCITX5_INSTALLED_TABLE_PATH}"
         IME_FCITX5_DISPLAY_VERSION="${IME_FCITX5_DISPLAY_VERSION}"
     )

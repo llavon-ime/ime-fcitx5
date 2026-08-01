@@ -49,7 +49,7 @@ int run_buffer_tests() {
     ok = ok && buffer.add_bopomofo(U'ㄋ');
     ok = ok && buffer.add_bopomofo(U'ㄧ');
     ok = ok && buffer.add_bopomofo(U'ˇ');
-    ime::fcitx5::FallbackEngine fallback("tables/bopomofo_char.json");
+    ime::fcitx5::FallbackEngine fallback(IME_FCITX5_TEST_TABLE_PATH);
     const auto predictions = fallback.predict(buffer);
     ok = ok && predictions.size() == 1;
     ok = ok && !predictions.front().candidates.empty();

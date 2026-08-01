@@ -89,7 +89,6 @@ unix_service_cmake_args=(
     -DCMAKE_BUILD_TYPE=Release
     -DCMAKE_TOOLCHAIN_FILE="${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake"
     -DCMAKE_INSTALL_PREFIX="${PAYLOAD_PREFIX}"
-    -DIME_UNIX_SERVICE_REQUIRE_LLAMA=ON
     -DIME_UNIX_SERVICE_BUILD_TESTS=ON
 )
 if [[ -n "${VCPKG_FEATURES}" ]]; then
@@ -150,6 +149,7 @@ required_files=(
     "${payload_root}/share/llavon-ime/tables/tokens/special_tokens.json"
     "${license_root}/llavon-ime/LICENSE"
     "${license_root}/ime-unix-service/LICENSE"
+    "${license_root}/ime-core/LICENSE"
     "${license_root}/nlohmann-json/LICENSE"
     "${license_root}/llama-cpp/LICENSE"
     "${license_root}/llavon-ime-model/NOTICE"

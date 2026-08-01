@@ -2,7 +2,8 @@
 
 Linux and macOS fcitx5 frontend for Llavon IME. Inference runs in the
 `ime-unix-service` submodule as a standalone `llavon-ime-unix-service` process
-with session-based Unix socket IPC.
+with session-based Unix socket IPC. The service uses its nested `ime-core`
+submodule for model loading, tokenization, and llama.cpp inference.
 
 ## Linux Build
 

@@ -34,7 +34,7 @@ int run_bopomofo_tests() {
     ok = ok && !tone_only.complete();
     ok = ok && tone_only.text() == std::u16string(u"ˋ");
 
-    ime::fcitx5::TableEngine table("tables/bopomofo_char.json");
+    ime::fcitx5::TableEngine table(IME_FCITX5_TEST_TABLE_PATH);
     auto candidates = table.lookup(u"ㄋㄧˇ");
     ok = ok && !candidates.empty();
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;

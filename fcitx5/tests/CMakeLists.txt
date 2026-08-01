@@ -11,6 +11,8 @@ set(IME_FCITX5_TEST_SOURCES
 
 add_executable(llavon_ime_tests ${IME_FCITX5_TEST_SOURCES})
 target_link_libraries(llavon_ime_tests PRIVATE ime_fcitx5_shared)
+target_compile_definitions(llavon_ime_tests PRIVATE
+    IME_FCITX5_TEST_TABLE_PATH="${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json")
 add_test(NAME llavon_ime_tests COMMAND llavon_ime_tests)
 set_tests_properties(llavon_ime_tests PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/..")
 

@@ -50,8 +50,8 @@ std::filesystem::path default_table_path() {
         if (std::filesystem::exists(user_path)) return user_path;
     }
 #endif
-#ifdef IME_FCITX5_SOURCE_DIR
-    const auto source_path = std::filesystem::path(IME_FCITX5_SOURCE_DIR) / ".." / "tables" / "bopomofo_char.json";
+#ifdef IME_FCITX5_SOURCE_TABLE_PATH
+    const auto source_path = std::filesystem::path(IME_FCITX5_SOURCE_TABLE_PATH);
     if (std::filesystem::exists(source_path)) return source_path;
 #endif
 #ifdef IME_FCITX5_INSTALLED_TABLE_PATH

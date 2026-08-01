@@ -82,6 +82,7 @@ endforeach()
 
 copy_license("${PROJECT_ROOT}/LICENSE" "llavon-ime" LICENSE true)
 copy_license("${PROJECT_ROOT}/ime-unix-service/LICENSE" "ime-unix-service" LICENSE true)
+copy_license("${PROJECT_ROOT}/ime-unix-service/ime-core/LICENSE" "ime-core" LICENSE true)
 copy_license(
     "${PROJECT_ROOT}/packaging/licenses/MODEL_NOTICE.txt"
     "llavon-ime-model"
