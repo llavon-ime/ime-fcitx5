@@ -122,6 +122,50 @@ bool Syllable::complete() const noexcept {
     return tone_ != 0 && (initial_ != 0 || medial_ != 0 || final_ != 0);
 }
 
+char32_t Syllable::initial() const noexcept {
+    return initial_;
+}
+
+char32_t Syllable::medial() const noexcept {
+    return medial_;
+}
+
+char32_t Syllable::final() const noexcept {
+    return final_;
+}
+
+char32_t Syllable::tone() const noexcept {
+    return tone_;
+}
+
+bool Syllable::has_initial() const noexcept {
+    return initial_ != 0;
+}
+
+bool Syllable::has_medial() const noexcept {
+    return medial_ != 0;
+}
+
+bool Syllable::has_final() const noexcept {
+    return final_ != 0;
+}
+
+bool Syllable::has_tone() const noexcept {
+    return tone_ != 0;
+}
+
+bool Syllable::remove_initial() {
+    if (initial_ == 0) return false;
+    initial_ = 0;
+    return true;
+}
+
+bool Syllable::remove_tone() {
+    if (tone_ == 0) return false;
+    tone_ = 0;
+    return true;
+}
+
 std::u16string Syllable::text() const {
     std::u16string result;
     append_bmp(result, initial_);

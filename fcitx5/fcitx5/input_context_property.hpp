@@ -10,6 +10,7 @@
 #include "buffer/composition_buffer.hpp"
 #include "input/input_state.hpp"
 #include "protocol/protocol.hpp"
+#include "symbol/symbol_menu.hpp"
 
 namespace ime::fcitx5 {
 
@@ -25,6 +26,7 @@ public:
     int candidate_cursor = 0;
     bool candidate_expanded = false;
     InputState input_state = InputState::Empty;
+    SymbolMenuState symbol_menu;
 
     protocol::SessionId session_id{};
     std::uint64_t next_request_id = 1;

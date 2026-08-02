@@ -55,6 +55,17 @@ jobs:
           lfs: true
           fetch-depth: 0
 
+      - name: Verify tag points to main
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          main_sha="$(git rev-parse refs/remotes/origin/main)"
+          tag_sha="$(git rev-parse HEAD)"
+          if [[ "${main_sha}" != "${tag_sha}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not point to main HEAD; skipping release." >&2
+            exit 1
+          fi
+
       - name: Resolve version
         id: version
         run: |

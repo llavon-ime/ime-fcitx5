@@ -3,6 +3,8 @@
 #include "input/input_state.hpp"
 
 int run_input_state_tests() {
+    using ime::fcitx5::escape_action;
+    using ime::fcitx5::EscapeAction;
     using ime::fcitx5::InputState;
     using ime::fcitx5::transition_input_state;
     using ime::fcitx5::valid_input_state_transition;
@@ -25,5 +27,15 @@ int run_input_state_tests() {
          state == InputState::ChoosingCandidate;
     ok = ok && transition_input_state(state, InputState::Inputting) && state == InputState::Inputting;
     ok = ok && transition_input_state(state, InputState::Empty) && state == InputState::Empty;
+
+    ok = ok && escape_action(true, InputState::Inputting, false, false, false) == EscapeAction::ClearBuffer;
+    ok = ok && escape_action(true, InputState::ChoosingCandidate, true, true, true) == EscapeAction::ClearBuffer;
+    ok = ok && escape_action(false, InputState::ChoosingCandidate, true, true, true) ==
+                   EscapeAction::CloseCandidateList;
+    ok = ok && escape_action(false, InputState::Inputting, false, true, true) ==
+                   EscapeAction::ClearUnfinishedReading;
+    ok = ok && escape_action(false, InputState::Inputting, true, false, true) ==
+                   EscapeAction::CancelCandidateSelection;
+    ok = ok && escape_action(false, InputState::Inputting, false, false, false) == EscapeAction::KeepBuffer;
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

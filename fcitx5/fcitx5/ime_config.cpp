@@ -8,6 +8,8 @@ std::string to_string(BopomofoKeyboardLayout value) {
     switch (value) {
         case BopomofoKeyboardLayout::Standard:
             return "standard";
+        case BopomofoKeyboardLayout::Hsu:
+            return "hsu";
     }
     return "standard";
 }
@@ -15,13 +17,13 @@ std::string to_string(BopomofoKeyboardLayout value) {
 std::string to_string(SelectionKeys value) {
     switch (value) {
         case SelectionKeys::Digits:
-            return "123456789";
+            return "1234567890";
         case SelectionKeys::HomeRow:
             return "asdfghjkl";
         case SelectionKeys::LeftHand:
             return "asdfzxcvb";
     }
-    return "123456789";
+    return "1234567890";
 }
 
 std::string to_string(CandidateLayout value) {
@@ -48,6 +50,7 @@ std::string to_string(SelectPhrase value) {
 
 BopomofoKeyboardLayout keyboard_layout_from_string(const std::string& value) {
     if (value == "standard" || value == "標準") return BopomofoKeyboardLayout::Standard;
+    if (value == "hsu" || value == "Hsu" || value == "許氏" || value == "許氏鍵盤") return BopomofoKeyboardLayout::Hsu;
     return BopomofoKeyboardLayout::Standard;
 }
 

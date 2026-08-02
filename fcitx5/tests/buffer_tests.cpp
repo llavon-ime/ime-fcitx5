@@ -29,6 +29,16 @@ bool type_keys(ime::fcitx5::CompositionBuffer& buffer, const ime::fcitx5::Fallba
     return true;
 }
 
+bool type_hsu_keys(ime::fcitx5::CompositionBuffer& buffer, const ime::fcitx5::FallbackEngine& fallback,
+                   const std::u32string& keys) {
+    for (const char32_t key : keys) {
+        const auto input = buffer.add_bopomofo_key(key, ime::fcitx5::BopomofoKeyboardLayout::Hsu);
+        if (!input) return false;
+        if (input->completed) apply_fallback_to_last_segment(buffer, fallback);
+    }
+    return true;
+}
+
 }  // namespace
 
 int run_buffer_tests() {
@@ -61,15 +71,28 @@ int run_buffer_tests() {
     ok = ok && buffer.commit_text() == std::u16string(u"你好");
     ok = ok && buffer.completed_segment_indices().size() == 2;
 
+    // Chewing inserts Hsu's unmapped top-row digits into completed composition.
+    ok = ok && buffer.add_literal(U'0');
+    ok = ok && buffer.add_literal(U'！');
+    ok = ok && buffer.rendered_composition() == std::u16string(u"你好0！");
+
+    // Digits bell instead of changing an unfinished Hsu syllable.
+    buffer.clear();
+    ok = ok && buffer.add_bopomofo_key(U'm', ime::fcitx5::BopomofoKeyboardLayout::Hsu).has_value();
+    ok = ok && !buffer.add_bopomofo_key(U'0', ime::fcitx5::BopomofoKeyboardLayout::Hsu).has_value();
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄇ");
+
     buffer.clear();
     ok = ok && type_keys(buffer, fallback, U"SU3CL3");
     ok = ok && buffer.rendered_composition() == std::u16string(u"你好");
 
     const auto target = buffer.candidate_target(ime::fcitx5::CandidateTarget::BeforeCursor);
     ok = ok && target && *target == 1;
+    ok = ok && !buffer.manually_chosen_segment_at_caret().has_value();
     const auto* target_candidates = target ? buffer.segment_candidates(*target) : nullptr;
     if (target_candidates != nullptr && target_candidates->size() > 1) {
         ok = ok && buffer.select_candidate(*target, 1, false);
+        ok = ok && buffer.manually_chosen_segment_at_caret() == target;
         ok = ok && !buffer.empty();
         ok = ok && buffer.rendered_composition().size() == 2;
     }
@@ -97,6 +120,29 @@ int run_buffer_tests() {
     buffer.clear();
     ok = ok && type_keys(buffer, fallback, U"4u4");
     ok = ok && buffer.raw_composition() == std::u16string(u"ㄧˋ");
+    ok = ok && buffer.rendered_composition().size() == 1;
+
+    // The production raw-key API preserves permissive Standard tone-first
+    // input and only finalizes on the last tone key.
+    buffer.clear();
+    auto standard_input = buffer.add_bopomofo_key(U'4', ime::fcitx5::BopomofoKeyboardLayout::Standard);
+    ok = ok && standard_input && !standard_input->completed;
+    standard_input = buffer.add_bopomofo_key(U'u', ime::fcitx5::BopomofoKeyboardLayout::Standard);
+    ok = ok && standard_input && !standard_input->completed;
+    ok = ok && !buffer.segment_complete(0);
+    ok = ok && buffer.completed_segment_indices().empty();
+    const auto pending_standard_predictions = fallback.predict(buffer);
+    ok = ok && pending_standard_predictions.size() == 1;
+    ok = ok && pending_standard_predictions.front().candidates.empty();
+    ok = ok && pending_standard_predictions.front().raw_text == std::u16string(u"ㄧˋ");
+    // A delayed response must not make an unfinalized reading visible or stop
+    // the final tone from editing the same segment.
+    ok = ok && buffer.set_segment_candidates(0, {U'意'}, false);
+    standard_input = buffer.add_bopomofo_key(U'4', ime::fcitx5::BopomofoKeyboardLayout::Standard);
+    ok = ok && standard_input && standard_input->completed;
+    apply_fallback_to_last_segment(buffer, fallback);
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄧˋ");
+    ok = ok && buffer.segments().size() == 1;
     ok = ok && buffer.rendered_composition().size() == 1;
 
     buffer.clear();
@@ -142,6 +188,225 @@ int run_buffer_tests() {
     ok = ok && buffer.add_bopomofo(U'ㄑ');
     ok = ok && buffer.raw_composition() == std::u16string(u"ㄑㄨ");
     ok = ok && buffer.segments().size() == 1;
+
+    // Hsu layout through physical keys.
+    buffer.clear();
+    ok = ok && type_hsu_keys(buffer, fallback, U"nefhwf");
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄋㄧˇㄏㄠˇ");
+    ok = ok && buffer.rendered_composition() == std::u16string(u"你好");
+    ok = ok && buffer.commit_text() == std::u16string(u"你好");
+    ok = ok && buffer.completed_segment_indices().size() == 2;
+
+    buffer.clear();
+    ok = ok && type_hsu_keys(buffer, fallback, U"cen kxjen jn dgshnfbkj");
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄒㄧㄣ ㄎㄨˋㄧㄣ ㄓㄣ ㄉㄜ˙ㄏㄣˇㄅㄤˋ");
+
+    // Space with no composition is rejected by the buffer so the engine can
+    // pass it through to the client.
+    buffer.clear();
+    ok = ok && !buffer.add_bopomofo_key(U' ', ime::fcitx5::BopomofoKeyboardLayout::Hsu).has_value();
+    ok = ok && buffer.empty();
+
+    // After a completed syllable, d starts a new ㄉ syllable instead of adding
+    // a tone to the completed one.
+    buffer.clear();
+    ok = ok && type_hsu_keys(buffer, fallback, U"cen ");
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄒㄧㄣ ");
+    ok = ok && type_hsu_keys(buffer, fallback, U"d");
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄒㄧㄣ ㄉ");
+    ok = ok && !buffer.segment_complete(1);
+    ok = ok && buffer.segments().size() == 2;
+
+    // A finalized segment remains finalized when an empty model response
+    // removes its candidates.
+    buffer.clear();
+    ok = ok && type_hsu_keys(buffer, fallback, U"cen ");
+    ok = ok && buffer.set_segment_candidates(0, {}, false);
+    ok = ok && !buffer.has_unfinished_reading();
+    ok = ok && !buffer.has_unfinished_reading_before_caret();
+    const auto after_empty_candidates =
+        buffer.add_bopomofo_key(U'd', ime::fcitx5::BopomofoKeyboardLayout::Hsu);
+    ok = ok && after_empty_candidates && after_empty_candidates->segment_index == 1;
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄒㄧㄣ ㄉ");
+    ok = ok && buffer.segments().size() == 2;
+
+    // Esc with whole-buffer clearing disabled removes only the unfinished
+    // reading adjacent to the caret.
+    buffer.clear();
+    ok = ok && type_hsu_keys(buffer, fallback, U"cen k");
+    ok = ok && buffer.has_unfinished_reading_before_caret();
+    ok = ok && buffer.move_cursor_left();
+    ok = ok && !buffer.has_unfinished_reading_before_caret();
+    ok = ok && buffer.clear_unfinished_reading();
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄒㄧㄣ ");
+    ok = ok && buffer.segments().size() == 1;
+    ok = ok && !buffer.has_unfinished_reading_before_caret();
+    ok = ok && !buffer.clear_unfinished_reading();
+
+    // A manual choice remains discoverable after after-cursor selection moves
+    // the caret past the selected segment.
+    buffer.clear();
+    ok = ok && type_hsu_keys(buffer, fallback, U"cen ");
+    ok = ok && buffer.move_cursor_left();
+    const auto after_cursor_target = buffer.candidate_target(ime::fcitx5::CandidateTarget::AfterCursor);
+    ok = ok && after_cursor_target && *after_cursor_target == 0;
+    ok = ok && buffer.select_candidate(*after_cursor_target, 0, true);
+    ok = ok && buffer.caret() == 1;
+    ok = ok && buffer.manually_chosen_segment_at_caret() == after_cursor_target;
+    ok = ok && buffer.cancel_candidate_selection(*after_cursor_target);
+    ok = ok && !buffer.manually_chosen_segment_at_caret().has_value();
+
+    // Backspace reopens a finalized reading even when it has no visible
+    // candidate, and clears alternatives from the old completion.
+    buffer.clear();
+    ok = ok && type_hsu_keys(buffer, fallback, U"a ");
+    ok = ok && buffer.set_segment_candidates(0, {}, false);
+    ok = ok && buffer.backspace();
+    ok = ok && buffer.has_unfinished_reading_before_caret();
+    ok = ok && !buffer.segments().front().reading_finalized;
+    ok = ok && buffer.segments().front().alternative_readings.empty();
+    const auto recompleted = buffer.add_bopomofo_key(U'f', ime::fcitx5::BopomofoKeyboardLayout::Hsu);
+    ok = ok && recompleted && recompleted->completed;
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄘˇ");
+    ok = ok && buffer.segments().size() == 1;
+
+    // Semantic edits after an automatic conversion: backspace twice from
+    // ㄒㄧㄤ and type k again.
+    buffer.clear();
+    ok = ok && type_hsu_keys(buffer, fallback, U"cke");
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄒㄧㄤ");
+    ok = ok && buffer.backspace();
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄒㄧ");
+    ok = ok && buffer.backspace();
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄒ");
+    ok = ok && type_hsu_keys(buffer, fallback, U"k");
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄕㄤ");
+
+    // Backspace removes final, medial, then initial structurally.
+    buffer.clear();
+    ok = ok && type_hsu_keys(buffer, fallback, U"cke");
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄒㄧㄤ");
+    ok = ok && buffer.backspace();
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄒㄧ");
+    ok = ok && buffer.backspace();
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄒ");
+    ok = ok && buffer.backspace();
+    ok = ok && buffer.empty();
+
+    // Backspace over a visible candidate removes the entire segment.
+    buffer.clear();
+    ok = ok && type_hsu_keys(buffer, fallback, U"cen ");
+    ok = ok && buffer.rendered_composition() == std::u16string(u"心");
+    ok = ok && buffer.backspace();
+    ok = ok && buffer.empty();
+
+    // Moving the caret edits the segment before the caret or inserts at the
+    // caret.
+    buffer.clear();
+    ok = ok && type_hsu_keys(buffer, fallback, U"cen ");
+    ok = ok && type_hsu_keys(buffer, fallback, U"k");
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄒㄧㄣ ㄎ");
+    ok = ok && buffer.move_cursor_left();
+    ok = ok && buffer.move_cursor_left();
+    ok = ok && type_hsu_keys(buffer, fallback, U"d");
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄉㄒㄧㄣ ㄎ");
+    ok = ok && buffer.caret() == 1;
+
+    // Rejected keys leave the buffer untouched.
+    buffer.clear();
+    const auto revision_before = buffer.revision();
+    ok = ok && type_hsu_keys(buffer, fallback, U"ce");
+    ok = ok && !buffer.add_bopomofo_key(U'q', ime::fcitx5::BopomofoKeyboardLayout::Hsu).has_value();
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄒㄧ");
+    ok = ok && buffer.revision() == revision_before + 2;
+
+    // Alternative candidates: primary candidates stay first, alternatives are
+    // appended in stored order, and duplicates are removed.
+    ime::fcitx5::TableEngine table(IME_FCITX5_TEST_TABLE_PATH);
+    buffer.clear();
+    ok = ok && type_hsu_keys(buffer, fallback, U"a ");
+    ok = ok && buffer.segment_complete(0);
+    {
+        const auto predictions = fallback.predict(buffer);
+        ok = ok && predictions.size() == 1;
+        const auto& candidates = predictions.front().candidates;
+        const auto primary = table.lookup(u"ㄘ ");
+        ok = ok && !primary.empty();
+        ok = ok && candidates.size() >= primary.size() + 1;
+        for (size_t i = 0; i < primary.size(); ++i) {
+            ok = ok && candidates[i] == primary[i];
+        }
+        bool found_alternative = false;
+        for (const auto candidate : candidates) {
+            if (candidate == U'ㄟ') found_alternative = true;
+        }
+        ok = ok && found_alternative;
+    }
+
+    // u"ㄧ " contributes candidates from u"ㄝ ".
+    buffer.clear();
+    ok = ok && type_hsu_keys(buffer, fallback, U"e ");
+    {
+        const auto predictions = fallback.predict(buffer);
+        ok = ok && predictions.size() == 1;
+        bool found_alternative = false;
+        for (const auto candidate : predictions.front().candidates) {
+            if (candidate == U'ㄝ') found_alternative = true;
+        }
+        ok = ok && found_alternative;
+    }
+
+    // u"ㄦ " contributes candidates from u"ㄌ " and u"ㄥ " in declared order.
+    buffer.clear();
+    ok = ok && type_hsu_keys(buffer, fallback, U"l ");
+    {
+        const auto predictions = fallback.predict(buffer);
+        ok = ok && predictions.size() == 1;
+        const auto& candidates = predictions.front().candidates;
+        const auto le_candidates = table.lookup(u"ㄌ ");
+        const auto eng_candidates = table.lookup(u"ㄥ ");
+        ok = ok && !le_candidates.empty() && !eng_candidates.empty();
+        size_t le_position = candidates.size();
+        size_t eng_position = candidates.size();
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            if (le_position == candidates.size() && candidates[i] == le_candidates.front()) le_position = i;
+            if (eng_position == candidates.size() && candidates[i] == eng_candidates.front()) eng_position = i;
+        }
+        ok = ok && le_position < eng_position;
+    }
+
+    // Tone-only alternatives are looked up without a trailing space.
+    buffer.clear();
+    ok = ok && type_hsu_keys(buffer, fallback, U"s ");
+    {
+        const auto predictions = fallback.predict(buffer);
+        ok = ok && predictions.size() == 1;
+        bool found_alternative = false;
+        for (const auto candidate : predictions.front().candidates) {
+            if (candidate == U'˙') found_alternative = true;
+        }
+        ok = ok && found_alternative;
+    }
+
+    // Direct helper tests: deduplication and empty-primary fallback.
+    {
+        ime::fcitx5::Segment segment;
+        segment.alternative_readings = {u"ㄟ ", u"ㄟ "};
+        auto merged = fallback.append_alternative_candidates(segment, {U'疵'});
+        ok = ok && merged == std::vector<char32_t>({U'疵', U'ㄟ'});
+    }
+    {
+        ime::fcitx5::Segment segment;
+        segment.alternative_readings = {u"ㄧ "};
+        auto merged = fallback.append_alternative_candidates(segment, {});
+        ok = ok && !merged.empty();
+        ok = ok && merged.front() == U'一';
+    }
+    {
+        ime::fcitx5::Segment segment;
+        auto merged = fallback.append_alternative_candidates(segment, {U'你'});
+        ok = ok && merged == std::vector<char32_t>({U'你'});
+    }
 
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

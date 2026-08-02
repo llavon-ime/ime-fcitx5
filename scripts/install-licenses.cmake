@@ -88,5 +88,10 @@ copy_license(
     "llavon-ime-model"
     NOTICE
     true)
+copy_license(
+    "${PROJECT_ROOT}/packaging/licenses/MCBOPOMOFO_NOTICE.txt"
+    "mcbopomofo-symbols"
+    NOTICE
+    true)
 
 message(STATUS "Installed license notices for vcpkg triplet ${VCPKG_TARGET_TRIPLET} to ${DESTINATION}")

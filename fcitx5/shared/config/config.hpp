@@ -13,9 +13,9 @@ struct Config {
     int gpu_layers = 0;
     int idle_timeout_seconds = 1800;
     std::string keyboard_layout = "standard";
-    std::string selection_keys = "123456789";
-    int selection_key_count = 9;
-    int candidate_page_size = 9;
+    std::string selection_keys = "1234567890";
+    int selection_key_count = 10;
+    int candidate_page_size = 10;
     std::string candidate_layout = "not_set";
     bool space_selects_candidate = true;
     std::string select_phrase = "before_cursor";

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <iterator>
 #include <utility>
 
 namespace ime::fcitx5 {
@@ -23,7 +24,7 @@ void append_utf16(std::u16string& text, char32_t value) {
 }  // namespace
 
 bool Segment::complete() const noexcept {
-    return syllable.complete();
+    return reading_finalized && syllable.complete();
 }
 
 bool Segment::empty() const noexcept {
@@ -54,12 +55,15 @@ std::u16string Segment::rendered_text() const {
 }
 
 bool CompositionBuffer::add_bopomofo(char32_t symbol) {
-    if (caret_ > 0 && !segments_[caret_ - 1].visible_candidate()) {
+    if (caret_ > 0 && !segments_[caret_ - 1].visible_candidate() &&
+        !segments_[caret_ - 1].reading_finalized) {
         auto& segment = segments_[caret_ - 1];
         if (segment.syllable.accept(symbol) || segment.syllable.overwrite(symbol)) {
             segment.candidates.clear();
             segment.selected_index = 0;
             segment.manually_chosen = false;
+            segment.reading_finalized = is_bopomofo_tone(symbol) && segment.syllable.complete();
+            segment.alternative_readings.clear();
             last_edited_segment_ = caret_ - 1;
             touch();
             return true;
@@ -68,12 +72,53 @@ bool CompositionBuffer::add_bopomofo(char32_t symbol) {
 
     Segment next;
     if (!next.syllable.accept(symbol)) return false;
+    next.reading_finalized = is_bopomofo_tone(symbol) && next.syllable.complete();
 
     segments_.insert(segments_.begin() + static_cast<std::ptrdiff_t>(caret_), std::move(next));
     last_edited_segment_ = caret_;
     ++caret_;
     touch();
     return true;
+}
+
+std::optional<BopomofoInputResult> CompositionBuffer::add_bopomofo_key(char32_t key,
+                                                                       BopomofoKeyboardLayout layout,
+                                                                       bool accept_uppercase) {
+    size_t active_index = segments_.size();
+    if (caret_ > 0 && !segments_[caret_ - 1].visible_candidate() &&
+        !segments_[caret_ - 1].reading_finalized && !segments_[caret_ - 1].empty()) {
+        active_index = caret_ - 1;
+    }
+
+    Syllable active = active_index < segments_.size() ? segments_[active_index].syllable : Syllable();
+    auto result = apply_bopomofo_key(active, layout, key, accept_uppercase);
+    if (result.status == BopomofoKeyStatus::Rejected) return std::nullopt;
+
+    if (active_index < segments_.size()) {
+        auto& segment = segments_[active_index];
+        segment.syllable = std::move(active);
+        segment.candidates.clear();
+        segment.selected_index = 0;
+        segment.manually_chosen = false;
+        segment.reading_finalized = result.status == BopomofoKeyStatus::Completed;
+        segment.alternative_readings.clear();
+        if (result.status == BopomofoKeyStatus::Completed) {
+            segment.alternative_readings = std::move(result.alternative_readings);
+        }
+    } else {
+        Segment next;
+        next.syllable = std::move(active);
+        next.reading_finalized = result.status == BopomofoKeyStatus::Completed;
+        if (result.status == BopomofoKeyStatus::Completed) {
+            next.alternative_readings = std::move(result.alternative_readings);
+        }
+        segments_.insert(segments_.begin() + static_cast<std::ptrdiff_t>(caret_), std::move(next));
+        active_index = caret_;
+        ++caret_;
+    }
+    last_edited_segment_ = active_index;
+    touch();
+    return BopomofoInputResult{active_index, result.status == BopomofoKeyStatus::Completed};
 }
 
 bool CompositionBuffer::add_literal(char32_t symbol) {
@@ -111,6 +156,8 @@ bool CompositionBuffer::backspace() {
         segment.candidates.clear();
         segment.selected_index = 0;
         segment.manually_chosen = false;
+        segment.reading_finalized = false;
+        segment.alternative_readings.clear();
     }
     if (removed) touch();
     return removed;
@@ -151,8 +198,26 @@ bool CompositionBuffer::empty() const noexcept {
 
 bool CompositionBuffer::has_unfinished_reading() const noexcept {
     return std::any_of(segments_.begin(), segments_.end(), [](const Segment& segment) {
-        return !segment.visible_candidate() && !segment.empty();
+        return !segment.reading_finalized && !segment.empty();
     });
+}
+
+bool CompositionBuffer::has_unfinished_reading_before_caret() const noexcept {
+    if (caret_ == 0 || caret_ > segments_.size()) return false;
+    const auto& segment = segments_[caret_ - 1];
+    return !segment.reading_finalized && !segment.empty();
+}
+
+bool CompositionBuffer::clear_unfinished_reading() {
+    const auto unfinished = [](const Segment& segment) {
+        return !segment.reading_finalized && !segment.empty();
+    };
+    if (caret_ > 0 && unfinished(segments_[caret_ - 1])) return remove_segment(caret_ - 1);
+    if (caret_ < segments_.size() && unfinished(segments_[caret_])) return remove_segment(caret_);
+
+    const auto it = std::find_if(segments_.begin(), segments_.end(), unfinished);
+    if (it == segments_.end()) return false;
+    return remove_segment(static_cast<size_t>(std::distance(segments_.begin(), it)));
 }
 
 std::u16string CompositionBuffer::raw_composition() const {
@@ -242,6 +307,12 @@ std::optional<size_t> CompositionBuffer::segment_selected_index(size_t index) co
     if (index >= segments_.size()) return std::nullopt;
     if (!segments_[index].visible_candidate()) return std::nullopt;
     return segments_[index].selected_index;
+}
+
+std::optional<size_t> CompositionBuffer::manually_chosen_segment_at_caret() const noexcept {
+    if (caret_ > 0 && segments_[caret_ - 1].manually_chosen) return caret_ - 1;
+    if (caret_ < segments_.size() && segments_[caret_].manually_chosen) return caret_;
+    return std::nullopt;
 }
 
 bool CompositionBuffer::set_segment_candidates(size_t index, std::vector<char32_t> candidates,

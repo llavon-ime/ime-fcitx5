@@ -1,23 +1,29 @@
-name: Publish fcitx5 AUR package
+name: Preview branch CI and AUR
 
 on:
   push:
     branches:
-      - main
+      - preview
+  pull_request:
+    branches:
+      - preview
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: preview-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  AUR_PACKAGE_DIR: packaging/aur/llavon-ime-fcitx5-git
-  AUR_REPOSITORY: ssh://aur@aur.archlinux.org/llavon-ime-fcitx5-git.git
+  AUR_PACKAGE_DIR: packaging/aur/llavon-ime-fcitx5-preview-git
+  AUR_REPOSITORY: ssh://aur@aur.archlinux.org/llavon-ime-fcitx5-preview-git.git
 
 jobs:
-  publish-aur:
-    name: Publish package to AUR
-    if: github.repository == 'llavon-ime/ime-fcitx5' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+  build-service:
+    name: Build and test Unix service
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout ime-fcitx5
@@ -25,6 +31,88 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            curl \
+            ninja-build \
+            pkg-config \
+            tar \
+            unzip \
+            zip
+
+      - name: Cache vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-${{ hashFiles('vcpkg-configuration.json', 'fcitx5/vcpkg.json', 'ime-unix-service/vcpkg.json', 'ime-unix-service/vcpkg-configuration.json', 'ime-unix-service/ime-core/vcpkg.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-vcpkg-
+
+      - name: Bootstrap vcpkg
+        run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Build and test
+        run: |
+          set -euo pipefail
+          cmake -S ime-unix-service -B build/ime-unix-service -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$PWD/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DIME_UNIX_SERVICE_BUILD_TESTS=ON
+          cmake --build build/ime-unix-service
+          ctest --test-dir build/ime-unix-service --output-on-failure
+
+  build-addon:
+    name: Build and test Fcitx5 addon
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+
+    steps:
+      - name: Install build dependencies
+        run: pacman -Syu --noconfirm cmake fcitx5 git ninja nlohmann-json pkgconf
+
+      - name: Checkout ime-fcitx5
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Build and test
+        run: |
+          set -euo pipefail
+          cmake -S fcitx5 -B build/fcitx5 -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DIME_FCITX5_BUILD_TESTS=ON
+          cmake --build build/fcitx5
+          ctest --test-dir build/fcitx5 --output-on-failure
+
+  publish-aur:
+    name: Publish preview package to AUR
+    needs:
+      - build-service
+      - build-addon
+    if: github.event_name == 'push' && github.repository == 'llavon-ime/ime-fcitx5' && github.ref == 'refs/heads/preview'
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout ime-fcitx5
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify preview branch head
+        run: |
+          set -euo pipefail
+          remote_sha="$(git ls-remote origin refs/heads/preview | cut -f1)"
+          if [[ "${remote_sha}" != "${GITHUB_SHA}" ]]; then
+            echo "Preview advanced from ${GITHUB_SHA} to ${remote_sha}; skipping stale publication." >&2
+            exit 1
+          fi
 
       - name: Resolve pkgver
         id: pkgver
@@ -89,10 +177,10 @@ jobs:
           EOF
           chmod 600 "${ssh_dir}/config"
 
-      - name: Clone AUR package repository
+      - name: Clone AUR preview repository
         run: git clone "${AUR_REPOSITORY}" aur-repo
 
-      - name: Update AUR package files
+      - name: Update AUR preview package files
         env:
           PKGVER: ${{ steps.pkgver.outputs.pkgver }}
         run: |
@@ -114,7 +202,7 @@ jobs:
           File.write(srcinfo, text)
           RUBY
 
-      - name: Push AUR package update
+      - name: Push AUR preview package update
         working-directory: aur-repo
         env:
           PKGVER: ${{ steps.pkgver.outputs.pkgver }}
@@ -122,10 +210,10 @@ jobs:
           set -euo pipefail
           git add PKGBUILD .SRCINFO README.md
           if git diff --cached --quiet; then
-            echo "AUR package repository is already up to date."
+            echo "AUR preview package repository is already up to date."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Update llavon-ime-fcitx5-git to ${PKGVER}"
+          git commit -m "Update llavon-ime-fcitx5-preview-git to ${PKGVER}"
           git push origin HEAD:master

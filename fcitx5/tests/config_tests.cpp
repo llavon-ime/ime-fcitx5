@@ -37,9 +37,9 @@ int run_config_tests() {
     ok = ok && cfg.gpu_layers == 999;
     ok = ok && cfg.idle_timeout_seconds == 1800;
     ok = ok && cfg.keyboard_layout == "standard";
-    ok = ok && cfg.selection_keys == "123456789";
-    ok = ok && cfg.selection_key_count == 9;
-    ok = ok && cfg.candidate_page_size == 9;
+    ok = ok && cfg.selection_keys == "1234567890";
+    ok = ok && cfg.selection_key_count == 10;
+    ok = ok && cfg.candidate_page_size == 10;
     ok = ok && cfg.candidate_layout == "not_set";
     ok = ok && cfg.space_selects_candidate;
     ok = ok && cfg.select_phrase == "before_cursor";
@@ -54,8 +54,17 @@ int run_config_tests() {
     ok = ok && roundtrip.selection_keys == cfg.selection_keys;
     ok = ok && roundtrip.select_phrase == cfg.select_phrase;
     ok = ok && roundtrip.caps_lock_inputs_bopomofo == cfg.caps_lock_inputs_bopomofo;
+    ok = ok && roundtrip.keyboard_layout == cfg.keyboard_layout;
     ok = ok && ime::fcitx5::socket_path().filename() == "ime.sock";
     ok = ok && ime::fcitx5::pid_path().filename() == "service.pid";
+
+    // JSON round-trip preserves the Hsu layout.
+    cfg.keyboard_layout = "hsu";
+    const auto hsu_json = ime::fcitx5::to_json(cfg);
+    ok = ok && hsu_json.at("keyboard_layout").get<std::string>() == "hsu";
+    const auto hsu_roundtrip = ime::fcitx5::config_from_json(hsu_json);
+    ok = ok && hsu_roundtrip.keyboard_layout == "hsu";
+    cfg.keyboard_layout = "standard";
 
     ScopedEnv xdg_config("XDG_CONFIG_HOME");
     ScopedEnv xdg_runtime("XDG_RUNTIME_DIR");
@@ -137,9 +146,34 @@ int run_config_tests() {
     ok = ok && chinese_loaded.select_phrase == "after_cursor";
     ok = ok && chinese_loaded.caps_lock_inputs_bopomofo;
 
+    // Legacy nine-key digit configuration normalizes to Chewing's 1..9,0 order.
+    {
+        std::ofstream output(ime::fcitx5::config_path());
+        output << "SelectionKeys=123456789\n";
+    }
+    const auto legacy_digit_keys_loaded = ime::fcitx5::load_config();
+    ok = ok && legacy_digit_keys_loaded.selection_keys == "1234567890";
+
+    // Hsu layout aliases normalize to "hsu"; invalid values fall back.
+    for (const char* value : {"hsu", "Hsu", "許氏", "許氏鍵盤"}) {
+        {
+            std::ofstream output(ime::fcitx5::config_path());
+            output << "BopomofoKeyboardLayout=" << value << "\n";
+        }
+        const auto loaded = ime::fcitx5::load_config();
+        ok = ok && loaded.keyboard_layout == "hsu";
+    }
+    {
+        std::ofstream output(ime::fcitx5::config_path());
+        output << "BopomofoKeyboardLayout=diagonal\n";
+    }
+    const auto invalid_layout_loaded = ime::fcitx5::load_config();
+    ok = ok && invalid_layout_loaded.keyboard_layout == ime::fcitx5::default_config().keyboard_layout;
+
     const auto invalid = ime::fcitx5::config_from_json(nlohmann::json::parse(
-        R"({"model_path":"/tmp/valid.gguf","selection_keys":"bad","selection_key_count":99,"candidate_page_size":0,"candidate_layout":"diagonal","space_selects_candidate":"yes","select_phrase":"near_cursor","move_cursor_after_selection":true})"));
+        R"({"model_path":"/tmp/valid.gguf","keyboard_layout":"diagonal","selection_keys":"bad","selection_key_count":99,"candidate_page_size":0,"candidate_layout":"diagonal","space_selects_candidate":"yes","select_phrase":"near_cursor","move_cursor_after_selection":true})"));
     ok = ok && invalid.model_path == "/tmp/valid.gguf";
+    ok = ok && invalid.keyboard_layout == ime::fcitx5::default_config().keyboard_layout;
     ok = ok && invalid.selection_keys == ime::fcitx5::default_config().selection_keys;
     ok = ok && invalid.selection_key_count == ime::fcitx5::default_config().selection_key_count;
     ok = ok && invalid.candidate_page_size == ime::fcitx5::default_config().candidate_page_size;

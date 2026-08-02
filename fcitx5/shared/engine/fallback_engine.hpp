@@ -20,6 +20,9 @@ public:
     explicit FallbackEngine(std::filesystem::path table_path);
 
     std::vector<CandidatePrediction> predict(const CompositionBuffer& buffer) const;
+    std::vector<char32_t> append_alternative_candidates(
+        const Segment& segment,
+        std::vector<char32_t> primary_candidates) const;
 
 private:
     TableEngine table_;

@@ -7,6 +7,7 @@ int run_protocol_tests();
 int run_service_transport_tests();
 int run_keypad_tests();
 int run_input_state_tests();
+int run_symbol_menu_tests();
 
 int main() {
     if (run_config_tests() != EXIT_SUCCESS) return EXIT_FAILURE;
@@ -16,5 +17,6 @@ int main() {
     if (run_service_transport_tests() != EXIT_SUCCESS) return EXIT_FAILURE;
     if (run_keypad_tests() != EXIT_SUCCESS) return EXIT_FAILURE;
     if (run_input_state_tests() != EXIT_SUCCESS) return EXIT_FAILURE;
+    if (run_symbol_menu_tests() != EXIT_SUCCESS) return EXIT_FAILURE;
     return EXIT_SUCCESS;
 }

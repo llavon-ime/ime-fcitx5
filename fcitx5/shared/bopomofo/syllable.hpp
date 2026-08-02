@@ -13,6 +13,19 @@ public:
     bool complete() const noexcept;
     std::u16string text() const;
 
+    char32_t initial() const noexcept;
+    char32_t medial() const noexcept;
+    char32_t final() const noexcept;
+    char32_t tone() const noexcept;
+
+    bool has_initial() const noexcept;
+    bool has_medial() const noexcept;
+    bool has_final() const noexcept;
+    bool has_tone() const noexcept;
+
+    bool remove_initial();
+    bool remove_tone();
+
 private:
     char32_t initial_ = 0;
     char32_t medial_ = 0;

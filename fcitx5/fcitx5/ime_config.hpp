@@ -5,6 +5,8 @@
 #include <fcitx-config/configuration.h>
 #include <fcitx-config/enum.h>
 
+#include "bopomofo/keymap.hpp"
+
 #ifndef IME_FCITX5_DISPLAY_VERSION
 #define IME_FCITX5_DISPLAY_VERSION "unknown"
 #endif
@@ -16,8 +18,7 @@ inline constexpr const char* kFcitxConfigFile = "conf/llavon-ime.conf";
 enum class DisplayVersion { Current };
 FCITX_CONFIG_ENUM_NAME(DisplayVersion, IME_FCITX5_DISPLAY_VERSION);
 
-enum class BopomofoKeyboardLayout { Standard };
-FCITX_CONFIG_ENUM_NAME(BopomofoKeyboardLayout, "標準");
+FCITX_CONFIG_ENUM_NAME(BopomofoKeyboardLayout, "標準", "許氏");
 
 enum class SelectionKeys { Digits, HomeRow, LeftHand };
 FCITX_CONFIG_ENUM_NAME(SelectionKeys, "數字鍵", "本位列", "左手鍵");
@@ -46,7 +47,7 @@ FCITX_CONFIGURATION(ImeFcitxConfig,
     fcitx::Option<SelectionKeys> selectionKeys{this, "SelectionKeys", "候選選字鍵", SelectionKeys::Digits};
     fcitx::Option<int, fcitx::IntConstrain> selectionKeyCount{this, "SelectionKeysCount", "候選選字鍵數量",
                                                               default_config().selection_key_count,
-                                                              fcitx::IntConstrain(4, 9)};
+                                                              fcitx::IntConstrain(4, 10)};
     fcitx::Option<int, fcitx::IntConstrain> candidatePageSize{this, "CandidatePageSize", "候選頁大小",
                                                               default_config().candidate_page_size,
                                                               fcitx::IntConstrain(1, 50)};
@@ -59,7 +60,7 @@ FCITX_CONFIGURATION(ImeFcitxConfig,
     fcitx::Option<bool> moveCursorAfterSelection{this, "MoveCursorAfterSelection", "選字後移動游標",
                                                   default_config().move_cursor_after_selection};
     fcitx::Option<bool> escKeyClearsEntireComposingBuffer{this, "EscKeyClearsEntireComposingBuffer",
-                                                           "逸出鍵清除整個組字區",
+                                                           "Esc 鍵清除整個組字區",
                                                            default_config().esc_clears_entire_buffer};
     fcitx::Option<bool> capsLockInputsBopomofo{this, "CapsLockInputsBopomofo",
                                                "大寫鎖定時仍輸入注音",

@@ -35,6 +35,15 @@ bool is_keypad_passthrough_keysym(std::uint32_t keysym) {
     }
 }
 
+bool is_ascii_digit_keysym(std::uint32_t keysym) {
+    return keysym >= '0' && keysym <= '9';
+}
+
+int ascii_digit_selection_index(std::uint32_t keysym) {
+    if (keysym >= '1' && keysym <= '9') return static_cast<int>(keysym - '1');
+    return keysym == '0' ? 9 : -1;
+}
+
 bool is_return_keysym(std::uint32_t keysym) {
     return keysym == kReturn || keysym == kKeypadEnter;
 }

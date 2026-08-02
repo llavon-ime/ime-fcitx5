@@ -1,0 +1,13 @@
+/*
+ * SPDX-FileCopyrightText: 2026 llavon-ime contributors
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+#ifndef _TEST_TESTDIR_H_
+#define _TEST_TESTDIR_H_
+
+#define TESTING_SOURCE_DIR "@CMAKE_SOURCE_DIR@"
+#define TESTING_BINARY_DIR "@CMAKE_BINARY_DIR@"
+#define TESTING_TABLE_PATH "@IME_FCITX5_TABLE_SOURCE_DIR@/bopomofo_char.json"
+
+#endif // _TEST_TESTDIR_H_

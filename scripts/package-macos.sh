@@ -153,6 +153,7 @@ required_files=(
     "${license_root}/nlohmann-json/LICENSE"
     "${license_root}/llama-cpp/LICENSE"
     "${license_root}/llavon-ime-model/NOTICE"
+    "${license_root}/mcbopomofo-symbols/NOTICE"
     "${payload_root}/plugin/llavon-ime.json"
     "${PKGROOT}${MODEL_INSTALL_PATH}"
 )

@@ -16,6 +16,7 @@
 #include "fcitx5/ime_config.hpp"
 #include "fcitx5/input_context_property.hpp"
 #include "input/input_state.hpp"
+#include "symbol/symbol_menu.hpp"
 
 namespace fcitx {
 class EventDispatcher;
@@ -57,6 +58,10 @@ private:
     void update_ui(fcitx::InputContext* input_context);
     void commit_current(fcitx::InputContext* input_context);
     bool select_candidate(fcitx::InputContext* input_context, int index);
+    void open_symbol_menu(fcitx::InputContext* input_context);
+    void close_symbol_menu(fcitx::InputContext* input_context);
+    void handle_symbol_menu_key(fcitx::InputContext* input_context, fcitx::KeyEvent& event);
+    bool select_symbol(fcitx::InputContext* input_context, int index, std::uint64_t epoch);
     bool handle_escape(fcitx::InputContext* input_context);
     int candidate_page_size() const;
     int candidate_page_offset() const;
@@ -99,6 +104,7 @@ private:
     int candidate_cursor_ = 0;
     bool candidate_expanded_ = false;
     InputState input_state_ = InputState::Empty;
+    SymbolMenuState symbol_menu_;
 
     protocol::SessionId session_id_{};
     std::uint64_t next_request_id_ = 1;

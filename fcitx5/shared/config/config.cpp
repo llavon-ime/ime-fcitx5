@@ -182,11 +182,12 @@ bool ini_bool_field(const std::map<std::string, std::string>& fields, const char
 
 std::string keyboard_layout_from_config(std::string_view value, const std::string& fallback) {
     if (value == "standard" || value == "標準") return "standard";
+    if (value == "hsu" || value == "Hsu" || value == "許氏" || value == "許氏鍵盤") return "hsu";
     return fallback;
 }
 
 std::string selection_keys_from_config(std::string_view value, const std::string& fallback) {
-    if (value == "123456789" || value == "數字鍵") return "123456789";
+    if (value == "123456789" || value == "1234567890" || value == "數字鍵") return "1234567890";
     if (value == "asdfghjkl" || value == "本位列") return "asdfghjkl";
     if (value == "asdfzxcvb" || value == "左手鍵") return "asdfzxcvb";
     return fallback;
@@ -237,7 +238,7 @@ Config config_from_fcitx_ini(const std::filesystem::path& path) {
     if (const auto it = fields.find("SelectionKeys"); it != fields.end()) {
         cfg.selection_keys = selection_keys_from_config(it->second, cfg.selection_keys);
     }
-    cfg.selection_key_count = ini_int_field(fields, "SelectionKeysCount", cfg.selection_key_count, 4, 9);
+    cfg.selection_key_count = ini_int_field(fields, "SelectionKeysCount", cfg.selection_key_count, 4, 10);
     cfg.candidate_page_size = ini_int_field(fields, "CandidatePageSize", cfg.candidate_page_size, 1, 50);
     if (const auto it = fields.find("CandidateLayout"); it != fields.end()) {
         cfg.candidate_layout = candidate_layout_from_config(it->second, cfg.candidate_layout);
@@ -368,7 +369,7 @@ Config config_from_json(const nlohmann::json& json) {
         keyboard_layout_from_config(string_field(json, "keyboard_layout", cfg.keyboard_layout), cfg.keyboard_layout);
     cfg.selection_keys =
         selection_keys_from_config(string_field(json, "selection_keys", cfg.selection_keys), cfg.selection_keys);
-    cfg.selection_key_count = int_field(json, "selection_key_count", cfg.selection_key_count, 4, 9);
+    cfg.selection_key_count = int_field(json, "selection_key_count", cfg.selection_key_count, 4, 10);
     cfg.candidate_page_size = int_field(json, "candidate_page_size", cfg.candidate_page_size, 1, 50);
     cfg.candidate_layout = candidate_layout_from_config(
         string_field(json, "candidate_layout", cfg.candidate_layout), cfg.candidate_layout);

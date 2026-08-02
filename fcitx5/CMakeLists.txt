@@ -61,6 +61,7 @@ target_sources(ime_fcitx5_shared PRIVATE
     shared/engine/fallback_engine.cpp
     shared/input/keypad.cpp
     shared/protocol/protocol.cpp
+    shared/symbol/symbol_menu.cpp
 )
 if(NOT WIN32)
     target_sources(ime_fcitx5_shared PRIVATE

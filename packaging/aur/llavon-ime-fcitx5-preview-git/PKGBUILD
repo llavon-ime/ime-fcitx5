@@ -3,12 +3,12 @@
 _pkgname=llavon-ime-fcitx5
 _srcname=ime-fcitx5
 _model_file=llavon-ime-llama-250m-Q4_K_M.gguf
-pkgname=${_pkgname}-git
-pkgver=0.1.0.r3.g78fdc91
+pkgname=${_pkgname}-preview-git
+pkgver=0.2.2.r13.ga568692
 pkgrel=1
-pkgdesc='Fcitx5 frontend and local inference service for Llavon IME'
+pkgdesc='Preview branch of the Fcitx5 frontend and local inference service for Llavon IME'
 arch=('x86_64' 'aarch64')
-url='https://github.com/llavon-ime/ime-fcitx5'
+url='https://github.com/llavon-ime/ime-fcitx5/tree/preview'
 license=('BSD-2-Clause' 'MIT' 'Apache-2.0' 'BSL-1.0' 'CC-BY-NC-4.0')
 depends=('fcitx5' 'glibc' 'libgcc' 'libstdc++' 'vulkan-icd-loader')
 makedepends=('cmake' 'curl' 'git' 'ninja' 'python' 'tar' 'unzip' 'zip')
@@ -17,9 +17,9 @@ optdepends=(
     'vulkan-driver: Vulkan GPU acceleration'
 )
 provides=("${_pkgname}")
-conflicts=("${_pkgname}" "${_pkgname}-preview-git" "${_pkgname}-preview-git-debug")
+conflicts=("${_pkgname}" "${_pkgname}-git" "${_pkgname}-git-debug")
 source=(
-    "${_srcname}::git+https://github.com/llavon-ime/ime-fcitx5.git#branch=main"
+    "${_srcname}::git+https://github.com/llavon-ime/ime-fcitx5.git#branch=preview"
     "${_model_file}::https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF/resolve/main/${_model_file}"
 )
 sha256sums=('SKIP' 'SKIP')
@@ -57,12 +57,13 @@ build() {
         -DCMAKE_TOOLCHAIN_FILE="${srcdir}/${_srcname}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
         -DIME_FCITX5_INSTALLED_MODEL_PATH="/usr/share/llavon-ime/models/${_model_file}" \
         -DIME_FCITX5_DISPLAY_VERSION="${pkgver}" \
-        -DIME_FCITX5_BUILD_TESTS=OFF
+        -DIME_FCITX5_BUILD_TESTS=ON
     cmake --build build
 }
 
 check() {
     ctest --test-dir unix-service-build --output-on-failure
+    ctest --test-dir build --output-on-failure
 }
 
 package() {

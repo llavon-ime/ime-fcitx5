@@ -23,6 +23,19 @@ int run_keypad_tests() {
     ok = ok && ime::fcitx5::is_keypad_passthrough_keysym(0xffaf);
     ok = ok && ime::fcitx5::is_keypad_passthrough_keysym(0xffbd);
 
+    for (std::uint32_t key = '0'; key <= '9'; ++key) {
+        ok = ok && ime::fcitx5::is_ascii_digit_keysym(key);
+    }
+    ok = ok && !ime::fcitx5::is_ascii_digit_keysym('/');
+    ok = ok && !ime::fcitx5::is_ascii_digit_keysym(':');
+    ok = ok && !ime::fcitx5::is_ascii_digit_keysym(0xffb0);
+    for (std::uint32_t key = '1'; key <= '9'; ++key) {
+        ok = ok && ime::fcitx5::ascii_digit_selection_index(key) == static_cast<int>(key - '1');
+    }
+    ok = ok && ime::fcitx5::ascii_digit_selection_index('0') == 9;
+    ok = ok && ime::fcitx5::ascii_digit_selection_index('/') == -1;
+    ok = ok && ime::fcitx5::ascii_digit_selection_index(0xffb0) == -1;
+
     ok = ok && ime::fcitx5::is_return_keysym(0xff0d);
     ok = ok && ime::fcitx5::is_return_keysym(0xff8d);
     ok = ok && !ime::fcitx5::is_return_keysym(0xffb0);

@@ -3,7 +3,6 @@
 #include <fcitx-config/iniparser.h>
 #include <fcitx-utils/eventdispatcher.h>
 #include <fcitx-utils/key.h>
-#include <fcitx-utils/standardpaths.h>
 #include <fcitx/addonfactory.h>
 #include <fcitx/addonmanager.h>
 #include <fcitx/event.h>
@@ -38,6 +37,13 @@ std::string to_utf8(char32_t value) {
 
 std::string to_utf8(const std::u16string& value) {
     return u16_to_utf8(value);
+}
+
+std::string to_utf8(const std::u32string& value) {
+    std::string result;
+    result.reserve(value.size());
+    for (const char32_t codepoint : value) result += char32_to_utf8(codepoint);
+    return result;
 }
 
 std::filesystem::path default_table_path() {
@@ -75,10 +81,6 @@ ServiceTransportOptions default_transport_options() {
     return options;
 }
 
-bool is_tone_key(char32_t value) {
-    return value == U' ' || value == U'ˊ' || value == U'ˇ' || value == U'ˋ' || value == U'˙';
-}
-
 char32_t normalize_ascii_letter(char32_t key) {
     if (key >= U'A' && key <= U'Z') return key + (U'a' - U'A');
     return key;
@@ -114,6 +116,12 @@ char32_t shifted_ascii_key(fcitx::KeySym key) {
             return U'_';
         case FcitxKey_equal:
             return U'+';
+        case FcitxKey_bracketleft:
+            return U'{';
+        case FcitxKey_bracketright:
+            return U'}';
+        case FcitxKey_backslash:
+            return U'|';
         case FcitxKey_semicolon:
             return U':';
         case FcitxKey_apostrophe:
@@ -124,23 +132,67 @@ char32_t shifted_ascii_key(fcitx::KeySym key) {
             return U'>';
         case FcitxKey_slash:
             return U'?';
+        case FcitxKey_grave:
+            return U'~';
         default:
             return static_cast<char32_t>(key);
     }
 }
 
-std::optional<char32_t> microsoft_punctuation_for_key(const fcitx::Key& key) {
+// fcitx5 normalizes symbol keys by folding Shift into the keysym and clearing
+// the Shift state, so a pressed Shift+comma reaches the engine as sym='<' with
+// no Shift bit. A keysym that is itself a shifted symbol therefore counts as
+// Shifted.
+bool is_shifted_ascii_symbol(char32_t symbol) {
+    switch (symbol) {
+        case U'!':
+        case U'@':
+        case U'#':
+        case U'$':
+        case U'%':
+        case U'^':
+        case U'&':
+        case U'*':
+        case U'(':
+        case U')':
+        case U'_':
+        case U'+':
+        case U'{':
+        case U'}':
+        case U'|':
+        case U':':
+        case U'"':
+        case U'<':
+        case U'>':
+        case U'?':
+        case U'~':
+            return true;
+        default:
+            return false;
+    }
+}
+
+std::optional<char32_t> chewing_punctuation_for_key(const fcitx::Key& key, BopomofoKeyboardLayout layout) {
     if ((key.states() & fcitx::KeyState::Alt) || (key.states() & fcitx::KeyState::Super)) return std::nullopt;
     const char32_t raw_symbol = static_cast<char32_t>(key.sym());
     const char32_t shifted_symbol = shifted_ascii_key(key.sym());
-    const char32_t symbol = (key.states() & fcitx::KeyState::Shift) ? shifted_symbol : raw_symbol;
+    const bool shifted = static_cast<bool>(key.states() & fcitx::KeyState::Shift) ||
+                         is_shifted_ascii_symbol(raw_symbol);
+    const char32_t symbol = shifted ? shifted_symbol : raw_symbol;
 
     if (key.states() & fcitx::KeyState::Ctrl) {
         if (const auto punctuation = lookup_microsoft_ctrl_punctuation_key(symbol)) return punctuation;
         return lookup_microsoft_ctrl_punctuation_key(raw_symbol);
     }
 
-    return lookup_microsoft_punctuation_key(symbol);
+    // On the Hsu layout a punctuation key without Shift commits the halfwidth
+    // key symbol itself instead of the fullwidth punctuation.
+    if (layout == BopomofoKeyboardLayout::Hsu && !shifted) {
+        if (lookup_chewing_punctuation_key(raw_symbol)) return raw_symbol;
+        return std::nullopt;
+    }
+
+    return lookup_chewing_punctuation_key(symbol);
 }
 
 class SelectableCandidateWord final : public fcitx::CandidateWord {
@@ -186,6 +238,7 @@ void ImeEngine::enter_context(fcitx::InputContext* input_context) {
     candidate_cursor_ = state->candidate_cursor;
     candidate_expanded_ = state->candidate_expanded;
     input_state_ = state->input_state;
+    symbol_menu_ = state->symbol_menu;
     session_id_ = state->session_id;
     next_request_id_ = state->next_request_id;
     generation_ = state->generation;
@@ -208,6 +261,7 @@ void ImeEngine::leave_context() {
         state->candidate_cursor = candidate_cursor_;
         state->candidate_expanded = candidate_expanded_;
         state->input_state = input_state_;
+        state->symbol_menu = symbol_menu_;
         state->session_id = session_id_;
         state->next_request_id = next_request_id_;
         state->generation = generation_;
@@ -243,8 +297,27 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
     auto* input_context = event.inputContext();
     StateScope state_scope(*this, input_context);
     const auto key = event.key().sym();
-    const auto microsoft_punctuation = microsoft_punctuation_for_key(event.key());
-    if (!microsoft_punctuation && has_blocking_modifier(event.key())) return;
+    const auto layout = config_.keyboard_layout == "hsu" ? BopomofoKeyboardLayout::Hsu
+                                                         : BopomofoKeyboardLayout::Standard;
+    const auto chewing_punctuation = chewing_punctuation_for_key(event.key(), layout);
+    const auto raw_symbol = static_cast<char32_t>(key);
+    const bool punctuation_is_standard_bopomofo =
+        layout == BopomofoKeyboardLayout::Standard && !has_blocking_modifier(event.key()) &&
+        (raw_symbol == U',' || raw_symbol == U'.' || raw_symbol == U';');
+    const auto punctuation = punctuation_is_standard_bopomofo ? std::nullopt : chewing_punctuation;
+    if (!punctuation && has_blocking_modifier(event.key())) return;
+
+    if (symbol_menu_.active()) {
+        handle_symbol_menu_key(input_context, event);
+        event.filterAndAccept();
+        return;
+    }
+
+    if (key == FcitxKey_grave && !has_blocking_modifier(event.key())) {
+        if (!buffer_.has_unfinished_reading()) open_symbol_menu(input_context);
+        event.filterAndAccept();
+        return;
+    }
 
     if (is_keypad_passthrough_keysym(static_cast<std::uint32_t>(key))) {
         if (!buffer_.empty()) commit_current(input_context);
@@ -301,11 +374,23 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
             event.filterAndAccept();
             return;
         }
+
+        const int digit_index = ascii_digit_selection_index(static_cast<std::uint32_t>(key));
+        if (digit_index >= 0 && !has_blocking_modifier(event.key())) {
+            (void)select_candidate(input_context, candidate_page_offset() + digit_index);
+            event.filterAndAccept();
+            return;
+        }
+
+        if (chewing_punctuation) {
+            event.filterAndAccept();
+            return;
+        }
     }
 
-    if (microsoft_punctuation) {
+    if (punctuation) {
         if (!buffer_.has_unfinished_reading()) {
-            (void)buffer_.add_literal(*microsoft_punctuation);
+            (void)buffer_.add_literal(*punctuation);
             (void)transition_to(InputState::Inputting);
             update_ui(input_context);
         }
@@ -319,7 +404,26 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
         return;
     }
 
-    if (key == FcitxKey_space && !buffer_.empty()) {
+    // Match Chewing: digits commit directly from an empty state, join completed
+    // composition as literals, and bell while a Hsu syllable is unfinished.
+    if (layout == BopomofoKeyboardLayout::Hsu &&
+        is_ascii_digit_keysym(static_cast<std::uint32_t>(key))) {
+        if (buffer_.has_unfinished_reading()) {
+            event.filterAndAccept();
+            return;
+        }
+        if (buffer_.empty()) {
+            input_context->commitString(to_utf8(static_cast<char32_t>(key)));
+        } else {
+            (void)buffer_.add_literal(static_cast<char32_t>(key));
+            (void)transition_to(InputState::Inputting);
+            update_ui(input_context);
+        }
+        event.filterAndAccept();
+        return;
+    }
+
+    if (key == FcitxKey_space && !buffer_.empty() && !buffer_.has_unfinished_reading_before_caret()) {
         const bool target_complete = current_candidate_target().has_value();
         const bool has_candidates = !available_candidates().empty();
         if (target_complete || has_candidates) {
@@ -341,8 +445,7 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
     }
 
     if (key == FcitxKey_Escape && !buffer_.empty()) {
-        (void)handle_escape(input_context);
-        event.filterAndAccept();
+        if (handle_escape(input_context)) event.filterAndAccept();
         return;
     }
 
@@ -413,12 +516,13 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
         return;
     }
 
-    const auto mapped = lookup_bopomofo_key(static_cast<char32_t>(key), config_.caps_lock_inputs_bopomofo);
     if (key == FcitxKey_space && buffer_.empty()) return;
-    if (mapped && buffer_.add_bopomofo(*mapped)) {
+
+    if (const auto input =
+            buffer_.add_bopomofo_key(static_cast<char32_t>(key), layout, config_.caps_lock_inputs_bopomofo)) {
         (void)transition_to(InputState::Inputting);
         mark_prediction_dirty();
-        if (is_tone_key(*mapped)) {
+        if (input->completed) {
             if (const auto segment = buffer_.last_edited_segment(); segment && buffer_.segment_complete(*segment)) {
                 apply_fallback_candidates(*segment);
                 const auto* candidates = buffer_.segment_candidates(*segment);
@@ -451,6 +555,7 @@ void ImeEngine::reset(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& 
     }
 
     buffer_.clear();
+    symbol_menu_.close();
     (void)transition_to(InputState::Empty);
     ++generation_;
     prediction_pending_ = false;
@@ -465,8 +570,8 @@ void ImeEngine::reloadConfig() {
 }
 
 void ImeEngine::save() {
-    // PkgConfig maps to $XDG_CONFIG_HOME/fcitx5, matching shared config_path().
-    fcitx::safeSaveAsIni(fcitx_config_, fcitx::StandardPathsType::PkgConfig, kFcitxConfigFile);
+    // The default INI location is PkgConfig, matching shared config_path().
+    fcitx::safeSaveAsIni(fcitx_config_, kFcitxConfigFile);
 }
 
 const fcitx::Configuration* ImeEngine::getConfig() const {
@@ -500,7 +605,7 @@ void ImeEngine::setConfig(const fcitx::RawConfig& config) {
 void ImeEngine::reload_config() {
     fcitx_config_ = ImeFcitxConfig();
     try {
-        fcitx::readAsIni(fcitx_config_, fcitx::StandardPathsType::PkgConfig, kFcitxConfigFile);
+        fcitx::readAsIni(fcitx_config_, kFcitxConfigFile);
     } catch (...) {
         fcitx_config_ = ImeFcitxConfig();
     }
@@ -517,27 +622,35 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
     (void)poll_prediction(input_context);
 
     if (buffer_.empty()) {
-        (void)transition_to(InputState::Empty);
+        if (input_state_ != InputState::Empty) (void)transition_to(InputState::Empty);
         input_context->inputPanel().reset();
         input_context->updatePreedit();
-        input_context->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
-        return;
+        if (!symbol_menu_.active()) {
+            input_context->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+            return;
+        }
+    } else {
+        if (input_state_ == InputState::Empty) (void)transition_to(InputState::Inputting);
+
+        fcitx::Text preedit(to_utf8(buffer_.rendered_composition()));
+        preedit.setCursor(static_cast<int>(to_utf8(buffer_.rendered_prefix_before_caret()).size()));
+        const bool use_client_preedit = input_context->capabilityFlags().test(fcitx::CapabilityFlag::Preedit);
+        input_context->inputPanel().setClientPreedit(use_client_preedit ? preedit : fcitx::Text());
+        input_context->inputPanel().setPreedit(use_client_preedit ? fcitx::Text() : preedit);
+        input_context->inputPanel().setAuxUp(fcitx::Text());
+        input_context->inputPanel().setAuxDown(fcitx::Text());
+        input_context->updatePreedit();
     }
 
-    if (input_state_ == InputState::Empty) (void)transition_to(InputState::Inputting);
-
-    fcitx::Text preedit(to_utf8(buffer_.rendered_composition()));
-    preedit.setCursor(static_cast<int>(to_utf8(buffer_.rendered_prefix_before_caret()).size()));
-    const bool use_client_preedit = input_context->capabilityFlags().test(fcitx::CapabilityFlag::Preedit);
-    input_context->inputPanel().setClientPreedit(use_client_preedit ? preedit : fcitx::Text());
-    input_context->inputPanel().setPreedit(use_client_preedit ? fcitx::Text() : preedit);
-    input_context->inputPanel().setAuxUp(fcitx::Text());
-    input_context->inputPanel().setAuxDown(fcitx::Text());
-    input_context->updatePreedit();
-
     auto candidates = std::make_unique<fcitx::CommonCandidateList>();
-    displayed_candidates_ =
-        input_state_ == InputState::ChoosingCandidate ? available_candidates() : std::vector<char32_t>();
+    if (symbol_menu_.active()) {
+        // Candidates are rendered from symbol_menu_ items below; the placeholder
+        // entries keep page and cursor bookkeeping sized identically.
+        displayed_candidates_.assign(symbol_menu_.menu().size(), U'?');
+    } else {
+        displayed_candidates_ =
+            input_state_ == InputState::ChoosingCandidate ? available_candidates() : std::vector<char32_t>();
+    }
     if (displayed_candidates_.empty()) {
         reset_candidate_view();
         input_context->inputPanel().setCandidateList(nullptr);
@@ -554,16 +667,27 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
     candidates->setPageSize(page_size);
     candidates->setSelectionKey(selection_key_list());
     candidates->setLayoutHint(candidate_layout_hint());
-    const auto target = current_candidate_target();
+    const auto target = symbol_menu_.active() ? std::optional<size_t>() : current_candidate_target();
+    const auto symbol_epoch = symbol_menu_.epoch();
     int index = 0;
-    for (const auto candidate : displayed_candidates_) {
-        candidates->append<SelectableCandidateWord>(
-            fcitx::Text(to_utf8(candidate)),
-            [this, index](fcitx::InputContext* context) { select_candidate(context, index); });
-        ++index;
+    if (symbol_menu_.active()) {
+        for (const auto& item : symbol_menu_.menu()) {
+            candidates->append<SelectableCandidateWord>(
+                fcitx::Text(to_utf8(item)), [this, index, symbol_epoch](fcitx::InputContext* context) {
+                    select_symbol(context, index, symbol_epoch);
+                });
+            ++index;
+        }
+    } else {
+        for (const auto candidate : displayed_candidates_) {
+            candidates->append<SelectableCandidateWord>(
+                fcitx::Text(to_utf8(candidate)),
+                [this, index](fcitx::InputContext* context) { select_candidate(context, index); });
+            ++index;
+        }
     }
     candidates->setPage(candidate_page_);
-    if (target) candidates->setCursorIndex(candidate_cursor_ - candidate_page_offset());
+    if (symbol_menu_.active() || target) candidates->setCursorIndex(candidate_cursor_ - candidate_page_offset());
     input_context->inputPanel().setCandidateList(std::move(candidates));
     input_context->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
 }
@@ -572,6 +696,7 @@ void ImeEngine::commit_current(fcitx::InputContext* input_context) {
     StateScope state_scope(*this, input_context);
     input_context->commitString(to_utf8(buffer_.commit_text()));
     buffer_.clear();
+    symbol_menu_.close();
     (void)transition_to(InputState::Empty);
     prediction_pending_ = false;
     prediction_dirty_ = false;
@@ -596,37 +721,147 @@ bool ImeEngine::select_candidate(fcitx::InputContext* input_context, int index) 
     return true;
 }
 
-bool ImeEngine::handle_escape(fcitx::InputContext* input_context) {
+void ImeEngine::open_symbol_menu(fcitx::InputContext* input_context) {
     StateScope state_scope(*this, input_context);
-    if (config_.esc_clears_entire_buffer) {
-        buffer_.clear();
-        (void)transition_to(InputState::Empty);
-        prediction_pending_ = false;
-        prediction_dirty_ = false;
-        update_ui(input_context);
-        return true;
-    }
-
-    const auto target = current_candidate_target();
-    if (input_state_ == InputState::ChoosingCandidate && !available_candidates().empty()) {
+    symbol_menu_.open();
+    if (input_state_ == InputState::ChoosingCandidate) {
         (void)transition_to(InputState::Inputting);
-        update_ui(input_context);
-        return true;
+    } else {
+        displayed_candidates_.clear();
+        reset_candidate_view();
     }
+    update_ui(input_context);
+}
 
-    if (target && buffer_.cancel_candidate_selection(*target)) {
+void ImeEngine::close_symbol_menu(fcitx::InputContext* input_context) {
+    StateScope state_scope(*this, input_context);
+    symbol_menu_.close();
+    displayed_candidates_.clear();
+    reset_candidate_view();
+    if (buffer_.empty()) {
+        if (input_state_ != InputState::Empty) (void)transition_to(InputState::Empty);
+    } else {
         (void)transition_to(InputState::Inputting);
-        mark_prediction_dirty();
+    }
+    update_ui(input_context);
+}
+
+void ImeEngine::handle_symbol_menu_key(fcitx::InputContext* input_context, fcitx::KeyEvent& event) {
+    const auto key = event.key().sym();
+    if (key == FcitxKey_Escape || key == FcitxKey_grave) {
+        close_symbol_menu(input_context);
+        return;
+    }
+
+    if (key == FcitxKey_BackSpace) {
+        if (symbol_menu_.in_category()) {
+            symbol_menu_.back();
+            reset_candidate_view();
+            update_ui(input_context);
+        } else {
+            close_symbol_menu(input_context);
+        }
+        return;
+    }
+
+    if (key == FcitxKey_Up) {
+        if (move_candidate_cursor_in_page(-1)) update_ui(input_context);
+        return;
+    }
+    if (key == FcitxKey_Down) {
+        if (move_candidate_cursor_in_page(1)) update_ui(input_context);
+        return;
+    }
+    if (key == FcitxKey_Left || key == FcitxKey_Right) {
+        if (page_candidates(key == FcitxKey_Left ? -1 : 1, true)) update_ui(input_context);
+        return;
+    }
+    if (key == FcitxKey_Home || key == FcitxKey_End) {
+        const int index = key == FcitxKey_Home ? 0 : static_cast<int>(displayed_candidates_.size()) - 1;
+        if (set_candidate_cursor(index)) update_ui(input_context);
+        return;
+    }
+    if (key == FcitxKey_Page_Up || key == FcitxKey_Page_Down) {
+        if (page_candidates(key == FcitxKey_Page_Up ? -1 : 1)) {
+            (void)set_candidate_cursor(candidate_page_offset());
+            update_ui(input_context);
+        }
+        return;
+    }
+    if (key == FcitxKey_Tab) {
+        candidate_expanded_ = !candidate_expanded_;
+        update_ui(input_context);
+        return;
+    }
+    if (is_return_keysym(static_cast<std::uint32_t>(key)) ||
+        (key == FcitxKey_space && config_.space_selects_candidate)) {
+        (void)select_symbol(input_context, candidate_cursor_, symbol_menu_.epoch());
+        return;
+    }
+    if (const auto index = selection_index_for_key(key)) {
+        (void)select_symbol(input_context, candidate_page_offset() + *index, symbol_menu_.epoch());
+    }
+}
+
+bool ImeEngine::select_symbol(fcitx::InputContext* input_context, int index, std::uint64_t epoch) {
+    StateScope state_scope(*this, input_context);
+    if (!symbol_menu_.matches(epoch) || index < 0 || index >= static_cast<int>(symbol_menu_.menu().size()))
+        return false;
+
+    char32_t symbol = 0;
+    if (!symbol_menu_.select(static_cast<size_t>(index), symbol)) {
+        // Descended into a category level; keep the menu open.
+        reset_candidate_view();
         update_ui(input_context);
         return true;
     }
 
-    buffer_.clear();
-    (void)transition_to(InputState::Empty);
-    prediction_pending_ = false;
-    prediction_dirty_ = false;
+    symbol_menu_.close();
+    displayed_candidates_.clear();
+    reset_candidate_view();
+    if (!buffer_.add_literal(symbol)) return false;
+    (void)transition_to(InputState::Inputting);
+    mark_prediction_dirty();
     update_ui(input_context);
     return true;
+}
+
+bool ImeEngine::handle_escape(fcitx::InputContext* input_context) {
+    StateScope state_scope(*this, input_context);
+    const auto manual_target = buffer_.manually_chosen_segment_at_caret();
+    const auto action = escape_action(config_.esc_clears_entire_buffer, input_state_,
+                                      !available_candidates().empty(),
+                                      buffer_.has_unfinished_reading(), manual_target.has_value());
+    switch (action) {
+        case EscapeAction::ClearBuffer:
+            buffer_.clear();
+            (void)transition_to(InputState::Empty);
+            prediction_pending_ = false;
+            prediction_dirty_ = false;
+            update_ui(input_context);
+            return true;
+        case EscapeAction::CloseCandidateList:
+            (void)transition_to(InputState::Inputting);
+            update_ui(input_context);
+            return true;
+        case EscapeAction::ClearUnfinishedReading:
+            if (!buffer_.clear_unfinished_reading()) return false;
+            (void)transition_to(buffer_.empty() ? InputState::Empty : InputState::Inputting);
+            mark_prediction_dirty();
+            update_ui(input_context);
+            return true;
+        case EscapeAction::CancelCandidateSelection:
+            if (!manual_target || !buffer_.cancel_candidate_selection(*manual_target)) return false;
+            (void)transition_to(InputState::Inputting);
+            request_prediction_if_ready(input_context);
+            update_ui(input_context);
+            return true;
+        case EscapeAction::KeepBuffer:
+            (void)transition_to(InputState::Inputting);
+            update_ui(input_context);
+            return true;
+    }
+    return false;
 }
 
 int ImeEngine::candidate_page_size() const {
@@ -878,7 +1113,9 @@ void ImeEngine::schedule_response(fcitx::InputContext* input_context, std::uint6
             for (std::size_t i = 0; i < prediction_segment_indices_.size(); ++i) {
                 const auto index = prediction_segment_indices_[i];
                 if (index < buffer_.segments().size()) {
-                    (void)buffer_.set_segment_candidates(index, prediction->candidates[i]);
+                    const auto& segment = buffer_.segments()[index];
+                    (void)buffer_.set_segment_candidates(
+                        index, fallback_.append_alternative_candidates(segment, prediction->candidates[i]));
                 }
             }
         } else if (accepted) {

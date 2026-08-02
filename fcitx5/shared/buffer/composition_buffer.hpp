@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "bopomofo/keymap.hpp"
 #include "bopomofo/syllable.hpp"
 
 namespace ime::fcitx5 {
@@ -20,6 +21,9 @@ struct Segment {
     std::vector<char32_t> candidates;
     size_t selected_index = 0;
     bool manually_chosen = false;
+    // Parser completion is distinct from a structurally complete syllable.
+    bool reading_finalized = false;
+    std::vector<std::u16string> alternative_readings;
 
     bool complete() const noexcept;
     bool empty() const noexcept;
@@ -29,9 +33,18 @@ struct Segment {
     std::u16string rendered_text() const;
 };
 
+struct BopomofoInputResult {
+    size_t segment_index = 0;
+    bool completed = false;
+};
+
 class CompositionBuffer {
 public:
     bool add_bopomofo(char32_t symbol);
+    std::optional<BopomofoInputResult> add_bopomofo_key(
+        char32_t key,
+        BopomofoKeyboardLayout layout,
+        bool accept_uppercase = true);
     bool add_literal(char32_t symbol);
     bool backspace();
     bool delete_forward();
@@ -41,6 +54,8 @@ public:
 
     bool empty() const noexcept;
     bool has_unfinished_reading() const noexcept;
+    bool has_unfinished_reading_before_caret() const noexcept;
+    bool clear_unfinished_reading();
     std::u16string raw_composition() const;
     std::u16string rendered_composition() const;
     std::u16string rendered_prefix_before_caret() const;
@@ -57,6 +72,7 @@ public:
     std::u16string segment_reading(size_t index) const;
     const std::vector<char32_t>* segment_candidates(size_t index) const;
     std::optional<size_t> segment_selected_index(size_t index) const;
+    std::optional<size_t> manually_chosen_segment_at_caret() const noexcept;
     bool set_segment_candidates(size_t index, std::vector<char32_t> candidates, bool preserve_manual_choice = true);
     bool select_candidate(size_t segment_index, size_t candidate_index, bool move_cursor_after_selection);
     bool cancel_candidate_selection(size_t segment_index);
