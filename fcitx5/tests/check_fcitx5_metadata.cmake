@@ -16,3 +16,7 @@ endif()
 if(NOT inputmethod_conf MATCHES "(^|\n)Label=拉風(\n|$)")
     message(FATAL_ERROR "fcitx5 inputmethod label must be 拉風")
 endif()
+
+if(NOT inputmethod_conf MATCHES "(^|\n)LangCode=zh_TW(\n|$)")
+    message(FATAL_ERROR "fcitx5 inputmethod LangCode must be zh_TW (Chinese (Taiwan))")
+endif()
