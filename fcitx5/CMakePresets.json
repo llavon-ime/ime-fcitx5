@@ -1,0 +1,58 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "linux",
+      "displayName": "Linux",
+      "binaryDir": "${sourceDir}/../build/fcitx5",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_INSTALL_PREFIX": "/usr",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/../vcpkg/scripts/buildsystems/vcpkg.cmake"
+      }
+    },
+    {
+      "name": "macos",
+      "displayName": "macOS",
+      "binaryDir": "${sourceDir}/../build/macos",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_INSTALL_PREFIX": "$env{HOME}/Library/fcitx5",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/../vcpkg/scripts/buildsystems/vcpkg.cmake"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "linux",
+      "configurePreset": "linux",
+      "configuration": "Release"
+    },
+    {
+      "name": "macos",
+      "configurePreset": "macos",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "linux",
+      "configurePreset": "linux",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "macos",
+      "configurePreset": "macos",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
