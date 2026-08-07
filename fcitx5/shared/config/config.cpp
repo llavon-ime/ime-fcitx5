@@ -209,6 +209,15 @@ std::string select_phrase_from_config(std::string_view value, const std::string&
     return fallback;
 }
 
+std::string shift_letter_keys_from_config(std::string_view value, const std::string& fallback) {
+    if (value == "directly_output_uppercase" || value == "直接輸出大寫") return "directly_output_uppercase";
+    if (value == "directly_put_to_buffer" || value == "直接放入組字區" || value == "put_lowercase_to_buffer" ||
+        value == "小寫放入組字區") {
+        return "directly_put_to_buffer";
+    }
+    return fallback;
+}
+
 std::string installed_default_model_path() {
 #ifdef IME_FCITX5_INSTALLED_MODEL_PATH
     const std::filesystem::path path(IME_FCITX5_INSTALLED_MODEL_PATH);
@@ -252,6 +261,9 @@ Config config_from_fcitx_ini(const std::filesystem::path& path) {
     cfg.esc_clears_entire_buffer =
         ini_bool_field(fields, "EscKeyClearsEntireComposingBuffer", cfg.esc_clears_entire_buffer);
     cfg.caps_lock_inputs_bopomofo = ini_bool_field(fields, "CapsLockInputsBopomofo", cfg.caps_lock_inputs_bopomofo);
+    if (const auto it = fields.find("ShiftLetterKeys"); it != fields.end()) {
+        cfg.shift_letter_keys = shift_letter_keys_from_config(it->second, cfg.shift_letter_keys);
+    }
     return cfg;
 }
 
@@ -353,6 +365,7 @@ nlohmann::json to_json(const Config& cfg) {
         {"move_cursor_after_selection", cfg.move_cursor_after_selection},
         {"esc_clears_entire_buffer", cfg.esc_clears_entire_buffer},
         {"caps_lock_inputs_bopomofo", cfg.caps_lock_inputs_bopomofo},
+        {"shift_letter_keys", cfg.shift_letter_keys},
     };
 }
 
@@ -379,6 +392,8 @@ Config config_from_json(const nlohmann::json& json) {
     cfg.move_cursor_after_selection = bool_field(json, "move_cursor_after_selection", cfg.move_cursor_after_selection);
     cfg.esc_clears_entire_buffer = bool_field(json, "esc_clears_entire_buffer", cfg.esc_clears_entire_buffer);
     cfg.caps_lock_inputs_bopomofo = bool_field(json, "caps_lock_inputs_bopomofo", cfg.caps_lock_inputs_bopomofo);
+    cfg.shift_letter_keys = shift_letter_keys_from_config(
+        string_field(json, "shift_letter_keys", cfg.shift_letter_keys), cfg.shift_letter_keys);
     return cfg;
 }
 

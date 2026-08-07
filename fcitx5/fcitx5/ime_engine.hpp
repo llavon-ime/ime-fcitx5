@@ -57,6 +57,8 @@ private:
     void reload_config();
     void update_ui(fcitx::InputContext* input_context);
     void commit_current(fcitx::InputContext* input_context);
+    bool handle_english_letter(fcitx::InputContext* input_context, char32_t letter, bool caps_on);
+    void commit_composition_with(fcitx::InputContext* input_context, char32_t extra);
     bool select_candidate(fcitx::InputContext* input_context, int index);
     void open_symbol_menu(fcitx::InputContext* input_context);
     void close_symbol_menu(fcitx::InputContext* input_context);

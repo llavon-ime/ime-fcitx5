@@ -29,6 +29,9 @@ FCITX_CONFIG_ENUM_NAME(CandidateLayout, "系統預設", "垂直", "水平");
 enum class SelectPhrase { BeforeCursor, AfterCursor };
 FCITX_CONFIG_ENUM_NAME(SelectPhrase, "游標前", "游標後");
 
+enum class ShiftLetterKeys { DirectlyOutputUppercase, DirectlyPutToBuffer };
+FCITX_CONFIG_ENUM_NAME(ShiftLetterKeys, "直接輸出大寫", "直接放入組字區");
+
 FCITX_CONFIGURATION(ImeFcitxConfig,
     fcitx::Option<DisplayVersion> version{this, "Version", "版本", DisplayVersion::Current};
     fcitx::Option<std::string> modelPath{this, "ModelPath", "模型路徑", default_config().model_path};
@@ -64,7 +67,9 @@ FCITX_CONFIGURATION(ImeFcitxConfig,
                                                            default_config().esc_clears_entire_buffer};
     fcitx::Option<bool> capsLockInputsBopomofo{this, "CapsLockInputsBopomofo",
                                                "大寫鎖定時仍輸入注音",
-                                               default_config().caps_lock_inputs_bopomofo};);
+                                               default_config().caps_lock_inputs_bopomofo};
+    fcitx::Option<ShiftLetterKeys> shiftLetterKeys{this, "ShiftLetterKeys", "Shift 鍵輸入英文",
+                                                    ShiftLetterKeys::DirectlyOutputUppercase};);
 
 Config to_shared_config(const ImeFcitxConfig& config);
 void apply_shared_config(ImeFcitxConfig& target, const Config& source);

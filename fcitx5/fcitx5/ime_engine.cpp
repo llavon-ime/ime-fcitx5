@@ -296,7 +296,36 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
 
     auto* input_context = event.inputContext();
     StateScope state_scope(*this, input_context);
+    const auto raw_key = event.rawKey();
     const auto key = event.key().sym();
+
+    // CapsLock state only exists in the raw key. When Chinese input is
+    // disabled under CapsLock, everything passes through to the application
+    // (mirrors McBopomofo's capsLockAllowChineseInput=False behavior) and the
+    // composition is reset.
+    if (raw_key.states() & fcitx::KeyState::CapsLock) {
+        if (!config_.caps_lock_inputs_bopomofo) {
+            buffer_.clear();
+            symbol_menu_.close();
+            (void)transition_to(InputState::Empty);
+            prediction_pending_ = false;
+            prediction_dirty_ = false;
+            inflight_request_id_.reset();
+            prediction_segment_indices_.clear();
+            update_ui(input_context);
+            return;
+        }
+    }
+
+    // Shift+space commits the composition followed by a space; with an empty
+    // buffer the key passes through (mirrors McBopomofo's Shift+space).
+    if (key == FcitxKey_space && (raw_key.states() & fcitx::KeyState::Shift)) {
+        if (buffer_.empty()) return;
+        commit_composition_with(input_context, U' ');
+        event.filterAndAccept();
+        return;
+    }
+
     const auto layout = config_.keyboard_layout == "hsu" ? BopomofoKeyboardLayout::Hsu
                                                          : BopomofoKeyboardLayout::Standard;
     const auto chewing_punctuation = chewing_punctuation_for_key(event.key(), layout);
@@ -396,6 +425,21 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
         }
         event.filterAndAccept();
         return;
+    }
+
+    // Letter keys: the keysym case XOR the CapsLock state decides between
+    // English output and bopomofo input, mirroring McBopomofo's case swap.
+    // (CapsLock+letter with Chinese disabled already returned above.)
+    {
+        const bool is_upper = raw_symbol >= U'A' && raw_symbol <= U'Z';
+        const bool is_lower = raw_symbol >= U'a' && raw_symbol <= U'z';
+        if (is_upper || is_lower) {
+            const bool caps_on = static_cast<bool>(raw_key.states() & fcitx::KeyState::CapsLock);
+            if (is_upper != caps_on) {
+                if (handle_english_letter(input_context, raw_symbol, caps_on)) event.filterAndAccept();
+                return;
+            }
+        }
     }
 
     if (const auto index = selection_index_for_key(key); index && candidate_list_active()) {
@@ -702,6 +746,40 @@ void ImeEngine::commit_current(fcitx::InputContext* input_context) {
     prediction_dirty_ = false;
     prediction_segment_indices_.clear();
     update_ui(input_context);
+}
+
+void ImeEngine::commit_composition_with(fcitx::InputContext* input_context, char32_t extra) {
+    StateScope state_scope(*this, input_context);
+    std::u16string text = buffer_.commit_text();
+    if (extra != 0) text.push_back(extra);
+    buffer_.clear();
+    symbol_menu_.close();
+    (void)transition_to(InputState::Empty);
+    prediction_pending_ = false;
+    prediction_dirty_ = false;
+    inflight_request_id_.reset();
+    prediction_segment_indices_.clear();
+    input_context->commitString(to_utf8(text));
+    update_ui(input_context);
+}
+
+bool ImeEngine::handle_english_letter(fcitx::InputContext* input_context, char32_t letter, bool caps_on) {
+    StateScope state_scope(*this, input_context);
+    if (config_.shift_letter_keys == "directly_put_to_buffer") {
+        const char32_t lower = letter >= U'A' && letter <= U'Z' ? letter + (U'a' - U'A') : letter;
+        const char32_t upper = letter >= U'a' && letter <= U'z' ? letter + (U'A' - U'a') : letter;
+        if (!buffer_.add_literal(caps_on ? upper : lower)) return false;
+        (void)transition_to(InputState::Inputting);
+        update_ui(input_context);
+        return true;
+    }
+
+    // DirectlyOutputUppercase: an empty composition passes the key through,
+    // a non-empty composition commits together with the uppercase letter.
+    if (buffer_.empty()) return false;
+    const char32_t upper = letter >= U'a' && letter <= U'z' ? letter + (U'A' - U'a') : letter;
+    commit_composition_with(input_context, upper);
+    return true;
 }
 
 bool ImeEngine::select_candidate(fcitx::InputContext* input_context, int index) {

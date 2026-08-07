@@ -37,6 +37,7 @@ if(Fcitx5_FOUND AND NOT WIN32)
             engine_symbol_menu_tests.cpp
             engine_candidate_navigation_tests.cpp
             engine_punctuation_tests.cpp
+            engine_shift_letter_tests.cpp
         )
 
         add_executable(llavon_ime_engine_tests ${IME_FCITX5_ENGINE_TEST_SOURCES})
