@@ -54,6 +54,27 @@ void engine_test_candidate_navigation_tests(fcitx::Instance* instance) {
         }
         composing.expect_commit(first);
 
+        // McBopomofo clamps candidate targeting at composition boundaries.
+        // With the default before-cursor mode, Down at the leading edge opens
+        // candidates for the first segment instead of leaking to the client.
+        EngineHarness before_boundary(instance);
+        before_boundary.type("su3");
+        before_boundary.key(fcitx::Key(FcitxKey_Left));
+        FCITX_ASSERT(!before_boundary.has_candidates());
+        before_boundary.key(fcitx::Key(FcitxKey_Down));
+        FCITX_ASSERT(before_boundary.has_candidates());
+        before_boundary.expect_commit(before_boundary.candidate(0));
+
+        // The symmetric after-cursor case clamps the trailing edge to the last
+        // segment, so Down still opens a valid candidate list there.
+        EngineHarness after_boundary(instance);
+        after_boundary.set_config("SelectPhrase", "after_cursor");
+        after_boundary.type("su3");
+        FCITX_ASSERT(!after_boundary.has_candidates());
+        after_boundary.key(fcitx::Key(FcitxKey_Down));
+        FCITX_ASSERT(after_boundary.has_candidates());
+        after_boundary.expect_commit(after_boundary.candidate(0));
+
         // Left/Right flip pages with a small page size.
         EngineHarness pager(instance);
         pager.set_config("CandidatePageSize", "3");
