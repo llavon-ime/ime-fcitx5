@@ -169,7 +169,7 @@ bool CompositionBuffer::delete_forward() {
 }
 
 bool CompositionBuffer::move_cursor_left() {
-    if (caret_ == 0) return false;
+    if (caret_ == 0) return true;
     --caret_;
     last_edited_segment_.reset();
     touch();
@@ -177,7 +177,7 @@ bool CompositionBuffer::move_cursor_left() {
 }
 
 bool CompositionBuffer::move_cursor_right() {
-    if (caret_ >= segments_.size()) return false;
+    if (caret_ >= segments_.size()) return true;
     ++caret_;
     last_edited_segment_.reset();
     touch();
