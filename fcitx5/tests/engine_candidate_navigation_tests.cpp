@@ -90,6 +90,52 @@ void engine_test_candidate_navigation_tests(fcitx::Instance* instance) {
         FCITX_ASSERT(cursor_index(pager) == 0);
         pager.expect_commit(pager.candidate(0));
 
+        // Boundary navigation keys are passed through, not consumed: the key
+        // is not accepted and the panel keeps its content (macOS frontend
+        // clears the panel when a key is swallowed without a UI push).
+        EngineHarness boundary(instance);
+        boundary.set_config("CandidatePageSize", "3");
+        boundary.type("su3");
+        boundary.key(fcitx::Key(FcitxKey_space));
+        FCITX_ASSERT(boundary.has_candidates());
+        const std::string boundary_first = boundary.candidate(0);
+        FCITX_ASSERT(!boundary.key_accepted(fcitx::Key(FcitxKey_Left)));
+        FCITX_ASSERT(boundary.has_candidates());
+        FCITX_ASSERT(boundary.candidate(0) == boundary_first);
+        FCITX_ASSERT(cursor_index(boundary) == 0);
+        boundary.key(fcitx::Key(FcitxKey_Escape));
+        FCITX_ASSERT(!boundary.has_candidates());
+        boundary.expect_commit(boundary.preedit());
+
+        // At the last page, further Right presses pass through and must keep
+        // the panel populated.
+        EngineHarness last_page(instance);
+        last_page.set_config("CandidatePageSize", "3");
+        last_page.type("su3");
+        last_page.key(fcitx::Key(FcitxKey_space));
+        for (int i = 0; i < 8; ++i) last_page.key(fcitx::Key(FcitxKey_Right));
+        FCITX_ASSERT(last_page.has_candidates());
+        const std::string last_first = last_page.candidate(0);
+        FCITX_ASSERT(!last_page.key_accepted(fcitx::Key(FcitxKey_Right)));
+        FCITX_ASSERT(!last_page.key_accepted(fcitx::Key(FcitxKey_Right)));
+        FCITX_ASSERT(last_page.has_candidates());
+        FCITX_ASSERT(last_page.candidate(0) == last_first);
+        last_page.key(fcitx::Key(FcitxKey_Escape));
+        last_page.expect_commit(last_page.preedit());
+
+        // At the right boundary of the composition, Right passes through
+        // without disturbing the preedit.
+        EngineHarness right_boundary(instance);
+        right_boundary.type("su3");
+        const std::string end_preedit = right_boundary.preedit();
+        FCITX_ASSERT(!right_boundary.key_accepted(fcitx::Key(FcitxKey_Right)));
+        FCITX_ASSERT(right_boundary.preedit() == end_preedit);
+        FCITX_ASSERT(!right_boundary.key_accepted(fcitx::Key(FcitxKey_Right)));
+        FCITX_ASSERT(right_boundary.preedit() == end_preedit);
+        right_boundary.key(fcitx::Key(FcitxKey_space));
+        FCITX_ASSERT(right_boundary.has_candidates());
+        right_boundary.expect_commit(right_boundary.preedit());
+
         // Tab opens the candidate list; a second Tab expands it, a third collapses.
         EngineHarness tab(instance);
         tab.set_config("CandidatePageSize", "3");
