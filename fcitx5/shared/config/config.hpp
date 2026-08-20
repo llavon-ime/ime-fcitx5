@@ -21,7 +21,9 @@ struct Config {
     std::string select_phrase = "before_cursor";
     bool move_cursor_after_selection = false;
     bool esc_clears_entire_buffer = false;
+    // CapsLock on still inputs bopomofo (MS IME style).
     bool caps_lock_inputs_bopomofo = true;
+    std::string shift_letter_keys = "directly_output_uppercase";
 };
 
 Config default_config();

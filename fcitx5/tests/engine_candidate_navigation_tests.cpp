@@ -41,6 +41,19 @@ void engine_test_candidate_navigation_tests(fcitx::Instance* instance) {
         FCITX_ASSERT(cursor_index(harness) == 0);
         harness.expect_commit(first);
 
+        // Boundary navigation must preserve the composition before the
+        // candidate panel has been opened.
+        EngineHarness composing(instance);
+        composing.type("su3");
+        FCITX_ASSERT(!composing.has_candidates());
+        const std::string composition = composing.preedit();
+        for (int i = 0; i < 3; ++i) {
+            composing.key(fcitx::Key(FcitxKey_Left));
+            FCITX_ASSERT(!composing.has_candidates());
+            FCITX_ASSERT(composing.preedit() == composition);
+        }
+        composing.expect_commit(first);
+
         // Left/Right flip pages with a small page size.
         EngineHarness pager(instance);
         pager.set_config("CandidatePageSize", "3");
@@ -48,6 +61,16 @@ void engine_test_candidate_navigation_tests(fcitx::Instance* instance) {
         pager.key(fcitx::Key(FcitxKey_space));
         FCITX_ASSERT(pager.candidate_count() == 3);
         const std::string first_page = pager.candidate(0);
+
+        // Repeated previous-page requests at the first page must keep the
+        // candidate panel populated.
+        for (int i = 0; i < 3; ++i) {
+            pager.key(fcitx::Key(FcitxKey_Left));
+            FCITX_ASSERT(pager.has_candidates());
+            FCITX_ASSERT(pager.candidate_count() == 3);
+            FCITX_ASSERT(pager.candidate(0) == first_page);
+            FCITX_ASSERT(cursor_index(pager) == 0);
+        }
 
         pager.key(fcitx::Key(FcitxKey_Right));
         FCITX_ASSERT(pager.candidate_count() == 3);

@@ -61,6 +61,14 @@ public:
         key(fcitx::Key(FcitxKey_Return));
     }
 
+    // Pushes a commit expectation, then presses a key that is expected to
+    // commit directly (e.g. Shift+letter English output), without a trailing
+    // Return.
+    void expect_direct_commit(std::string_view text, const fcitx::Key& key) {
+        testfrontend_->call<fcitx::ITestFrontend::pushCommitExpectation>(std::string(text));
+        this->key(key);
+    }
+
     std::string preedit() const {
         return input_context()->inputPanel().preedit().toString();
     }

@@ -46,6 +46,7 @@ int run_config_tests() {
     ok = ok && !cfg.move_cursor_after_selection;
     ok = ok && !cfg.esc_clears_entire_buffer;
     ok = ok && cfg.caps_lock_inputs_bopomofo;
+    ok = ok && cfg.shift_letter_keys == "directly_output_uppercase";
 
     auto json = ime::fcitx5::to_json(cfg);
     auto roundtrip = ime::fcitx5::config_from_json(json);
@@ -54,6 +55,7 @@ int run_config_tests() {
     ok = ok && roundtrip.selection_keys == cfg.selection_keys;
     ok = ok && roundtrip.select_phrase == cfg.select_phrase;
     ok = ok && roundtrip.caps_lock_inputs_bopomofo == cfg.caps_lock_inputs_bopomofo;
+    ok = ok && roundtrip.shift_letter_keys == cfg.shift_letter_keys;
     ok = ok && roundtrip.keyboard_layout == cfg.keyboard_layout;
     ok = ok && ime::fcitx5::socket_path().filename() == "ime.sock";
     ok = ok && ime::fcitx5::pid_path().filename() == "service.pid";
@@ -98,7 +100,8 @@ int run_config_tests() {
                << "SelectPhrase=after_cursor\n"
                << "MoveCursorAfterSelection=True\n"
                << "EscKeyClearsEntireComposingBuffer=True\n"
-               << "CapsLockInputsBopomofo=False\n";
+               << "CapsLockInputsBopomofo=False\n"
+               << "ShiftLetterKeys=直接放入組字區\n";
     }
     const auto loaded = ime::fcitx5::load_config();
     ok = ok && loaded.model_path == "/tmp/model.gguf";
@@ -116,6 +119,7 @@ int run_config_tests() {
     ok = ok && loaded.move_cursor_after_selection;
     ok = ok && loaded.esc_clears_entire_buffer;
     ok = ok && !loaded.caps_lock_inputs_bopomofo;
+    ok = ok && loaded.shift_letter_keys == "directly_put_to_buffer";
 
     {
         std::ofstream output(ime::fcitx5::config_path());
@@ -146,6 +150,14 @@ int run_config_tests() {
     ok = ok && chinese_loaded.select_phrase == "after_cursor";
     ok = ok && chinese_loaded.caps_lock_inputs_bopomofo;
 
+    // Legacy ShiftLetterKeys value aliases normalize to the new name.
+    {
+        std::ofstream output(ime::fcitx5::config_path());
+        output << "ShiftLetterKeys=小寫放入組字區\n";
+    }
+    const auto legacy_shift_keys_loaded = ime::fcitx5::load_config();
+    ok = ok && legacy_shift_keys_loaded.shift_letter_keys == "directly_put_to_buffer";
+
     // Legacy nine-key digit configuration normalizes to Chewing's 1..9,0 order.
     {
         std::ofstream output(ime::fcitx5::config_path());
@@ -171,7 +183,7 @@ int run_config_tests() {
     ok = ok && invalid_layout_loaded.keyboard_layout == ime::fcitx5::default_config().keyboard_layout;
 
     const auto invalid = ime::fcitx5::config_from_json(nlohmann::json::parse(
-        R"({"model_path":"/tmp/valid.gguf","keyboard_layout":"diagonal","selection_keys":"bad","selection_key_count":99,"candidate_page_size":0,"candidate_layout":"diagonal","space_selects_candidate":"yes","select_phrase":"near_cursor","move_cursor_after_selection":true})"));
+        R"({"model_path":"/tmp/valid.gguf","keyboard_layout":"diagonal","selection_keys":"bad","selection_key_count":99,"candidate_page_size":0,"candidate_layout":"diagonal","space_selects_candidate":"yes","select_phrase":"near_cursor","move_cursor_after_selection":true,"shift_letter_keys":"diagonal"})"));
     ok = ok && invalid.model_path == "/tmp/valid.gguf";
     ok = ok && invalid.keyboard_layout == ime::fcitx5::default_config().keyboard_layout;
     ok = ok && invalid.selection_keys == ime::fcitx5::default_config().selection_keys;
@@ -182,6 +194,7 @@ int run_config_tests() {
     ok = ok && invalid.select_phrase == ime::fcitx5::default_config().select_phrase;
     ok = ok && invalid.move_cursor_after_selection;
     ok = ok && invalid.caps_lock_inputs_bopomofo == ime::fcitx5::default_config().caps_lock_inputs_bopomofo;
+    ok = ok && invalid.shift_letter_keys == ime::fcitx5::default_config().shift_letter_keys;
 
     std::filesystem::remove(ime::fcitx5::config_path());
     std::filesystem::create_directories(ime::fcitx5::legacy_config_path().parent_path());
