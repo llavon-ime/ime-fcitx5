@@ -72,6 +72,7 @@ jobs:
           set -euo pipefail
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             version="${{ inputs.version }}"
+            version="${version#v}"
             tag="v${version}"
           else
             tag="${GITHUB_REF_NAME}"
