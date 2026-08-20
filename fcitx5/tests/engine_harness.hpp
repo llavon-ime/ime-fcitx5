@@ -48,6 +48,13 @@ public:
         testfrontend_->call<fcitx::ITestFrontend::sendKeyEvent>(uuid_, key, false);
     }
 
+    // Sends a key event and reports whether the engine accepted it. Boundary
+    // navigation keys are deliberately passed through (not accepted) so the
+    // macOS frontend keeps the panel/preedit untouched.
+    bool key_accepted(const fcitx::Key& key) {
+        return testfrontend_->call<fcitx::ITestFrontend::sendKeyEvent>(uuid_, key, false);
+    }
+
     // Types a sequence of printable characters.
     void type(std::string_view text) {
         for (const char ch : text) {

@@ -369,14 +369,14 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
         }
 
         if (key == FcitxKey_Left) {
-            (void)page_candidates(-1, true);
+            if (!page_candidates(-1, true)) return;
             update_ui(input_context);
             event.filterAndAccept();
             return;
         }
 
         if (key == FcitxKey_Right) {
-            (void)page_candidates(1, true);
+            if (!page_candidates(1, true)) return;
             update_ui(input_context);
             event.filterAndAccept();
             return;
@@ -514,18 +514,16 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
     }
 
     if (key == FcitxKey_Left && !buffer_.empty()) {
-        if (buffer_.move_cursor_left()) {
-            (void)transition_to(InputState::Inputting);
-        }
+        if (!buffer_.move_cursor_left()) return;
+        (void)transition_to(InputState::Inputting);
         update_ui(input_context);
         event.filterAndAccept();
         return;
     }
 
     if (key == FcitxKey_Right && !buffer_.empty()) {
-        if (buffer_.move_cursor_right()) {
-            (void)transition_to(InputState::Inputting);
-        }
+        if (!buffer_.move_cursor_right()) return;
+        (void)transition_to(InputState::Inputting);
         update_ui(input_context);
         event.filterAndAccept();
         return;
@@ -853,8 +851,7 @@ void ImeEngine::handle_symbol_menu_key(fcitx::InputContext* input_context, fcitx
         return;
     }
     if (key == FcitxKey_Left || key == FcitxKey_Right) {
-        (void)page_candidates(key == FcitxKey_Left ? -1 : 1, true);
-        update_ui(input_context);
+        if (page_candidates(key == FcitxKey_Left ? -1 : 1, true)) update_ui(input_context);
         return;
     }
     if (key == FcitxKey_Home || key == FcitxKey_End) {
