@@ -7,8 +7,22 @@ submodule for model loading, tokenization, and llama.cpp inference.
 
 ## Linux Build
 
-Install CMake, pkg-config, fcitx5 development files, and initialize
-submodules:
+Install CMake, pkg-config, and fcitx5 development files first.
+
+To bootstrap dependencies, build and test the Unix service and Fcitx5 addon,
+and install them in one command:
+
+```bash
+./scripts/build-linux.sh
+```
+
+The script also downloads the default GGUF model from Hugging Face into
+`models/`, then installs it under `/usr/share/llavon-ime/models/`. Existing
+non-empty model files are reused. The installation commands use `sudo` when
+the script is not run as root. Set `IME_FCITX5_MODEL_URL` to use a mirror or
+`IME_FCITX5_MODEL_DIR` to change the download directory.
+
+The equivalent manual steps are:
 
 ```bash
 git clone --recurse-submodules https://github.com/llavon-ime/ime-fcitx5.git
