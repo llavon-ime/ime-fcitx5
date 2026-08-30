@@ -1,5 +1,6 @@
 #pragma once
 
+#include "fcitx5/input_context_property.hpp"
 #include "testdir.h"
 
 #include <fcitx-utils/eventdispatcher.h>
@@ -120,6 +121,22 @@ public:
 
     fcitx::InputContext* input_context() const {
         return instance_->inputContextManager().findByUUID(uuid_);
+    }
+
+    // Simulates the client pushing surrounding text to fcitx5. `cursor` and
+    // `anchor` are character offsets into the text (fcitx5 counts in
+    // characters, so ASCII text is 1:1).
+    void set_surrounding(std::string_view text, size_t cursor, size_t anchor) {
+        auto* context = input_context();
+        context->surroundingText().setText(std::string(text), static_cast<unsigned int>(cursor),
+                                           static_cast<unsigned int>(anchor));
+        context->updateSurroundingText();
+    }
+
+    // The per-input-context engine state registered by the addon.
+    ime::fcitx5::ImeInputContextProperty* engine_state() const {
+        return static_cast<ime::fcitx5::ImeInputContextProperty*>(
+            input_context()->property("llavon-ime-input-state"));
     }
 
     fcitx::Instance* instance() const { return instance_; }

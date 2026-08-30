@@ -110,6 +110,9 @@ Config to_shared_config(const ImeFcitxConfig& config) {
     shared.caps_lock_inputs_bopomofo = *config.capsLockInputsBopomofo;
     shared.shift_letter_keys = to_string(*config.shiftLetterKeys);
     shared.smart_english = *config.smartEnglish;
+    shared.context_history_limit = *config.contextHistoryLimit;
+    shared.reset_context_on_focus_out = *config.resetContextOnFocusOut;
+    shared.track_context_backspace = *config.trackContextBackspace;
     return shared;
 }
 
@@ -132,6 +135,9 @@ void apply_shared_config(ImeFcitxConfig& target, const Config& source) {
     (void)target.capsLockInputsBopomofo.setValue(source.caps_lock_inputs_bopomofo);
     (void)target.shiftLetterKeys.setValue(shift_letter_keys_from_string(source.shift_letter_keys));
     (void)target.smartEnglish.setValue(source.smart_english);
+    (void)target.contextHistoryLimit.setValue(source.context_history_limit);
+    (void)target.resetContextOnFocusOut.setValue(source.reset_context_on_focus_out);
+    (void)target.trackContextBackspace.setValue(source.track_context_backspace);
 }
 
 }  // namespace ime::fcitx5

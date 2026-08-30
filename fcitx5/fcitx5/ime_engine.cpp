@@ -33,10 +33,6 @@ const char* non_empty_env(const char* name) {
     return nullptr;
 }
 
-std::string to_utf8(char32_t value) {
-    return char32_to_utf8(value);
-}
-
 std::string to_utf8(const std::u16string& value) {
     return u16_to_utf8(value);
 }
@@ -268,6 +264,7 @@ void ImeEngine::enter_context(fcitx::InputContext* input_context) {
     symbol_menu_ = state->symbol_menu;
     pending_token_ = state->pending_token;
     mixed_decision_ = state->mixed_decision;
+    context_cache_ = state->context_cache;
     session_id_ = state->session_id;
     next_request_id_ = state->next_request_id;
     generation_ = state->generation;
@@ -294,6 +291,7 @@ void ImeEngine::leave_context() {
         state->symbol_menu = symbol_menu_;
         state->pending_token = pending_token_;
         state->mixed_decision = mixed_decision_;
+        state->context_cache = context_cache_;
         state->session_id = session_id_;
         state->next_request_id = next_request_id_;
         state->generation = generation_;
@@ -670,7 +668,9 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
             return;
         }
         if (buffer_.empty()) {
-            input_context->commitString(to_utf8(static_cast<char32_t>(key)));
+            const std::u16string digit(1, static_cast<char16_t>(key));
+            input_context->commitString(to_utf8(digit));
+            record_context_commit(digit);
         } else {
             (void)buffer_.add_literal(static_cast<char32_t>(key));
             (void)transition_to(InputState::Inputting);
@@ -713,6 +713,13 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
         update_ui(input_context);
         event.filterAndAccept();
         return;
+    }
+
+    // Backspace outside the composition is forwarded to the client (which
+    // deletes its own text). When enabled, pop the cache so the recorded
+    // history does not drift from the document.
+    if (key == FcitxKey_BackSpace && composition_empty() && config_.track_context_backspace) {
+        context_cache_.on_backspace(1);
     }
 
     if (key == FcitxKey_Delete && !buffer_.empty()) {
@@ -811,12 +818,14 @@ void ImeEngine::reset(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& 
         auto text = buffer_.candidate_commit_text();
         text += pending_rendered_text();
         if (!text.empty()) event.inputContext()->commitString(to_utf8(text));
+        record_context_commit(text);
     }
 
     buffer_.clear();
     pending_token_.clear();
     mixed_decision_.clear();
     symbol_menu_.close();
+    if (focus_out && config_.reset_context_on_focus_out) context_cache_.clear();
     (void)transition_to(InputState::Empty);
     ++generation_;
     prediction_pending_ = false;
@@ -976,11 +985,18 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
     input_context->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
 }
 
+void ImeEngine::record_context_commit(const std::u16string& text) {
+    if (config_.context_history_limit > 0 && !text.empty()) {
+        context_cache_.on_commit(text);
+    }
+}
+
 void ImeEngine::commit_current(fcitx::InputContext* input_context) {
     StateScope state_scope(*this, input_context);
     auto text = buffer_.commit_text();
     text += pending_rendered_text();
     input_context->commitString(to_utf8(text));
+    record_context_commit(text);
     buffer_.clear();
     pending_token_.clear();
     mixed_decision_.clear();
@@ -1007,6 +1023,7 @@ void ImeEngine::commit_composition_with(fcitx::InputContext* input_context, char
     inflight_request_id_.reset();
     prediction_segment_indices_.clear();
     input_context->commitString(to_utf8(text));
+    record_context_commit(text);
     update_ui(input_context);
 }
 
@@ -1254,6 +1271,7 @@ bool ImeEngine::commit_mixed_candidate(fcitx::InputContext* input_context, int i
     text += entries[static_cast<size_t>(index)].text;
     if (index == 0 && mixed_decision_.english_boundary) text.push_back(u' ');
     input_context->commitString(to_utf8(text));
+    record_context_commit(text);
     buffer_.clear();
     pending_token_.clear();
     mixed_decision_.clear();
@@ -1658,6 +1676,7 @@ void ImeEngine::request_prediction_if_ready(fcitx::InputContext* input_context) 
         prediction_dirty_ = true;
         return;
     }
+    resync_context_cache(input_context);
     const auto request = build_predict_request(input_context);
     if (request.padding.empty()) return;
     prediction_segment_indices_ = buffer_.completed_segment_indices();
@@ -1706,6 +1725,28 @@ void ImeEngine::request_prediction_if_ready(fcitx::InputContext* input_context) 
     }
 }
 
+void ImeEngine::resync_context_cache(const fcitx::InputContext* input_context) {
+    if (input_context == nullptr ||
+        input_context->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
+        return;
+    }
+
+    const auto& surrounding = input_context->surroundingText();
+    if (!surrounding.isValid()) return;
+
+    try {
+        auto text = utf8_to_u32(surrounding.text());
+        const size_t cursor = std::min<size_t>({surrounding.cursor(), surrounding.anchor(), text.size()});
+        text.resize(cursor);
+
+        std::u16string context_utf16;
+        for (const char32_t codepoint : text) context_utf16 += to_utf16(codepoint);
+        context_cache_.on_surrounding(std::move(context_utf16), context_utf16.size());
+    } catch (const std::runtime_error&) {
+        // Ignore malformed surrounding text supplied by a client.
+    }
+}
+
 protocol::PredictRequest ImeEngine::build_predict_request(const fcitx::InputContext* input_context) const {
     protocol::PredictRequest request;
     request.session_id = session_id_;
@@ -1727,31 +1768,17 @@ protocol::PredictRequest ImeEngine::build_predict_request(const fcitx::InputCont
         return request;
     }
 
-    const auto& surrounding = input_context->surroundingText();
-    if (!surrounding.isValid()) return request;
-
-    try {
-        auto text = utf8_to_u32(surrounding.text());
-        const size_t cursor = std::min<size_t>({surrounding.cursor(), surrounding.anchor(), text.size()});
-        text.resize(cursor);
-
-        const size_t reserved_tokens = 2 + request.padding.size() * 2;
-        const size_t context_limit = config_.context_length > static_cast<int>(reserved_tokens)
-                                         ? static_cast<size_t>(config_.context_length) - reserved_tokens
-                                         : 0;
-        if (text.size() > context_limit) text.erase(0, text.size() - context_limit);
-
-        std::string context_utf8;
-        for (const char32_t codepoint : text) context_utf8 += char32_to_utf8(codepoint);
-        request.context = utf8_to_u16(context_utf8);
-    } catch (const std::runtime_error&) {
-        // Ignore malformed surrounding text supplied by a client.
-    }
+    const size_t reserved_tokens = 2 + request.padding.size() * 2;
+    const size_t context_limit = config_.context_length > static_cast<int>(reserved_tokens)
+                                     ? static_cast<size_t>(config_.context_length) - reserved_tokens
+                                     : 0;
+    request.context = context_cache_.window(context_limit);
     return request;
 }
 
 void ImeEngine::send_prediction(fcitx::InputContext* input_context, std::uint64_t generation) {
     if (generation_ != generation || !prediction_pending_ || protocol::is_zero(session_id_)) return;
+    resync_context_cache(input_context);
     auto request = build_predict_request(input_context);
     request.request_id = next_request_id_++;
     request.buffer_revision = prediction_revision_;

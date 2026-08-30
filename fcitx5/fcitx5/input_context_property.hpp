@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "buffer/composition_buffer.hpp"
+#include "context/context_cache.hpp"
 #include "input/input_state.hpp"
 #include "input/mixed_input_decoder.hpp"
 #include "input/pending_token.hpp"
@@ -58,6 +59,7 @@ public:
     SymbolMenuState symbol_menu;
     PendingInput pending_token;
     MixedDecisionState mixed_decision;
+    ContextCache context_cache;
 
     protocol::SessionId session_id{};
     std::uint64_t next_request_id = 1;

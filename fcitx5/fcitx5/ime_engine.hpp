@@ -91,6 +91,8 @@ private:
     bool set_candidate_cursor(int index);
     bool candidate_list_active() const;
     bool composition_empty() const;
+    void record_context_commit(const std::u16string& text);
+    void resync_context_cache(const fcitx::InputContext* input_context);
     void mark_prediction_dirty();
     void apply_fallback_candidates(size_t segment_index);
     void request_prediction_if_ready(fcitx::InputContext* input_context);
@@ -127,6 +129,7 @@ private:
     SymbolMenuState symbol_menu_;
     PendingInput pending_token_;
     MixedDecisionState mixed_decision_;
+    ContextCache context_cache_;
 
     protocol::SessionId session_id_{};
     std::uint64_t next_request_id_ = 1;

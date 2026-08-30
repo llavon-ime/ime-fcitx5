@@ -70,7 +70,14 @@ FCITX_CONFIGURATION(ImeFcitxConfig,
                                                default_config().caps_lock_inputs_bopomofo};
     fcitx::Option<ShiftLetterKeys> shiftLetterKeys{this, "ShiftLetterKeys", "Shift 鍵輸入英文",
                                                     ShiftLetterKeys::DirectlyOutputUppercase};
-    fcitx::Option<bool> smartEnglish{this, "SmartEnglish", "智慧型中英文", default_config().smart_english};);
+    fcitx::Option<bool> smartEnglish{this, "SmartEnglish", "智慧型中英文", default_config().smart_english};
+    fcitx::Option<int, fcitx::IntConstrain> contextHistoryLimit{this, "ContextHistoryLimit", "上下文歷史長度",
+                                                                 default_config().context_history_limit,
+                                                                 fcitx::IntConstrain(0, 1048576)};
+    fcitx::Option<bool> resetContextOnFocusOut{this, "ResetContextOnFocusOut", "失焦時清除上下文",
+                                               default_config().reset_context_on_focus_out};
+    fcitx::Option<bool> trackContextBackspace{this, "TrackContextBackspace", "追蹤刪除鍵以更新上下文",
+                                              default_config().track_context_backspace};);
 
 Config to_shared_config(const ImeFcitxConfig& config);
 void apply_shared_config(ImeFcitxConfig& target, const Config& source);

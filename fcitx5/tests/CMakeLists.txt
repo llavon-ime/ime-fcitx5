@@ -9,6 +9,7 @@ set(IME_FCITX5_TEST_SOURCES
     input_state_tests.cpp
     symbol_menu_tests.cpp
     ascii_tokenizer_tests.cpp
+    context_cache_tests.cpp
     fallback_engine_tests.cpp
     mixed_input_decoder_tests.cpp
 )
@@ -41,6 +42,7 @@ if(Fcitx5_FOUND AND NOT WIN32)
             engine_candidate_navigation_tests.cpp
             engine_punctuation_tests.cpp
             engine_shift_letter_tests.cpp
+            engine_context_cache_tests.cpp
             engine_async_state_tests.cpp
             engine_smart_candidate_tests.cpp
             engine_smart_chat_tests.cpp

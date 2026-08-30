@@ -265,6 +265,9 @@ Config config_from_fcitx_ini(const std::filesystem::path& path) {
         cfg.shift_letter_keys = shift_letter_keys_from_config(it->second, cfg.shift_letter_keys);
     }
     cfg.smart_english = ini_bool_field(fields, "SmartEnglish", cfg.smart_english);
+    cfg.context_history_limit = ini_int_field(fields, "ContextHistoryLimit", cfg.context_history_limit, 0, 1048576);
+    cfg.reset_context_on_focus_out = ini_bool_field(fields, "ResetContextOnFocusOut", cfg.reset_context_on_focus_out);
+    cfg.track_context_backspace = ini_bool_field(fields, "TrackContextBackspace", cfg.track_context_backspace);
     return cfg;
 }
 
@@ -368,6 +371,9 @@ nlohmann::json to_json(const Config& cfg) {
         {"caps_lock_inputs_bopomofo", cfg.caps_lock_inputs_bopomofo},
         {"shift_letter_keys", cfg.shift_letter_keys},
         {"smart_english", cfg.smart_english},
+        {"context_history_limit", cfg.context_history_limit},
+        {"reset_context_on_focus_out", cfg.reset_context_on_focus_out},
+        {"track_context_backspace", cfg.track_context_backspace},
     };
 }
 
@@ -397,6 +403,9 @@ Config config_from_json(const nlohmann::json& json) {
     cfg.shift_letter_keys = shift_letter_keys_from_config(
         string_field(json, "shift_letter_keys", cfg.shift_letter_keys), cfg.shift_letter_keys);
     cfg.smart_english = bool_field(json, "smart_english", cfg.smart_english);
+    cfg.context_history_limit = int_field(json, "context_history_limit", cfg.context_history_limit, 0, 1048576);
+    cfg.reset_context_on_focus_out = bool_field(json, "reset_context_on_focus_out", cfg.reset_context_on_focus_out);
+    cfg.track_context_backspace = bool_field(json, "track_context_backspace", cfg.track_context_backspace);
     return cfg;
 }
 

@@ -27,6 +27,16 @@ struct Config {
     // Smart Chinese-English: lowercase letters are held raw as a pending word
     // until a tone key or space decides whether they were 注音 or English.
     bool smart_english = false;
+    // How much committed text the engine remembers for prediction context.
+    // 0 disables the self-managed cache; the model only sees surrounding text
+    // the client supplies.
+    int context_history_limit = 1024;
+    // When the input context loses focus the cache is cleared so text from
+    // one field never leaks into the next.
+    bool reset_context_on_focus_out = true;
+    // Heuristically pop the cache when the user presses Backspace outside the
+    // composition (the client may not reflect the deletion back to us).
+    bool track_context_backspace = false;
 };
 
 Config default_config();
