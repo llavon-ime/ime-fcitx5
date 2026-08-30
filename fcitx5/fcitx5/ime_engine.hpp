@@ -16,6 +16,8 @@
 #include "fcitx5/ime_config.hpp"
 #include "fcitx5/input_context_property.hpp"
 #include "input/input_state.hpp"
+#include "input/mixed_input_decoder.hpp"
+#include "input/pending_token.hpp"
 #include "symbol/symbol_menu.hpp"
 
 namespace fcitx {
@@ -59,6 +61,20 @@ private:
     void commit_current(fcitx::InputContext* input_context);
     bool handle_english_letter(fcitx::InputContext* input_context, char32_t letter, bool caps_on);
     void commit_composition_with(fcitx::InputContext* input_context, char32_t extra);
+    std::u16string pending_rendered_text() const;
+    void append_pending_char(char32_t key, BopomofoKeyboardLayout layout);
+    void settle_pending_as_literals();
+    bool settle_pending_preview(fcitx::InputContext* input_context);
+    bool pending_prefers_raw() const;
+    bool is_smart_tone_key(char32_t key, BopomofoKeyboardLayout layout) const;
+    bool is_smart_start_char(char32_t key, BopomofoKeyboardLayout layout) const;
+    void rerun_pending_decision(fcitx::InputContext* input_context, bool space_triggered);
+    void set_mixed_preview(fcitx::InputContext* input_context, MixedDecodeResult result,
+                           size_t preview_path, bool english_boundary);
+    bool show_mixed_candidates(fcitx::InputContext* input_context);
+    bool commit_mixed_candidate(fcitx::InputContext* input_context, int index);
+    bool select_mixed_candidate(fcitx::InputContext* input_context, int index);
+    bool apply_mixed_path(fcitx::InputContext* input_context, const MixedPath& path, size_t char_index);
     bool select_candidate(fcitx::InputContext* input_context, int index);
     void open_symbol_menu(fcitx::InputContext* input_context);
     void close_symbol_menu(fcitx::InputContext* input_context);
@@ -74,6 +90,7 @@ private:
     bool move_candidate_cursor_in_page(int delta);
     bool set_candidate_cursor(int index);
     bool candidate_list_active() const;
+    bool composition_empty() const;
     void mark_prediction_dirty();
     void apply_fallback_candidates(size_t segment_index);
     void request_prediction_if_ready(fcitx::InputContext* input_context);
@@ -90,6 +107,7 @@ private:
 
     CompositionBuffer buffer_;
     FallbackEngine fallback_;
+    MixedInputDecoder decoder_;
     ServiceTransport service_transport_;
     ImeFcitxConfig fcitx_config_;
     Config config_;
@@ -101,12 +119,14 @@ private:
     std::u16string prediction_key_;
     size_t prediction_revision_ = 0;
     std::vector<size_t> prediction_segment_indices_;
-    std::vector<char32_t> displayed_candidates_;
+    std::vector<std::u16string> displayed_candidates_;
     int candidate_page_ = 0;
     int candidate_cursor_ = 0;
     bool candidate_expanded_ = false;
     InputState input_state_ = InputState::Empty;
     SymbolMenuState symbol_menu_;
+    PendingInput pending_token_;
+    MixedDecisionState mixed_decision_;
 
     protocol::SessionId session_id_{};
     std::uint64_t next_request_id_ = 1;

@@ -215,7 +215,7 @@ bool CompositionBuffer::delete_forward() {
 }
 
 bool CompositionBuffer::move_cursor_left() {
-    if (caret_ == 0) return true;
+    if (caret_ == 0) return false;
     --caret_;
     last_edited_segment_.reset();
     touch();
@@ -223,7 +223,7 @@ bool CompositionBuffer::move_cursor_left() {
 }
 
 bool CompositionBuffer::move_cursor_right() {
-    if (caret_ >= segments_.size()) return true;
+    if (caret_ >= segments_.size()) return false;
     ++caret_;
     last_edited_segment_.reset();
     touch();
@@ -299,19 +299,15 @@ std::u16string CompositionBuffer::candidate_commit_text() const {
 std::optional<size_t> CompositionBuffer::candidate_target(CandidateTarget target) const {
     if (segments_.empty()) return std::nullopt;
 
-    size_t index = 0;
     if (target == CandidateTarget::BeforeCursor) {
-        // Match McBopomofo's actualCandidateCursorIndex(): at the leading
-        // boundary there is no segment before the caret, so candidate
-        // selection clamps to the first segment instead of disappearing.
-        index = caret_ == 0 ? 0 : caret_ - 1;
-    } else {
-        // Likewise, after-cursor selection at the trailing boundary clamps to
-        // the final segment.
-        index = caret_ >= segments_.size() ? segments_.size() - 1 : caret_;
+        if (caret_ == 0) return std::nullopt;
+        const size_t index = caret_ - 1;
+        if (segments_[index].complete()) return index;
+        return std::nullopt;
     }
 
-    if (index < segments_.size() && segments_[index].complete()) return index;
+    if (caret_ >= segments_.size()) return std::nullopt;
+    if (segments_[caret_].complete()) return caret_;
     return std::nullopt;
 }
 
@@ -321,6 +317,10 @@ std::optional<size_t> CompositionBuffer::last_edited_segment() const noexcept {
 
 size_t CompositionBuffer::caret() const noexcept {
     return caret_;
+}
+
+bool CompositionBuffer::caret_at_end() const noexcept {
+    return caret_ == segments_.size();
 }
 
 size_t CompositionBuffer::revision() const noexcept {

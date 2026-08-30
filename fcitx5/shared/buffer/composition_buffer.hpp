@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "bopomofo/keymap.hpp"
@@ -36,8 +37,6 @@ struct Segment {
 struct BopomofoInputResult {
     size_t segment_index = 0;
     bool completed = false;
-    // True when the key extended the active syllable rather than completing
-    // or modifying it in a way that would invalidate a longer replay.
     bool natural_extension = false;
 };
 
@@ -48,9 +47,6 @@ public:
         char32_t key,
         BopomofoKeyboardLayout layout,
         bool accept_uppercase = true);
-    // Feeds a syllable body followed by a tone key in one shot. Returns
-    // std::nullopt (leaving the buffer untouched) unless every body key
-    // extends the active syllable naturally and the tone key completes it.
     std::optional<BopomofoInputResult> add_bopomofo_keys(
         std::u16string_view keys,
         char32_t tone_key,
@@ -75,6 +71,7 @@ public:
     std::optional<size_t> candidate_target(CandidateTarget target) const;
     std::optional<size_t> last_edited_segment() const noexcept;
     size_t caret() const noexcept;
+    bool caret_at_end() const noexcept;
     size_t revision() const noexcept;
     const std::vector<Segment>& segments() const noexcept;
     std::vector<size_t> completed_segment_indices() const;
