@@ -15,8 +15,10 @@
 
 #include <testfrontend_public.h>
 
+#include <initializer_list>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace ime::fcitx5::test {
 
@@ -25,6 +27,13 @@ namespace ime::fcitx5::test {
 class EngineHarness {
 public:
     explicit EngineHarness(fcitx::Instance* instance) : instance_(instance) { setup(); }
+
+    // Destroys the input context shortly after; resetting first clears any
+    // leftover composition so the engine's focus-out switch does not commit it
+    // unexpectedly (each scenario must still commit or clear its own text).
+    ~EngineHarness() {
+        if (auto* context = input_context()) context->reset();
+    }
 
     // Switches the input context to llavon-ime (trigger key cycles the group).
     void activate() {
@@ -35,17 +44,31 @@ public:
         }
     }
 
-    // Applies an addon config value by path, e.g. set_config("BopomofoKeyboardLayout", "許氏").
-    void set_config(const std::string& path, const std::string& value) {
+    // Applies addon config values together. Addon setConfig() treats a partial
+    // RawConfig as a replacement, so start from the complete current config.
+    void set_configs(std::initializer_list<std::pair<std::string, std::string>> values) {
         auto* addon = instance_->addonManager().addon("llavon-ime");
         fcitx::RawConfig config;
-        config.setValueByPath(path, value);
+        if (const auto* current = addon->getConfig()) current->save(config);
+        for (const auto& [path, value] : values) config.setValueByPath(path, value);
         addon->setConfig(config);
+    }
+
+    // Applies an addon config value by path, e.g. set_config("BopomofoKeyboardLayout", "許氏").
+    void set_config(const std::string& path, const std::string& value) {
+        set_configs({{path, value}});
     }
 
     // Sends a single key event (press).
     void key(const fcitx::Key& key) {
         testfrontend_->call<fcitx::ITestFrontend::sendKeyEvent>(uuid_, key, false);
+    }
+
+    // Sends a key event and reports whether the engine accepted it. Boundary
+    // navigation keys are deliberately passed through (not accepted) so the
+    // macOS frontend keeps the panel/preedit untouched.
+    bool key_accepted(const fcitx::Key& key) {
+        return testfrontend_->call<fcitx::ITestFrontend::sendKeyEvent>(uuid_, key, false);
     }
 
     // Types a sequence of printable characters.
@@ -67,6 +90,11 @@ public:
     void expect_direct_commit(std::string_view text, const fcitx::Key& key) {
         testfrontend_->call<fcitx::ITestFrontend::pushCommitExpectation>(std::string(text));
         this->key(key);
+    }
+
+    void expect_focus_out_commit(std::string_view text) {
+        testfrontend_->call<fcitx::ITestFrontend::pushCommitExpectation>(std::string(text));
+        input_context()->focusOut();
     }
 
     std::string preedit() const {

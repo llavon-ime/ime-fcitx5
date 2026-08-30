@@ -24,6 +24,9 @@ struct Config {
     // CapsLock on still inputs bopomofo (MS IME style).
     bool caps_lock_inputs_bopomofo = true;
     std::string shift_letter_keys = "directly_output_uppercase";
+    // Smart Chinese-English: lowercase letters are held raw as a pending word
+    // until a tone key or space decides whether they were 注音 or English.
+    bool smart_english = false;
 };
 
 Config default_config();

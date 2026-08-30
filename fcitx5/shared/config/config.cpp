@@ -264,6 +264,7 @@ Config config_from_fcitx_ini(const std::filesystem::path& path) {
     if (const auto it = fields.find("ShiftLetterKeys"); it != fields.end()) {
         cfg.shift_letter_keys = shift_letter_keys_from_config(it->second, cfg.shift_letter_keys);
     }
+    cfg.smart_english = ini_bool_field(fields, "SmartEnglish", cfg.smart_english);
     return cfg;
 }
 
@@ -366,6 +367,7 @@ nlohmann::json to_json(const Config& cfg) {
         {"esc_clears_entire_buffer", cfg.esc_clears_entire_buffer},
         {"caps_lock_inputs_bopomofo", cfg.caps_lock_inputs_bopomofo},
         {"shift_letter_keys", cfg.shift_letter_keys},
+        {"smart_english", cfg.smart_english},
     };
 }
 
@@ -394,6 +396,7 @@ Config config_from_json(const nlohmann::json& json) {
     cfg.caps_lock_inputs_bopomofo = bool_field(json, "caps_lock_inputs_bopomofo", cfg.caps_lock_inputs_bopomofo);
     cfg.shift_letter_keys = shift_letter_keys_from_config(
         string_field(json, "shift_letter_keys", cfg.shift_letter_keys), cfg.shift_letter_keys);
+    cfg.smart_english = bool_field(json, "smart_english", cfg.smart_english);
     return cfg;
 }
 

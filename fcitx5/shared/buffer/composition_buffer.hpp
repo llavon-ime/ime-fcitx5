@@ -36,6 +36,9 @@ struct Segment {
 struct BopomofoInputResult {
     size_t segment_index = 0;
     bool completed = false;
+    // True when the key extended the active syllable rather than completing
+    // or modifying it in a way that would invalidate a longer replay.
+    bool natural_extension = false;
 };
 
 class CompositionBuffer {
@@ -45,6 +48,14 @@ public:
         char32_t key,
         BopomofoKeyboardLayout layout,
         bool accept_uppercase = true);
+    // Feeds a syllable body followed by a tone key in one shot. Returns
+    // std::nullopt (leaving the buffer untouched) unless every body key
+    // extends the active syllable naturally and the tone key completes it.
+    std::optional<BopomofoInputResult> add_bopomofo_keys(
+        std::u16string_view keys,
+        char32_t tone_key,
+        BopomofoKeyboardLayout layout,
+        bool strict);
     bool add_literal(char32_t symbol);
     bool backspace();
     bool delete_forward();

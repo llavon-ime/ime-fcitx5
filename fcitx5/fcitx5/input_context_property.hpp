@@ -14,6 +14,12 @@
 
 namespace ime::fcitx5 {
 
+inline bool prediction_change_requires_request(bool prediction_pending, bool& prediction_dirty) noexcept {
+    if (!prediction_pending) return true;
+    prediction_dirty = true;
+    return false;
+}
+
 class ImeInputContextProperty final : public fcitx::InputContextProperty {
 public:
     ~ImeInputContextProperty() override {
@@ -34,6 +40,7 @@ public:
     std::optional<std::uint64_t> inflight_request_id;
     std::uint64_t inflight_revision = 0;
     std::u16string prediction_key;
+    std::size_t prediction_revision = 0;
     std::vector<std::size_t> inflight_segment_indices;
     bool prediction_pending = false;
     bool prediction_dirty = false;
