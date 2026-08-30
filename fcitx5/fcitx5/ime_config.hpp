@@ -76,8 +76,8 @@ FCITX_CONFIGURATION(ImeFcitxConfig,
                                                                  fcitx::IntConstrain(0, 1048576)};
     fcitx::Option<bool> resetContextOnFocusOut{this, "ResetContextOnFocusOut", "失焦時清除上下文",
                                                default_config().reset_context_on_focus_out};
-    fcitx::Option<bool> trackContextBackspace{this, "TrackContextBackspace", "追蹤刪除鍵以更新上下文",
-                                              default_config().track_context_backspace};);
+    fcitx::Option<bool> contextEditTracking{this, "ContextEditTracking", "追蹤編輯以更新上下文",
+                                             default_config().context_edit_tracking};);
 
 Config to_shared_config(const ImeFcitxConfig& config);
 void apply_shared_config(ImeFcitxConfig& target, const Config& source);

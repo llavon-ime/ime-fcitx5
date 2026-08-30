@@ -114,6 +114,41 @@ bool test_utf16_surrogate_handling() {
     return ok;
 }
 
+bool test_retention_cap() {
+    ContextCache cache(4);
+    cache.on_commit(utf16("abcd"));
+    bool ok = check(cache.window(100) == utf16("abcd"), "history up to the cap is kept whole");
+    cache.on_commit(utf16("ef"));
+    ok &= check(cache.window(100) == utf16("cdef"), "commits beyond the cap drop the oldest first");
+    ok &= check(cache.window(2) == utf16("ef"), "window() still trims independently of the cap");
+    return ok;
+}
+
+bool test_retention_cap_zero_disables() {
+    ContextCache cache(0);
+    cache.on_commit(utf16("abc"));
+    return check(!cache.valid() && cache.window(10).empty(), "zero cap records nothing");
+}
+
+bool test_retention_cap_resync_respects() {
+    // Surrounding text adoption is also bounded by the cap.
+    ContextCache cache(4);
+    cache.on_commit(utf16("x"));
+    cache.on_surrounding(utf16("hello world"), 5);
+    return check(cache.window(100) == utf16("ello"), "resynced history is capped too");
+}
+
+bool test_retention_cap_set_limit() {
+    ContextCache cache;
+    cache.on_commit(utf16("abcdef"));
+    cache.set_limit(3);
+    bool ok = check(cache.window(100) == utf16("def"), "set_limit trims existing history");
+    cache.set_limit(10);
+    cache.on_commit(utf16("ghi"));
+    ok &= check(cache.window(100) == utf16("defghi"), "growing the limit allows more history");
+    return ok;
+}
+
 }  // namespace
 
 }  // namespace ime::fcitx5
@@ -132,6 +167,10 @@ int run_context_cache_tests() {
     ok &= test_backspace_beyond_length_clears();
     ok &= test_clear();
     ok &= test_utf16_surrogate_handling();
+    ok &= test_retention_cap();
+    ok &= test_retention_cap_zero_disables();
+    ok &= test_retention_cap_resync_respects();
+    ok &= test_retention_cap_set_limit();
     if (ok) std::printf("context cache tests passed\n");
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

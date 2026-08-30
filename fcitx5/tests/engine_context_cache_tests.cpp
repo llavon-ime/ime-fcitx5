@@ -89,11 +89,11 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         FCITX_ASSERT(!cache.valid());
     });
 
-    // With backspace tracking enabled, a Backspace outside the composition
+    // With edit tracking on by default, a Backspace outside the composition
     // pops the cache so the recorded history follows the document.
     instance->eventDispatcher().schedule([instance]() {
         EngineHarness harness(instance);
-        harness.set_configs({{"SmartEnglish", "False"}, {"TrackContextBackspace", "True"}});
+        harness.set_config("SmartEnglish", "False");
         harness.type("su3");
         harness.expect_commit("你");
         harness.type("cl3");
@@ -102,5 +102,87 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         const auto cache = harness.engine_state()->context_cache;
         FCITX_ASSERT(cache.valid());
         FCITX_ASSERT(cache.window(100) == std::u16string(u"你"));
+    });
+
+    // Shift+Backspace is tracked too (it deletes backward in most editors).
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        harness.set_config("SmartEnglish", "False");
+        harness.type("su3");
+        harness.expect_commit("你");
+        harness.type("cl3");
+        harness.expect_commit("好");
+        harness.key(fcitx::Key(FcitxKey_BackSpace, fcitx::KeyState::Shift));
+        const auto cache = harness.engine_state()->context_cache;
+        FCITX_ASSERT(cache.window(100) == std::u16string(u"你"));
+    });
+
+    // A caret jump (Up/Down/Home/End/Page) with an empty composition clears
+    // the cache: the recorded text is no longer before the caret.
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        harness.set_config("SmartEnglish", "False");
+        harness.type("su3");
+        harness.expect_commit("你");
+        harness.type("cl3");
+        harness.expect_commit("好");
+        harness.key(fcitx::Key(FcitxKey_Up));
+        const auto cache = harness.engine_state()->context_cache;
+        FCITX_ASSERT(!cache.valid());
+        FCITX_ASSERT(cache.window(100).empty());
+    });
+
+    // Undo / cut / select-all clear the cache too.
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        harness.set_config("SmartEnglish", "False");
+        harness.type("su3");
+        harness.expect_commit("你");
+        harness.key(fcitx::Key(FcitxKey_z, fcitx::KeyState::Ctrl));
+        const auto cache = harness.engine_state()->context_cache;
+        FCITX_ASSERT(!cache.valid());
+    });
+
+    // Left/Right are tolerated: bounded caret moves keep the cache (the tail
+    // still ends with the most recent commit).
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        harness.set_config("SmartEnglish", "False");
+        harness.type("su3");
+        harness.expect_commit("你");
+        harness.key(fcitx::Key(FcitxKey_Left));
+        harness.key(fcitx::Key(FcitxKey_Right));
+        const auto cache = harness.engine_state()->context_cache;
+        FCITX_ASSERT(cache.valid());
+        FCITX_ASSERT(cache.window(100) == std::u16string(u"你"));
+    });
+
+    // Navigation inside a non-empty composition must NOT clear the cache
+    // (the engine handles those keys itself and the document is untouched).
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        harness.set_config("SmartEnglish", "False");
+        harness.type("su3");
+        harness.expect_commit("你");
+        harness.type("cl3");
+        harness.key(fcitx::Key(FcitxKey_Up));
+        const auto cache = harness.engine_state()->context_cache;
+        FCITX_ASSERT(cache.valid());
+        FCITX_ASSERT(cache.window(100) == std::u16string(u"你"));
+    });
+
+    // The retention cap bounds the recorded history.
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        harness.set_configs({{"SmartEnglish", "False"}, {"ContextHistoryLimit", "2"}});
+        harness.type("su3");
+        harness.expect_commit("你");
+        harness.type("cl3");
+        harness.expect_commit("好");
+        harness.type("ji3");
+        harness.expect_commit("我");
+        const auto cache = harness.engine_state()->context_cache;
+        FCITX_ASSERT(cache.valid());
+        FCITX_ASSERT(cache.window(100) == std::u16string(u"好我"));
     });
 }

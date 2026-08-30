@@ -16,6 +16,8 @@ namespace ime::fcitx5 {
 // model's context window is filled with the text right before the caret.
 class ContextCache {
 public:
+    explicit ContextCache(size_t limit = 1024) : limit_(limit) {}
+
     // Records text that this IME committed to the application.
     void on_commit(std::u16string text);
 
@@ -31,6 +33,14 @@ public:
     // the client did not reflect back through surrounding text.
     void on_backspace(size_t count = 1);
 
+    // Retention cap in UTF-16 code units. History older than the cap is
+    // dropped first. A limit of 0 disables recording entirely.
+    void set_limit(size_t limit) noexcept {
+        limit_ = limit;
+        trim_to_limit();
+    }
+    size_t limit() const noexcept { return limit_; }
+
     // True when surrounding text has been seen and was used to resync, or
     // when committed text is being tracked.
     bool valid() const noexcept { return valid_; }
@@ -42,7 +52,10 @@ public:
     void clear() noexcept;
 
 private:
+    void trim_to_limit() noexcept;
+
     std::u16string history_;
+    size_t limit_;
     bool valid_ = false;
 };
 

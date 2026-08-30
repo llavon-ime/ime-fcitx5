@@ -8,6 +8,16 @@ void ContextCache::on_commit(std::u16string text) {
     if (text.empty()) return;
     history_ += text;
     valid_ = true;
+    trim_to_limit();
+}
+
+void ContextCache::trim_to_limit() noexcept {
+    if (limit_ == 0) {
+        history_.clear();
+        valid_ = false;
+        return;
+    }
+    if (history_.size() > limit_) history_.erase(0, history_.size() - limit_);
 }
 
 void ContextCache::on_surrounding(std::u16string text, size_t cursor) {
@@ -34,6 +44,7 @@ void ContextCache::on_surrounding(std::u16string text, size_t cursor) {
         history_ = std::move(text);
     }
     valid_ = true;
+    trim_to_limit();
 }
 
 void ContextCache::on_backspace(size_t count) {

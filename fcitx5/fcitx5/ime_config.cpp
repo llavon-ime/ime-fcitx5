@@ -112,7 +112,7 @@ Config to_shared_config(const ImeFcitxConfig& config) {
     shared.smart_english = *config.smartEnglish;
     shared.context_history_limit = *config.contextHistoryLimit;
     shared.reset_context_on_focus_out = *config.resetContextOnFocusOut;
-    shared.track_context_backspace = *config.trackContextBackspace;
+    shared.context_edit_tracking = *config.contextEditTracking;
     return shared;
 }
 
@@ -137,7 +137,7 @@ void apply_shared_config(ImeFcitxConfig& target, const Config& source) {
     (void)target.smartEnglish.setValue(source.smart_english);
     (void)target.contextHistoryLimit.setValue(source.context_history_limit);
     (void)target.resetContextOnFocusOut.setValue(source.reset_context_on_focus_out);
-    (void)target.trackContextBackspace.setValue(source.track_context_backspace);
+    (void)target.contextEditTracking.setValue(source.context_edit_tracking);
 }
 
 }  // namespace ime::fcitx5

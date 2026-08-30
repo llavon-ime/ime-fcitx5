@@ -34,9 +34,10 @@ struct Config {
     // When the input context loses focus the cache is cleared so text from
     // one field never leaks into the next.
     bool reset_context_on_focus_out = true;
-    // Heuristically pop the cache when the user presses Backspace outside the
-    // composition (the client may not reflect the deletion back to us).
-    bool track_context_backspace = false;
+    // Heuristically track edits the client does not reflect back through
+    // surrounding text: Backspace outside the composition pops the cache, and
+    // caret-moving navigation keys or undo/cut/select-all shortcuts clear it.
+    bool context_edit_tracking = true;
 };
 
 Config default_config();

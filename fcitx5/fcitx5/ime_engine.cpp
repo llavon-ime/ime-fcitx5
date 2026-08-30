@@ -265,6 +265,7 @@ void ImeEngine::enter_context(fcitx::InputContext* input_context) {
     pending_token_ = state->pending_token;
     mixed_decision_ = state->mixed_decision;
     context_cache_ = state->context_cache;
+    context_cache_.set_limit(static_cast<size_t>(config_.context_history_limit));
     session_id_ = state->session_id;
     next_request_id_ = state->next_request_id;
     generation_ = state->generation;
@@ -362,6 +363,26 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
         commit_composition_with(input_context, U' ');
         event.filterAndAccept();
         return;
+    }
+
+    // Edit tracking for clients that never push surrounding text. With an
+    // empty composition the engine cannot see the document, so it heuristically
+    // keeps its context cache in sync: Backspace pops one code unit, caret
+    // jumps (Up/Down/Home/End/Page) and undo/cut/select-all clear it. Left and
+    // Right are tolerated (their drift is bounded and re-orders only a few
+    // characters). These keys always pass through to the application.
+    if (composition_empty() && config_.context_edit_tracking) {
+        const bool ctrl = static_cast<bool>(event.key().states() & fcitx::KeyState::Ctrl);
+        if (key == FcitxKey_BackSpace) {
+            context_cache_.on_backspace(1);
+        } else if (key == FcitxKey_Up || key == FcitxKey_Down || key == FcitxKey_Home ||
+                   key == FcitxKey_End || key == FcitxKey_Page_Up || key == FcitxKey_Page_Down) {
+            context_cache_.clear();
+        } else if (ctrl && (key == FcitxKey_z || key == FcitxKey_Z || key == FcitxKey_y ||
+                            key == FcitxKey_Y || key == FcitxKey_x || key == FcitxKey_X ||
+                            key == FcitxKey_a || key == FcitxKey_A)) {
+            context_cache_.clear();
+        }
     }
 
     const auto layout = config_.keyboard_layout == "hsu" ? BopomofoKeyboardLayout::Hsu
@@ -713,13 +734,6 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
         update_ui(input_context);
         event.filterAndAccept();
         return;
-    }
-
-    // Backspace outside the composition is forwarded to the client (which
-    // deletes its own text). When enabled, pop the cache so the recorded
-    // history does not drift from the document.
-    if (key == FcitxKey_BackSpace && composition_empty() && config_.track_context_backspace) {
-        context_cache_.on_backspace(1);
     }
 
     if (key == FcitxKey_Delete && !buffer_.empty()) {

@@ -267,7 +267,7 @@ Config config_from_fcitx_ini(const std::filesystem::path& path) {
     cfg.smart_english = ini_bool_field(fields, "SmartEnglish", cfg.smart_english);
     cfg.context_history_limit = ini_int_field(fields, "ContextHistoryLimit", cfg.context_history_limit, 0, 1048576);
     cfg.reset_context_on_focus_out = ini_bool_field(fields, "ResetContextOnFocusOut", cfg.reset_context_on_focus_out);
-    cfg.track_context_backspace = ini_bool_field(fields, "TrackContextBackspace", cfg.track_context_backspace);
+    cfg.context_edit_tracking = ini_bool_field(fields, "ContextEditTracking", cfg.context_edit_tracking);
     return cfg;
 }
 
@@ -373,7 +373,7 @@ nlohmann::json to_json(const Config& cfg) {
         {"smart_english", cfg.smart_english},
         {"context_history_limit", cfg.context_history_limit},
         {"reset_context_on_focus_out", cfg.reset_context_on_focus_out},
-        {"track_context_backspace", cfg.track_context_backspace},
+        {"context_edit_tracking", cfg.context_edit_tracking},
     };
 }
 
@@ -405,7 +405,7 @@ Config config_from_json(const nlohmann::json& json) {
     cfg.smart_english = bool_field(json, "smart_english", cfg.smart_english);
     cfg.context_history_limit = int_field(json, "context_history_limit", cfg.context_history_limit, 0, 1048576);
     cfg.reset_context_on_focus_out = bool_field(json, "reset_context_on_focus_out", cfg.reset_context_on_focus_out);
-    cfg.track_context_backspace = bool_field(json, "track_context_backspace", cfg.track_context_backspace);
+    cfg.context_edit_tracking = bool_field(json, "context_edit_tracking", cfg.context_edit_tracking);
     return cfg;
 }
 
