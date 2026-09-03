@@ -10,6 +10,7 @@ set(IME_FCITX5_TEST_SOURCES
     symbol_menu_tests.cpp
     ascii_tokenizer_tests.cpp
     context_cache_tests.cpp
+    caret_prefix_sampler_tests.cpp
     fallback_engine_tests.cpp
     mixed_input_decoder_tests.cpp
 )

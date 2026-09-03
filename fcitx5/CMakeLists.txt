@@ -126,6 +126,23 @@ else()
     message(STATUS "fcitx5 development files not found; skipping llavon-ime-addon")
 endif()
 
+# AT-SPI experiment: a standalone probe that reports the text before the caret
+# of the currently focused editable widget. It is not wired into the addon;
+# it exists to validate on a real desktop that the a11y bus provides reliable,
+# low-latency context for IME prediction.
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(ATSPI QUIET IMPORTED_TARGET atspi-2)
+    if(ATSPI_FOUND AND NOT WIN32)
+        add_executable(atspi_probe tools/atspi_probe.cpp)
+        target_include_directories(atspi_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/shared")
+        target_link_libraries(atspi_probe PRIVATE PkgConfig::ATSPI)
+        target_compile_options(atspi_probe PRIVATE -Wall -Wextra)
+    else()
+        message(STATUS "atspi-2 not found; skipping atspi_probe experiment tool")
+    endif()
+endif()
+
 if(IME_FCITX5_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
