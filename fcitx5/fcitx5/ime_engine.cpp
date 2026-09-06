@@ -317,6 +317,14 @@ ImeEngine::ImeEngine(fcitx::Instance* instance)
       event_dispatcher_(instance ? &instance->eventDispatcher() : nullptr) {
     if (instance_ != nullptr) {
         (void)instance_->inputContextManager().registerProperty("llavon-ime-input-state", &property_factory_);
+        capability_changed_handler_ = instance_->watchEvent(
+            fcitx::EventType::InputContextCapabilityAboutToChange, fcitx::EventWatcherPhase::Default,
+            [this](fcitx::Event& event) {
+                const auto& capability_event = static_cast<const fcitx::CapabilityEvent&>(event);
+                if (capability_event.newFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
+                    if (auto* state = property(capability_event.inputContext())) state->context_cache.clear();
+                }
+            });
     }
     reload_config();
 }
@@ -367,20 +375,29 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
 
     // Edit tracking for clients that never push surrounding text. With an
     // empty composition the engine cannot see the document, so it heuristically
-    // keeps its context cache in sync: Backspace pops one code unit, caret
-    // jumps (Up/Down/Home/End/Page) and undo/cut/select-all clear it. Left and
-    // Right are tolerated (their drift is bounded and re-orders only a few
-    // characters). These keys always pass through to the application.
+    // keeps its context cache in sync. Only plain or Shift+Backspace has an
+    // exact effect; caret movement and other external edits invalidate it.
+    // These keys always pass through to the application.
     if (composition_empty() && config_.context_edit_tracking) {
-        const bool ctrl = static_cast<bool>(event.key().states() & fcitx::KeyState::Ctrl);
-        if (key == FcitxKey_BackSpace) {
+        const auto states = event.key().states();
+        const bool ctrl = static_cast<bool>(states & fcitx::KeyState::Ctrl);
+        const fcitx::KeyStates complex_modifiers{fcitx::KeyState::Ctrl, fcitx::KeyState::Alt,
+                                                 fcitx::KeyState::Hyper, fcitx::KeyState::Super,
+                                                 fcitx::KeyState::Super2, fcitx::KeyState::Hyper2,
+                                                 fcitx::KeyState::Meta};
+        if (key == FcitxKey_BackSpace && !states.testAny(complex_modifiers)) {
             context_cache_.on_backspace(1);
-        } else if (key == FcitxKey_Up || key == FcitxKey_Down || key == FcitxKey_Home ||
-                   key == FcitxKey_End || key == FcitxKey_Page_Up || key == FcitxKey_Page_Down) {
+        } else if (key == FcitxKey_BackSpace || key == FcitxKey_Delete || key == FcitxKey_Left ||
+                   key == FcitxKey_Right || key == FcitxKey_Up || key == FcitxKey_Down ||
+                   key == FcitxKey_Home || key == FcitxKey_End || key == FcitxKey_Page_Up ||
+                   key == FcitxKey_Page_Down) {
             context_cache_.clear();
         } else if (ctrl && (key == FcitxKey_z || key == FcitxKey_Z || key == FcitxKey_y ||
                             key == FcitxKey_Y || key == FcitxKey_x || key == FcitxKey_X ||
-                            key == FcitxKey_a || key == FcitxKey_A)) {
+                            key == FcitxKey_a || key == FcitxKey_A || key == FcitxKey_v ||
+                            key == FcitxKey_V)) {
+            context_cache_.clear();
+        } else if (key == FcitxKey_Insert && static_cast<bool>(states & fcitx::KeyState::Shift)) {
             context_cache_.clear();
         }
     }
@@ -691,7 +708,7 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
         if (buffer_.empty()) {
             const std::u16string digit(1, static_cast<char16_t>(key));
             input_context->commitString(to_utf8(digit));
-            record_context_commit(digit);
+            record_context_commit(input_context, digit);
         } else {
             (void)buffer_.add_literal(static_cast<char32_t>(key));
             (void)transition_to(InputState::Inputting);
@@ -832,13 +849,16 @@ void ImeEngine::reset(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& 
         auto text = buffer_.candidate_commit_text();
         text += pending_rendered_text();
         if (!text.empty()) event.inputContext()->commitString(to_utf8(text));
-        record_context_commit(text);
+        record_context_commit(event.inputContext(), text);
     }
 
     buffer_.clear();
     pending_token_.clear();
     mixed_decision_.clear();
     symbol_menu_.close();
+    if (event.inputContext()->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
+        context_cache_.clear();
+    }
     if (focus_out && config_.reset_context_on_focus_out) context_cache_.clear();
     (void)transition_to(InputState::Empty);
     ++generation_;
@@ -999,7 +1019,12 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
     input_context->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
 }
 
-void ImeEngine::record_context_commit(const std::u16string& text) {
+void ImeEngine::record_context_commit(const fcitx::InputContext* input_context, const std::u16string& text) {
+    if (input_context == nullptr ||
+        input_context->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
+        context_cache_.clear();
+        return;
+    }
     if (config_.context_history_limit > 0 && !text.empty()) {
         context_cache_.on_commit(text);
     }
@@ -1010,7 +1035,7 @@ void ImeEngine::commit_current(fcitx::InputContext* input_context) {
     auto text = buffer_.commit_text();
     text += pending_rendered_text();
     input_context->commitString(to_utf8(text));
-    record_context_commit(text);
+    record_context_commit(input_context, text);
     buffer_.clear();
     pending_token_.clear();
     mixed_decision_.clear();
@@ -1037,7 +1062,7 @@ void ImeEngine::commit_composition_with(fcitx::InputContext* input_context, char
     inflight_request_id_.reset();
     prediction_segment_indices_.clear();
     input_context->commitString(to_utf8(text));
-    record_context_commit(text);
+    record_context_commit(input_context, text);
     update_ui(input_context);
 }
 
@@ -1285,7 +1310,7 @@ bool ImeEngine::commit_mixed_candidate(fcitx::InputContext* input_context, int i
     text += entries[static_cast<size_t>(index)].text;
     if (index == 0 && mixed_decision_.english_boundary) text.push_back(u' ');
     input_context->commitString(to_utf8(text));
-    record_context_commit(text);
+    record_context_commit(input_context, text);
     buffer_.clear();
     pending_token_.clear();
     mixed_decision_.clear();
@@ -1742,6 +1767,7 @@ void ImeEngine::request_prediction_if_ready(fcitx::InputContext* input_context) 
 void ImeEngine::resync_context_cache(const fcitx::InputContext* input_context) {
     if (input_context == nullptr ||
         input_context->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
+        context_cache_.clear();
         return;
     }
 

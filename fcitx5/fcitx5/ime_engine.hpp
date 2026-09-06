@@ -4,6 +4,7 @@
 #include <fcitx/candidatelist.h>
 #include <fcitx/inputcontextproperty.h>
 #include <fcitx/inputmethodengine.h>
+#include <fcitx/instance.h>
 
 #include <memory>
 #include <optional>
@@ -22,7 +23,6 @@
 
 namespace fcitx {
 class EventDispatcher;
-class Instance;
 }  // namespace fcitx
 
 namespace ime::fcitx5 {
@@ -91,7 +91,7 @@ private:
     bool set_candidate_cursor(int index);
     bool candidate_list_active() const;
     bool composition_empty() const;
-    void record_context_commit(const std::u16string& text);
+    void record_context_commit(const fcitx::InputContext* input_context, const std::u16string& text);
     void resync_context_cache(const fcitx::InputContext* input_context);
     void mark_prediction_dirty();
     void apply_fallback_candidates(size_t segment_index);
@@ -139,6 +139,7 @@ private:
     fcitx::InputContext* active_input_context_ = nullptr;
     std::size_t state_scope_depth_ = 0;
     ImeInputContextPropertyFactory property_factory_;
+    std::unique_ptr<fcitx::HandlerTableEntry<fcitx::EventHandler>> capability_changed_handler_;
 };
 
 class ImeEngineFactory final : public fcitx::AddonFactory {

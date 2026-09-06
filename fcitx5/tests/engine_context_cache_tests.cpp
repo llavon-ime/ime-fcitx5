@@ -4,8 +4,17 @@
 #include <fcitx/instance.h>
 
 #include <string>
+#include <utility>
 
 using namespace ime::fcitx5::test;
+
+namespace {
+
+void seed_cache(EngineHarness& harness, std::u16string text) {
+    harness.engine_state()->context_cache.on_commit(std::move(text));
+}
+
+}  // namespace
 
 // Self-managed context cache: the engine remembers what it committed so the
 // prediction request can carry context even when the client never pushes
@@ -65,9 +74,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         FCITX_ASSERT(cache.window(100) == std::u16string(u"completely"));
     });
 
-    // A plain reset (e.g. the engine clearing its composition, IC destroyed)
-    // must NOT clear the cache: only a FocusOut transition resets the
-    // history so text does not leak between fields.
+    // A plain reset must not clear history.
     instance->eventDispatcher().schedule([instance]() {
         EngineHarness harness(instance);
         harness.set_config("SmartEnglish", "False");
@@ -79,7 +86,39 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         FCITX_ASSERT(cache.window(100) == std::u16string(u"你"));
     });
 
-    // Disabling the cache keeps commits from being recorded.
+    // FocusOut clears history by default.
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        harness.set_config("ResetContextOnFocusOut", "True");
+        seed_cache(harness, u"你");
+        harness.input_context()->focusOut();
+        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+    });
+
+    // The explicit opt-out preserves history across FocusOut.
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        harness.set_config("ResetContextOnFocusOut", "False");
+        seed_cache(harness, u"你");
+        harness.input_context()->focusOut();
+        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == std::u16string(u"你"));
+        harness.set_config("ResetContextOnFocusOut", "True");
+    });
+
+    // Entering a sensitive field clears previously recorded context.
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        harness.set_config("SmartEnglish", "False");
+        harness.type("su3");
+        harness.expect_commit("你");
+        auto* context = harness.input_context();
+        auto capabilities = context->capabilityFlags();
+        capabilities |= fcitx::CapabilityFlag::PasswordOrSensitive;
+        context->setCapabilityFlags(capabilities);
+        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+    });
+
+    // Disabling self-managed history still permits client surrounding text.
     instance->eventDispatcher().schedule([instance]() {
         EngineHarness harness(instance);
         harness.set_configs({{"SmartEnglish", "False"}, {"ContextHistoryLimit", "0"}});
@@ -87,6 +126,32 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.expect_commit("你");
         const auto cache = harness.engine_state()->context_cache;
         FCITX_ASSERT(!cache.valid());
+        harness.set_surrounding("hello", 5, 5);
+        harness.type("su3");
+        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == std::u16string(u"hello"));
+        harness.set_config("ContextHistoryLimit", "1024");
+    });
+
+    // Modified Backspace can delete more than one character and invalidates.
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        seed_cache(harness, u"你好");
+        harness.key(fcitx::Key(FcitxKey_BackSpace, fcitx::KeyState::Ctrl));
+        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+    });
+
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        seed_cache(harness, u"你好");
+        harness.key(fcitx::Key(FcitxKey_BackSpace, fcitx::KeyState::Alt));
+        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+    });
+
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        seed_cache(harness, u"你好");
+        harness.key(fcitx::Key(FcitxKey_Delete));
+        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
     });
 
     // With edit tracking on by default, a Backspace outside the composition
@@ -143,18 +208,30 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         FCITX_ASSERT(!cache.valid());
     });
 
-    // Left/Right are tolerated: bounded caret moves keep the cache (the tail
-    // still ends with the most recent commit).
+    // A caret move makes the text-before-caret cache ambiguous.
     instance->eventDispatcher().schedule([instance]() {
         EngineHarness harness(instance);
         harness.set_config("SmartEnglish", "False");
         harness.type("su3");
         harness.expect_commit("你");
         harness.key(fcitx::Key(FcitxKey_Left));
-        harness.key(fcitx::Key(FcitxKey_Right));
         const auto cache = harness.engine_state()->context_cache;
-        FCITX_ASSERT(cache.valid());
-        FCITX_ASSERT(cache.window(100) == std::u16string(u"你"));
+        FCITX_ASSERT(!cache.valid());
+    });
+
+    // Paste shortcuts introduce text the engine cannot observe.
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        seed_cache(harness, u"你");
+        harness.key(fcitx::Key(FcitxKey_v, fcitx::KeyState::Ctrl));
+        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+    });
+
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        seed_cache(harness, u"你");
+        harness.key(fcitx::Key(FcitxKey_Insert, fcitx::KeyState::Shift));
+        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
     });
 
     // Navigation inside a non-empty composition must NOT clear the cache

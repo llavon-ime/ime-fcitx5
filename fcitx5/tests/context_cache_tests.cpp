@@ -62,14 +62,30 @@ bool test_surrounding_mismatch_replaces_cache() {
     return ok;
 }
 
-bool test_surrounding_shorter_keeps_own_history() {
-    // Client window is shorter than our committed history and matches it.
-    // The cache is allowed to keep the extra text it already knows.
+bool test_surrounding_shorter_replaces_history() {
+    // Without an acknowledged base, a shorter client snapshot may represent
+    // a caret move and must be treated as authoritative.
     ContextCache cache;
     cache.on_commit(utf16("你好world"));
     cache.on_surrounding(utf16("world"), 5);
-    bool ok = check(cache.window(100) == utf16("你好world"), "longer own history survives a short surrounding window");
+    bool ok = check(cache.window(100) == utf16("world"), "ambiguous short surrounding replaces history");
     return ok;
+}
+
+bool test_surrounding_prefix_replaces_cache() {
+    ContextCache cache;
+    cache.on_surrounding(utf16("hello"), 5);
+    cache.on_commit(utf16(" world"));
+    cache.on_surrounding(utf16("hello"), 5);
+    return check(cache.window(100) == utf16("hello"),
+                 "surrounding prefix drops text that may be after the caret");
+}
+
+bool test_surrounding_scalar_safe() {
+    ContextCache cache;
+    std::u16string prefix(1, static_cast<char16_t>(0xD83D));
+    cache.on_surrounding(prefix, 1);
+    return check(cache.window(10).empty(), "a lone high surrogate is not kept");
 }
 
 bool test_surrounding_empty_resets() {
@@ -93,6 +109,16 @@ bool test_backspace_beyond_length_clears() {
     return check(cache.window(100).empty(), "backspace beyond length clears the cache");
 }
 
+bool test_backspace_pops_whole_scalar() {
+    ContextCache cache;
+    std::u16string emoji;
+    emoji.push_back(static_cast<char16_t>(0xD83D));
+    emoji.push_back(static_cast<char16_t>(0xDE00));
+    cache.on_commit(emoji);
+    cache.on_backspace();
+    return check(cache.window(100).empty(), "backspace removes a complete surrogate pair");
+}
+
 bool test_clear() {
     ContextCache cache;
     cache.on_commit(utf16("abc"));
@@ -101,17 +127,27 @@ bool test_clear() {
 }
 
 bool test_utf16_surrogate_handling() {
-    // A surrogate pair (emoji) counts as two code units; truncation may split
-    // it, which the engine already handles on the way to the service.
+    // A pair that cannot fit is dropped whole, never split or returned over
+    // the requested code-unit budget.
     ContextCache cache;
     std::u16string emoji;
     emoji.push_back(static_cast<char16_t>(0xD83D));
     emoji.push_back(static_cast<char16_t>(0xDE00));
     cache.on_commit(emoji);
-    bool ok = check(cache.window(1) == std::u16string(1, static_cast<char16_t>(0xDE00)),
-                    "truncation works at code-unit granularity");
-    ok &= check(cache.window(2) == emoji, "full surrogate pair survives");
+    bool ok = check(cache.window(1).empty(), "an unfittable surrogate pair is dropped whole");
+    ok &= check(cache.window(2) == emoji, "a fitting surrogate pair survives");
     return ok;
+}
+
+bool test_retention_cap_keeps_pairs_whole() {
+    ContextCache cache(3);
+    std::u16string emoji;
+    emoji.push_back(static_cast<char16_t>(0xD83D));
+    emoji.push_back(static_cast<char16_t>(0xDE00));
+    cache.on_commit(emoji);
+    cache.on_commit(utf16("ab"));
+    return check(cache.window(100) == utf16("ab"),
+                 "a surrogate pair straddling the retention cap is dropped whole");
 }
 
 bool test_retention_cap() {
@@ -149,6 +185,16 @@ bool test_retention_cap_set_limit() {
     return ok;
 }
 
+bool test_surrounding_with_zero_limit_is_kept() {
+    ContextCache cache(0);
+    cache.on_commit(utf16("abc"));
+    bool ok = check(!cache.valid(), "zero cap records no commits");
+    cache.on_surrounding(utf16("hello world"), 11);
+    ok &= check(cache.window(100) == utf16("hello world"),
+                "client surrounding text remains available with zero commit history");
+    return ok;
+}
+
 }  // namespace
 
 }  // namespace ime::fcitx5
@@ -161,16 +207,21 @@ int run_context_cache_tests() {
     ok &= test_commit_without_previous_history();
     ok &= test_surrounding_tail_extends_cache();
     ok &= test_surrounding_mismatch_replaces_cache();
-    ok &= test_surrounding_shorter_keeps_own_history();
+    ok &= test_surrounding_shorter_replaces_history();
+    ok &= test_surrounding_prefix_replaces_cache();
+    ok &= test_surrounding_scalar_safe();
     ok &= test_surrounding_empty_resets();
     ok &= test_backspace_pops_tail();
     ok &= test_backspace_beyond_length_clears();
+    ok &= test_backspace_pops_whole_scalar();
     ok &= test_clear();
     ok &= test_utf16_surrogate_handling();
+    ok &= test_retention_cap_keeps_pairs_whole();
     ok &= test_retention_cap();
     ok &= test_retention_cap_zero_disables();
     ok &= test_retention_cap_resync_respects();
     ok &= test_retention_cap_set_limit();
+    ok &= test_surrounding_with_zero_limit_is_kept();
     if (ok) std::printf("context cache tests passed\n");
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
