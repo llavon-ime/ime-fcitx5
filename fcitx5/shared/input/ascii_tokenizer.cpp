@@ -1,6 +1,7 @@
 #include "input/ascii_tokenizer.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <string>
 #include <utility>
 
