@@ -1,0 +1,34 @@
+#include <algorithm>
+#include <cstdlib>
+#include <vector>
+
+#include "bopomofo/keymap.hpp"
+#include "buffer/composition_buffer.hpp"
+#include "engine/fallback_engine.hpp"
+
+int run_fallback_engine_tests() {
+    using namespace ime::fcitx5;
+
+    FallbackEngine fallback(IME_FCITX5_TEST_TABLE_PATH);
+    CompositionBuffer buffer;
+    for (const char32_t key : std::u32string(U"su3")) {
+        if (!buffer.add_bopomofo_key(key, BopomofoKeyboardLayout::Standard)) return EXIT_FAILURE;
+    }
+
+    const auto predictions = fallback.predict(buffer);
+    if (predictions.size() != 1 || predictions[0].candidates.size() < 2) return EXIT_FAILURE;
+
+    const auto& segment = buffer.segments()[0];
+    const auto merged_empty = fallback.merge_model_candidates(segment, {});
+    if (merged_empty != predictions[0].candidates) return EXIT_FAILURE;
+
+    const char32_t model_first = predictions[0].candidates.back();
+    const auto merged_partial = fallback.merge_model_candidates(segment, {model_first});
+    if (merged_partial.empty() || merged_partial.front() != model_first) return EXIT_FAILURE;
+    for (const char32_t candidate : predictions[0].candidates) {
+        if (std::find(merged_partial.begin(), merged_partial.end(), candidate) == merged_partial.end()) {
+            return EXIT_FAILURE;
+        }
+    }
+    return EXIT_SUCCESS;
+}

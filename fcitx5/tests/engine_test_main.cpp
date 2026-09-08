@@ -16,6 +16,21 @@ void engine_test_symbol_menu_tests(fcitx::Instance* instance);
 void engine_test_candidate_navigation_tests(fcitx::Instance* instance);
 void engine_test_punctuation_tests(fcitx::Instance* instance);
 void engine_test_shift_letter_tests(fcitx::Instance* instance);
+void engine_test_context_cache(fcitx::Instance* instance);
+void engine_test_async_state_tests(fcitx::Instance* instance);
+void engine_test_smart_candidate(fcitx::Instance* instance);
+void engine_test_smart_chat(fcitx::Instance* instance);
+void engine_test_smart_config(fcitx::Instance* instance);
+void engine_test_smart_decoder(fcitx::Instance* instance);
+void engine_test_smart_edge(fcitx::Instance* instance);
+void engine_test_smart_hsu(fcitx::Instance* instance);
+void engine_test_smart_long(fcitx::Instance* instance);
+void engine_test_smart_mixed(fcitx::Instance* instance);
+void engine_test_smart_regressions(fcitx::Instance* instance);
+void engine_test_smart_space(fcitx::Instance* instance);
+void engine_test_smart_standard(fcitx::Instance* instance);
+void engine_test_smart_usability(fcitx::Instance* instance);
+void engine_test_smart_work(fcitx::Instance* instance);
 
 int main() {
     fcitx::setupTestingEnvironment(TESTING_BINARY_DIR, {TESTING_BINARY_DIR},
@@ -42,6 +57,21 @@ int main() {
     engine_test_candidate_navigation_tests(&instance);
     engine_test_punctuation_tests(&instance);
     engine_test_shift_letter_tests(&instance);
+    engine_test_context_cache(&instance);
+    engine_test_async_state_tests(&instance);
+    engine_test_smart_candidate(&instance);
+    engine_test_smart_chat(&instance);
+    engine_test_smart_config(&instance);
+    engine_test_smart_decoder(&instance);
+    engine_test_smart_edge(&instance);
+    engine_test_smart_hsu(&instance);
+    engine_test_smart_long(&instance);
+    engine_test_smart_mixed(&instance);
+    engine_test_smart_regressions(&instance);
+    engine_test_smart_space(&instance);
+    engine_test_smart_standard(&instance);
+    engine_test_smart_usability(&instance);
+    engine_test_smart_work(&instance);
 
     instance.eventDispatcher().schedule([&instance]() { instance.exit(); });
     instance.exec();

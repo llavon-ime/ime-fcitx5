@@ -47,6 +47,9 @@ int run_config_tests() {
     ok = ok && !cfg.esc_clears_entire_buffer;
     ok = ok && cfg.caps_lock_inputs_bopomofo;
     ok = ok && cfg.shift_letter_keys == "directly_output_uppercase";
+    ok = ok && cfg.context_history_limit == 1024;
+    ok = ok && cfg.reset_context_on_focus_out;
+    ok = ok && cfg.context_edit_tracking;
 
     auto json = ime::fcitx5::to_json(cfg);
     auto roundtrip = ime::fcitx5::config_from_json(json);
@@ -57,6 +60,9 @@ int run_config_tests() {
     ok = ok && roundtrip.caps_lock_inputs_bopomofo == cfg.caps_lock_inputs_bopomofo;
     ok = ok && roundtrip.shift_letter_keys == cfg.shift_letter_keys;
     ok = ok && roundtrip.keyboard_layout == cfg.keyboard_layout;
+    ok = ok && roundtrip.context_history_limit == cfg.context_history_limit;
+    ok = ok && roundtrip.reset_context_on_focus_out == cfg.reset_context_on_focus_out;
+    ok = ok && roundtrip.context_edit_tracking == cfg.context_edit_tracking;
     ok = ok && ime::fcitx5::socket_path().filename() == "ime.sock";
     ok = ok && ime::fcitx5::pid_path().filename() == "service.pid";
 

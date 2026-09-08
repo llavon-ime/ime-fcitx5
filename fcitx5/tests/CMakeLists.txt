@@ -8,6 +8,10 @@ set(IME_FCITX5_TEST_SOURCES
     keypad_tests.cpp
     input_state_tests.cpp
     symbol_menu_tests.cpp
+    ascii_tokenizer_tests.cpp
+    context_cache_tests.cpp
+    fallback_engine_tests.cpp
+    mixed_input_decoder_tests.cpp
 )
 
 add_executable(llavon_ime_tests ${IME_FCITX5_TEST_SOURCES})
@@ -38,6 +42,21 @@ if(Fcitx5_FOUND AND NOT WIN32)
             engine_candidate_navigation_tests.cpp
             engine_punctuation_tests.cpp
             engine_shift_letter_tests.cpp
+            engine_context_cache_tests.cpp
+            engine_async_state_tests.cpp
+            engine_smart_candidate_tests.cpp
+            engine_smart_chat_tests.cpp
+            engine_smart_config_tests.cpp
+            engine_smart_decoder_tests.cpp
+            engine_smart_edge_tests.cpp
+            engine_smart_hsu_tests.cpp
+            engine_smart_long_tests.cpp
+            engine_smart_mixed_tests.cpp
+            engine_smart_regression_tests.cpp
+            engine_smart_space_tests.cpp
+            engine_smart_standard_tests.cpp
+            engine_smart_usability_tests.cpp
+            engine_smart_work_tests.cpp
         )
 
         add_executable(llavon_ime_engine_tests ${IME_FCITX5_ENGINE_TEST_SOURCES})
@@ -46,7 +65,8 @@ if(Fcitx5_FOUND AND NOT WIN32)
             Fcitx5::Module::TestFrontend
             ime_fcitx5_shared)
         target_include_directories(llavon_ime_engine_tests PRIVATE
-            ${CMAKE_CURRENT_BINARY_DIR})
+            ${CMAKE_CURRENT_BINARY_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/..)
         add_dependencies(llavon_ime_engine_tests llavon-ime-addon)
         add_test(NAME llavon_ime_engine_tests COMMAND llavon_ime_engine_tests)
         set_tests_properties(llavon_ime_engine_tests PROPERTIES

@@ -58,8 +58,11 @@ target_sources(ime_fcitx5_shared PRIVATE
     shared/bopomofo/syllable.cpp
     shared/bopomofo/table_engine.cpp
     shared/buffer/composition_buffer.cpp
+    shared/context/context_cache.cpp
     shared/engine/fallback_engine.cpp
+    shared/input/ascii_tokenizer.cpp
     shared/input/keypad.cpp
+    shared/input/mixed_input_decoder.cpp
     shared/protocol/protocol.cpp
     shared/symbol/symbol_menu.cpp
 )

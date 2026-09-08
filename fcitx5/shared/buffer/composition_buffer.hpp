@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "bopomofo/keymap.hpp"
@@ -36,6 +37,7 @@ struct Segment {
 struct BopomofoInputResult {
     size_t segment_index = 0;
     bool completed = false;
+    bool natural_extension = false;
 };
 
 class CompositionBuffer {
@@ -45,6 +47,11 @@ public:
         char32_t key,
         BopomofoKeyboardLayout layout,
         bool accept_uppercase = true);
+    std::optional<BopomofoInputResult> add_bopomofo_keys(
+        std::u16string_view keys,
+        char32_t tone_key,
+        BopomofoKeyboardLayout layout,
+        bool strict);
     bool add_literal(char32_t symbol);
     bool backspace();
     bool delete_forward();
@@ -64,6 +71,7 @@ public:
     std::optional<size_t> candidate_target(CandidateTarget target) const;
     std::optional<size_t> last_edited_segment() const noexcept;
     size_t caret() const noexcept;
+    bool caret_at_end() const noexcept;
     size_t revision() const noexcept;
     const std::vector<Segment>& segments() const noexcept;
     std::vector<size_t> completed_segment_indices() const;
