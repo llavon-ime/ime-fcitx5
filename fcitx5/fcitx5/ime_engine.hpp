@@ -57,6 +57,7 @@ private:
     void enter_context(fcitx::InputContext* input_context);
     void leave_context();
     void reload_config();
+    void apply_context_cache_limits();
     void update_ui(fcitx::InputContext* input_context);
     void commit_current(fcitx::InputContext* input_context);
     bool handle_english_letter(fcitx::InputContext* input_context, char32_t letter, bool caps_on);

@@ -27,16 +27,17 @@ struct Config {
     // Smart Chinese-English: lowercase letters are held raw as a pending word
     // until a tone key or space decides whether they were 注音 or English.
     bool smart_english = false;
-    // How much committed text the engine remembers for prediction context.
-    // 0 disables the self-managed cache; the model only sees surrounding text
-    // the client supplies.
+    // Retained history in UTF-16 units, including client surrounding text.
+    // 0 disables commit tracking and bounds client text by context_length;
+    // positive values retain history independently of the request window.
     int context_history_limit = 1024;
     // When the input context loses focus the cache is cleared so text from
     // one field never leaks into the next.
     bool reset_context_on_focus_out = true;
     // Heuristically track edits the client does not reflect back through
-    // surrounding text: Backspace outside the composition pops the cache, and
-    // caret-moving navigation keys or undo/cut/select-all shortcuts clear it.
+    // surrounding text: pass-through Backspace/Delete, caret navigation, and
+    // undo/cut/paste/select-all shortcuts clear the cache. Backspace may remove
+    // a selection or grapheme, so its effect cannot be inferred safely.
     bool context_edit_tracking = true;
 };
 
