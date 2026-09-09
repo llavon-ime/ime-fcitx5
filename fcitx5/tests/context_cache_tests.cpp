@@ -1,15 +1,15 @@
 #include "context/context_cache.hpp"
+#include "text/utf.hpp"
 
 #include <cstdlib>
+#include <stdexcept>
 #include <string>
 
 namespace ime::fcitx5 {
 namespace {
 
 std::u16string utf16(const char* text) {
-    std::u16string result;
-    for (const char* p = text; *p; ++p) result.push_back(static_cast<char16_t>(static_cast<unsigned char>(*p)));
-    return result;
+    return utf8_to_u16(text);
 }
 
 bool check(bool condition, const char* message) {
@@ -195,6 +195,76 @@ bool test_surrounding_with_zero_limit_is_kept() {
     return ok;
 }
 
+bool test_surrounding_limit_bounds_zero_history() {
+    ContextCache cache(0);
+    cache.set_surrounding_limit(4);
+    const auto document = std::u16string(1000000, u'x') + u"hello world";
+    cache.on_surrounding(document, document.size());
+    bool ok = check(cache.window(100) == utf16("orld"),
+                 "zero commit history still bounds client surrounding text");
+    cache.set_surrounding_limit(2);
+    ok &= check(cache.window(100) == u"ld", "shrinking zero-mode storage keeps only the tail");
+    cache.set_surrounding_limit(0);
+    ok &= check(!cache.valid(), "zero surrounding budget clears existing history");
+    cache.on_surrounding(document, document.size());
+    ok &= check(!cache.valid(), "zero surrounding budget retains nothing");
+    cache.set_surrounding_limit(document.size());
+    cache.on_surrounding(document, document.size());
+    cache.set_surrounding_limit(4);
+    ok &= check(cache.window(document.size()) == u"orld", "shrinking a large zero-mode cache keeps a bounded tail");
+    cache.set_limit(document.size());
+    cache.on_surrounding(document, document.size());
+    cache.set_limit(4);
+    ok &= check(cache.window(document.size()) == u"orld", "shrinking a large positive cache keeps a bounded tail");
+    return ok;
+}
+
+bool test_surrounding_positive_history_and_boundaries() {
+    ContextCache cache(8);
+    cache.set_surrounding_limit(2);
+    cache.on_surrounding(u"0123456789", 10);
+    bool ok = check(cache.window(100) == u"23456789", "positive history ignores surrounding budget");
+    cache.set_surrounding_limit(0);
+    ok &= check(cache.window(100) == u"23456789", "zero surrounding budget leaves positive history alone");
+    cache.on_surrounding(u"ab\U0001F600cd", 6);
+    cache.set_limit(3);
+    ok &= check(cache.window(100) == u"cd", "shrinking history does not split a pair");
+    cache.set_limit(0);
+    cache.set_surrounding_limit(3);
+    cache.on_surrounding(u"ab\U0001F600cd", 6);
+    ok &= check(cache.window(100) == u"cd", "zero-mode tail does not split a pair");
+    cache.on_surrounding(u"ab\U0001F600cd", 3);
+    ok &= check(cache.window(100) == u"ab", "cursor inside a pair drops the incomplete scalar");
+    cache.on_surrounding(u"ab\xDC00z", 4);
+    ok &= check(cache.window(100) == u"ab", "malformed UTF-16 retains only the valid prefix");
+    return ok;
+}
+
+bool test_utf8_bounded_prefix() {
+    const auto text = u16_to_utf8(u"a\U0001F600e\u0301z");
+    bool ok = check(utf8_prefix_tail(text, 2, 2) == u"\U0001F600", "cursor counts scalars, not bytes or UTF-16 units");
+    ok &= check(utf8_prefix_tail(text, 2, 1).empty(), "bounded conversion drops an unfittable pair");
+    ok &= check(utf8_prefix_tail(text, 4, 3) == u"e\u0301", "tail boundary does not split a surrogate pair");
+    ok &= check(utf8_prefix_tail(text, 100, 2) == u"\u0301z", "cursor beyond text is clamped");
+    ok &= check(utf8_prefix_tail(text, 0, 100).empty(), "zero cursor has no context");
+    ok &= check(utf8_prefix_tail(std::string(1000000, 'x') + text, 1000002, 2) == u"\U0001F600",
+                "large document converts only the bounded prefix tail");
+    for (const auto& malformed : {std::string("\xC0\xAF"), std::string("\xED\xA0\x80"),
+                                  std::string("\xF4\x90\x80\x80"), std::string("\xF0\x9F"),
+                                  std::string("\x80"), std::string("\xC2x")}) {
+        for (size_t budget : {size_t{0}, size_t{10}}) {
+            bool threw = false;
+            try {
+                (void)utf8_prefix_tail("ok" + malformed, 1, budget);
+            } catch (const std::runtime_error&) {
+                threw = true;
+            }
+            ok &= check(threw, "malformed suffix rejected even outside retained context");
+        }
+    }
+    return ok;
+}
+
 }  // namespace
 
 }  // namespace ime::fcitx5
@@ -222,6 +292,9 @@ int run_context_cache_tests() {
     ok &= test_retention_cap_resync_respects();
     ok &= test_retention_cap_set_limit();
     ok &= test_surrounding_with_zero_limit_is_kept();
+    ok &= test_surrounding_limit_bounds_zero_history();
+    ok &= test_surrounding_positive_history_and_boundaries();
+    ok &= test_utf8_bounded_prefix();
     if (ok) std::printf("context cache tests passed\n");
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

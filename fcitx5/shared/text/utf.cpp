@@ -28,10 +28,8 @@ void append_utf8(std::string& output, char32_t codepoint) {
     }
 }
 
-}  // namespace
-
-std::u32string utf8_to_u32(std::string_view input) {
-    std::u32string output;
+template <typename Visitor>
+void visit_utf8(std::string_view input, Visitor visitor) {
     for (size_t i = 0; i < input.size();) {
         const auto byte = static_cast<unsigned char>(input[i]);
         char32_t codepoint = 0;
@@ -66,10 +64,37 @@ std::u32string utf8_to_u32(std::string_view input) {
             throw std::runtime_error("invalid Unicode scalar value");
         }
 
-        output.push_back(codepoint);
         i += length;
+        visitor(codepoint, i);
     }
+}
+
+}  // namespace
+
+std::u32string utf8_to_u32(std::string_view input) {
+    std::u32string output;
+    visit_utf8(input, [&output](char32_t codepoint, size_t) { output.push_back(codepoint); });
     return output;
+}
+
+std::u16string utf8_prefix_tail(std::string_view input, size_t cursor, size_t limit) {
+    size_t scalars = 0;
+    size_t end = 0;
+    // Validate the entire document, including text after the selection.
+    visit_utf8(input, [&](char32_t, size_t offset) {
+        if (scalars++ < cursor) end = offset;
+    });
+    size_t start = end;
+    size_t units = 0;
+    while (start > 0 && units < limit) {
+        size_t previous = start - 1;
+        while ((static_cast<unsigned char>(input[previous]) & 0xC0U) == 0x80U) --previous;
+        const size_t width = start - previous == 4 ? 2 : 1;
+        if (width > limit - units) break;
+        units += width;
+        start = previous;
+    }
+    return utf8_to_u16(input.substr(start, end - start));
 }
 
 std::u16string utf8_to_u16(std::string_view input) {

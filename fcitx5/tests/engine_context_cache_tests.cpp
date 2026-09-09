@@ -74,6 +74,23 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         FCITX_ASSERT(cache.window(100) == std::u16string(u"completely"));
     });
 
+    // Selection endpoints are scalar offsets, including supplementary text.
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        harness.set_configs({{"SmartEnglish", "False"}, {"ContextHistoryLimit", "4"},
+                             {"ContextLength", "2"}});
+        for (const auto& endpoints : {std::pair<size_t, size_t>{3, 5}, {5, 3}}) {
+            harness.set_surrounding("a\xF0\x9F\x98\x80" "bcd", endpoints.first, endpoints.second);
+            harness.type("su3");
+            FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"a\U0001F600b");
+            harness.input_context()->reset();
+        }
+        harness.set_config("ContextHistoryLimit", "0");
+        harness.type("su3");
+        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"b");
+        harness.set_configs({{"ContextHistoryLimit", "1024"}, {"ContextLength", "512"}});
+    });
+
     // A plain reset must not clear history.
     instance->eventDispatcher().schedule([instance]() {
         EngineHarness harness(instance);
@@ -132,6 +149,26 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.set_config("ContextHistoryLimit", "1024");
     });
 
+    // Changing the history limit also updates contexts that are not currently
+    // active, so disabling and re-enabling it cannot revive old history.
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        harness.set_config("ResetContextOnFocusOut", "False");
+        seed_cache(harness, u"secret");
+        harness.input_context()->focusOut();
+        EngineHarness active(instance);
+        active.set_config("ContextHistoryLimit", "3");
+        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"ret");
+        active.set_config("ContextHistoryLimit", "0");
+        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+        harness.engine_state()->context_cache.on_surrounding(u"abcdef", 6);
+        active.set_config("ContextLength", "2");
+        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"ef");
+        active.set_configs({{"ContextHistoryLimit", "1024"}, {"ContextLength", "512"},
+                            {"ResetContextOnFocusOut", "True"}});
+        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"ef");
+    });
+
     // Modified Backspace can delete more than one character and invalidates.
     instance->eventDispatcher().schedule([instance]() {
         EngineHarness harness(instance);
@@ -155,7 +192,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
     });
 
     // With edit tracking on by default, a Backspace outside the composition
-    // pops the cache so the recorded history follows the document.
+    // clears the cache rather than guessing the client's deletion semantics.
     instance->eventDispatcher().schedule([instance]() {
         EngineHarness harness(instance);
         harness.set_config("SmartEnglish", "False");
@@ -165,11 +202,11 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.expect_commit("好");
         harness.key(fcitx::Key(FcitxKey_BackSpace));
         const auto cache = harness.engine_state()->context_cache;
-        FCITX_ASSERT(cache.valid());
-        FCITX_ASSERT(cache.window(100) == std::u16string(u"你"));
+        FCITX_ASSERT(!cache.valid());
+        FCITX_ASSERT(cache.window(100).empty());
     });
 
-    // Shift+Backspace is tracked too (it deletes backward in most editors).
+    // Shift+Backspace is equally ambiguous.
     instance->eventDispatcher().schedule([instance]() {
         EngineHarness harness(instance);
         harness.set_config("SmartEnglish", "False");
@@ -179,7 +216,29 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.expect_commit("好");
         harness.key(fcitx::Key(FcitxKey_BackSpace, fcitx::KeyState::Shift));
         const auto cache = harness.engine_state()->context_cache;
-        FCITX_ASSERT(cache.window(100) == std::u16string(u"你"));
+        FCITX_ASSERT(!cache.valid());
+    });
+
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        for (const auto* text : {u"prefix e\u0301", u"prefix \U0001F469\u200D\U0001F4BB"}) {
+            seed_cache(harness, text);
+            FCITX_ASSERT(!harness.key_accepted(fcitx::Key(FcitxKey_BackSpace)));
+            FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+        }
+        harness.set_surrounding("selected text", 0, 8);
+        seed_cache(harness, u"selected text");
+        FCITX_ASSERT(!harness.key_accepted(fcitx::Key(FcitxKey_BackSpace)));
+        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+    });
+
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        harness.set_config("SmartEnglish", "False");
+        seed_cache(harness, u"prefix");
+        harness.type("s");
+        FCITX_ASSERT(harness.key_accepted(fcitx::Key(FcitxKey_BackSpace)));
+        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"prefix");
     });
 
     // A caret jump (Up/Down/Home/End/Page) with an empty composition clears
@@ -227,10 +286,39 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
     });
 
+    // Pass-through edits under CapsLock and Shift+Space invalidate history
+    // because the application changes text outside the engine's view.
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        harness.set_config("CapsLockInputsBopomofo", "False");
+        seed_cache(harness, u"你");
+        harness.key(fcitx::Key(FcitxKey_A, fcitx::KeyState::CapsLock));
+        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+    });
+
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        seed_cache(harness, u"你");
+        harness.key(fcitx::Key("Shift+space"));
+        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+    });
+
     instance->eventDispatcher().schedule([instance]() {
         EngineHarness harness(instance);
         seed_cache(harness, u"你");
         harness.key(fcitx::Key(FcitxKey_Insert, fcitx::KeyState::Shift));
+        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+    });
+
+    // macOS Command is delivered as a Super/Meta-style modifier rather than
+    // Ctrl, but these shortcuts still modify the application's document.
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        seed_cache(harness, u"你");
+        harness.key(fcitx::Key(FcitxKey_v, fcitx::KeyState::Super));
+        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+        seed_cache(harness, u"prefix");
+        harness.key(fcitx::Key(FcitxKey_v, fcitx::KeyState::Meta));
         FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
     });
 

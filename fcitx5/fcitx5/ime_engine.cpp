@@ -266,6 +266,7 @@ void ImeEngine::enter_context(fcitx::InputContext* input_context) {
     mixed_decision_ = state->mixed_decision;
     context_cache_ = state->context_cache;
     context_cache_.set_limit(static_cast<size_t>(config_.context_history_limit));
+    context_cache_.set_surrounding_limit(static_cast<size_t>(config_.context_length));
     session_id_ = state->session_id;
     next_request_id_ = state->next_request_id;
     generation_ = state->generation;
@@ -360,6 +361,7 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
                 prediction_segment_indices_.clear();
                 update_ui(input_context);
             }
+            if (config_.context_edit_tracking) context_cache_.clear();
             return;
         }
     }
@@ -367,7 +369,10 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
     // Shift+space commits the composition followed by a space; with an empty
     // buffer the key passes through (mirrors McBopomofo's Shift+space).
     if (key == FcitxKey_space && (raw_key.states() & fcitx::KeyState::Shift)) {
-        if (composition_empty()) return;
+        if (composition_empty()) {
+            if (config_.context_edit_tracking) context_cache_.clear();
+            return;
+        }
         commit_composition_with(input_context, U' ');
         event.filterAndAccept();
         return;
@@ -375,27 +380,22 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
 
     // Edit tracking for clients that never push surrounding text. With an
     // empty composition the engine cannot see the document, so it heuristically
-    // keeps its context cache in sync. Only plain or Shift+Backspace has an
-    // exact effect; caret movement and other external edits invalidate it.
+    // invalidates context on external edits. Even plain Backspace may delete
+    // a selection or a multi-scalar grapheme rather than one scalar.
     // These keys always pass through to the application.
     if (composition_empty() && config_.context_edit_tracking) {
         const auto states = event.key().states();
-        const bool ctrl = static_cast<bool>(states & fcitx::KeyState::Ctrl);
-        const fcitx::KeyStates complex_modifiers{fcitx::KeyState::Ctrl, fcitx::KeyState::Alt,
-                                                 fcitx::KeyState::Hyper, fcitx::KeyState::Super,
-                                                 fcitx::KeyState::Super2, fcitx::KeyState::Hyper2,
-                                                 fcitx::KeyState::Meta};
-        if (key == FcitxKey_BackSpace && !states.testAny(complex_modifiers)) {
-            context_cache_.on_backspace(1);
-        } else if (key == FcitxKey_BackSpace || key == FcitxKey_Delete || key == FcitxKey_Left ||
+        const bool edit_shortcut = states.testAny(
+            fcitx::KeyStates{fcitx::KeyState::Ctrl, fcitx::KeyState::Super, fcitx::KeyState::Meta});
+        if (key == FcitxKey_BackSpace || key == FcitxKey_Delete || key == FcitxKey_Left ||
                    key == FcitxKey_Right || key == FcitxKey_Up || key == FcitxKey_Down ||
                    key == FcitxKey_Home || key == FcitxKey_End || key == FcitxKey_Page_Up ||
                    key == FcitxKey_Page_Down) {
             context_cache_.clear();
-        } else if (ctrl && (key == FcitxKey_z || key == FcitxKey_Z || key == FcitxKey_y ||
-                            key == FcitxKey_Y || key == FcitxKey_x || key == FcitxKey_X ||
-                            key == FcitxKey_a || key == FcitxKey_A || key == FcitxKey_v ||
-                            key == FcitxKey_V)) {
+        } else if (edit_shortcut && (key == FcitxKey_z || key == FcitxKey_Z || key == FcitxKey_y ||
+                                     key == FcitxKey_Y || key == FcitxKey_x || key == FcitxKey_X ||
+                                     key == FcitxKey_a || key == FcitxKey_A || key == FcitxKey_v ||
+                                     key == FcitxKey_V)) {
             context_cache_.clear();
         } else if (key == FcitxKey_Insert && static_cast<bool>(states & fcitx::KeyState::Shift)) {
             context_cache_.clear();
@@ -886,6 +886,7 @@ void ImeEngine::setConfig(const fcitx::RawConfig& config) {
     fcitx_config_.load(config, true);
     (void)fcitx_config_.version.setValue(DisplayVersion::Current);
     config_ = to_shared_config(fcitx_config_);
+    apply_context_cache_limits();
     save();
     ++generation_;
     inflight_request_id_.reset();
@@ -924,6 +925,23 @@ void ImeEngine::reload_config() {
     apply_shared_config(fcitx_config_, load_config());
     if (!has_fcitx_config) save();
     config_ = to_shared_config(fcitx_config_);
+    apply_context_cache_limits();
+}
+
+void ImeEngine::apply_context_cache_limits() {
+    const auto history_limit = static_cast<size_t>(config_.context_history_limit);
+    const auto surrounding_limit = static_cast<size_t>(config_.context_length);
+    context_cache_.set_limit(history_limit);
+    context_cache_.set_surrounding_limit(surrounding_limit);
+
+    if (instance_ == nullptr) return;
+    instance_->inputContextManager().foreach([this, history_limit, surrounding_limit](fcitx::InputContext* input_context) {
+        auto* state = property(input_context);
+        if (state == nullptr) return true;
+        state->context_cache.set_limit(history_limit);
+        state->context_cache.set_surrounding_limit(surrounding_limit);
+        return true;
+    });
 }
 
 void ImeEngine::update_ui(fcitx::InputContext* input_context) {
@@ -1775,13 +1793,11 @@ void ImeEngine::resync_context_cache(const fcitx::InputContext* input_context) {
     if (!surrounding.isValid()) return;
 
     try {
-        auto text = utf8_to_u32(surrounding.text());
-        const size_t cursor = std::min<size_t>({surrounding.cursor(), surrounding.anchor(), text.size()});
-        text.resize(cursor);
-
-        std::u16string context_utf16;
-        for (const char32_t codepoint : text) context_utf16 += to_utf16(codepoint);
-        context_cache_.on_surrounding(std::move(context_utf16), context_utf16.size());
+        const size_t cursor = std::min(surrounding.cursor(), surrounding.anchor());
+        const size_t limit = context_cache_.limit() > 0 ? context_cache_.limit()
+                                                       : context_cache_.surrounding_limit();
+        const auto text = utf8_prefix_tail(surrounding.text(), cursor, limit);
+        context_cache_.on_surrounding(text, text.size());
     } catch (const std::runtime_error&) {
         // Ignore malformed surrounding text supplied by a client.
     }

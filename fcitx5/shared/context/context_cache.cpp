@@ -49,30 +49,42 @@ void ContextCache::on_commit(std::u16string text) {
     trim_to_limit();
 }
 
-void ContextCache::trim_to_limit() noexcept {
-    if (limit_ == 0 || history_.size() <= limit_) return;
-    size_t start = history_.size() - limit_;
+void ContextCache::trim_to_limit() {
+    trim_to(limit_);
+}
+
+void ContextCache::trim_to(size_t limit) {
+    if (limit == 0) {
+        clear();
+        return;
+    }
+    if (history_.size() <= limit) return;
+    size_t start = history_.size() - limit;
     snap_after_split_pair(history_, start);
     if (start > history_.size()) start = history_.size();
-    history_.erase(0, start);
+    std::u16string(history_, start).swap(history_);
     if (history_.empty()) valid_ = false;
 }
 
-void ContextCache::on_surrounding(std::u16string text, size_t cursor) {
+void ContextCache::on_surrounding(std::u16string_view text, size_t cursor) {
     cursor = std::min(cursor, text.size());
-    text.resize(cursor);
+    text = text.substr(0, cursor);
 
     const size_t scalar_units = scalar_prefix_units(text);
-    if (scalar_units < text.size()) text.erase(scalar_units);
+    text = text.substr(0, scalar_units);
+    const size_t limit = limit_ > 0 ? limit_ : surrounding_limit_;
+    size_t start = text.size() > limit ? text.size() - limit : 0;
+    snap_after_split_pair(text, start);
+    text.remove_prefix(start);
 
     if (text.empty()) {
         clear();
         return;
     }
 
-    history_ = std::move(text);
+    // Copy only the retained tail, releasing any larger previous allocation.
+    std::u16string(text).swap(history_);
     valid_ = true;
-    trim_to_limit();
 }
 
 void ContextCache::on_backspace(size_t count) {
@@ -97,7 +109,7 @@ std::u16string ContextCache::window(size_t limit) const {
 }
 
 void ContextCache::clear() noexcept {
-    history_.clear();
+    std::u16string().swap(history_);
     valid_ = false;
 }
 
