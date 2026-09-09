@@ -3,31 +3,6 @@ include(FindPackageHandleStandardArgs)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FCITX5_CORE IMPORTED_TARGET Fcitx5Core)
 
-if(FCITX5_CORE_FOUND)
-    # Fcitx5Core.pc exposes the installation prefix and libdir, but not
-    # addonlibdir/pkgdatadir. Derive the Fcitx5-specific directories from
-    # those actual package paths so Fedora's lib64, Debian multiarch libdirs,
-    # Arch's lib, and non-/usr prefixes are all handled correctly.
-    pkg_get_variable(FCITX5_CORE_LIBDIR Fcitx5Core libdir)
-    pkg_get_variable(FCITX5_CORE_PREFIX Fcitx5Core prefix)
-
-    if(NOT DEFINED FCITX_INSTALL_ADDONDIR OR FCITX_INSTALL_ADDONDIR STREQUAL "")
-        if(FCITX5_CORE_LIBDIR)
-            set(FCITX_INSTALL_ADDONDIR "${FCITX5_CORE_LIBDIR}/fcitx5")
-        else()
-            set(FCITX_INSTALL_ADDONDIR "${CMAKE_INSTALL_FULL_LIBDIR}/fcitx5")
-        endif()
-    endif()
-
-    if(NOT DEFINED FCITX_INSTALL_PKGDATADIR OR FCITX_INSTALL_PKGDATADIR STREQUAL "")
-        if(FCITX5_CORE_PREFIX)
-            set(FCITX_INSTALL_PKGDATADIR "${FCITX5_CORE_PREFIX}/share/fcitx5")
-        else()
-            set(FCITX_INSTALL_PKGDATADIR "${CMAKE_INSTALL_FULL_DATADIR}/fcitx5")
-        endif()
-    endif()
-endif()
-
 if(NOT FCITX5_CORE_FOUND AND APPLE)
     set(FCITX5_MACOS_SOURCE_DIR "$ENV{FCITX5_MACOS_SOURCE_DIR}" CACHE PATH "fcitx5-macos source checkout")
     set(FCITX5_MACOS_APP_CONTENTS "/Library/Input Methods/Fcitx5.app/Contents" CACHE PATH "Fcitx5.app Contents path")
