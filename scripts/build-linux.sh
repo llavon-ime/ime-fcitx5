@@ -21,12 +21,25 @@ case "$(uname -m)" in
         ;;
 esac
 
-for command in git cmake curl install pkg-config; do
+for command in git cmake curl install pkg-config sed; do
     if ! command -v "${command}" >/dev/null 2>&1; then
         echo "Required command not found: ${command}" >&2
         exit 2
     fi
 done
+
+DISPLAY_VERSION="${IME_FCITX5_VERSION:-}"
+if [[ -z "${DISPLAY_VERSION}" ]]; then
+    describe="$(git -C "${ROOT_DIR}" describe --long --tags --abbrev=7 2>/dev/null || true)"
+    if [[ -n "${describe}" ]]; then
+        DISPLAY_VERSION="$(printf '%s\n' "${describe}" | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g')"
+    else
+        base_version="$(sed -n 's/^project(llavon-ime VERSION \([^ ]*\).*/\1/p' "${ROOT_DIR}/fcitx5/CMakeLists.txt")"
+        base_version="${base_version:-0.1.0}"
+        DISPLAY_VERSION="${base_version}.r$(git -C "${ROOT_DIR}" rev-list --count HEAD).g$(git -C "${ROOT_DIR}" rev-parse --short=7 HEAD)"
+    fi
+fi
+echo "Llavon IME display version: ${DISPLAY_VERSION}"
 
 SUDO=()
 if ((EUID != 0)); then
@@ -73,7 +86,9 @@ echo "Building and testing ime-unix-service..."
 echo "Building and testing fcitx5 addon..."
 (
     cd "${ROOT_DIR}/fcitx5"
-    cmake --preset linux -DIME_FCITX5_INSTALLED_MODEL_PATH="${MODEL_INSTALL_PATH}"
+    cmake --preset linux \
+        -DIME_FCITX5_INSTALLED_MODEL_PATH="${MODEL_INSTALL_PATH}" \
+        -DIME_FCITX5_DISPLAY_VERSION="${DISPLAY_VERSION}"
     cmake --build --preset linux --parallel
     ctest --preset linux
 )
