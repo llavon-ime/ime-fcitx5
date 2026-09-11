@@ -1,0 +1,15 @@
+* text=auto eol=lf
+
+# Keep scripts executed by cmd.exe in the conventional Windows format.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never apply newline conversion to binary artifacts.
+*.dll binary
+*.exe binary
+*.gguf binary
+*.ico binary
+*.lib binary
+*.msi binary
+*.png binary
+*.zip binary
