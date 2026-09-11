@@ -1,0 +1,9 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+find_dependency(llama CONFIG)
+find_dependency(reflectcpp CONFIG)
+find_dependency(utf8cpp CONFIG)
+
+include("${CMAKE_CURRENT_LIST_DIR}/ime-core-targets.cmake")

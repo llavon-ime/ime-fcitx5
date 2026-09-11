@@ -1,0 +1,44 @@
+{
+  "name": "ime-core",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "llama-cpp",
+    "reflectcpp",
+    "utfcpp"
+  ],
+  "features": {
+    "llama-cuda": {
+      "description": "Build llama.cpp with CUDA backend for GPU offload.",
+      "dependencies": [
+        {
+          "name": "ggml",
+          "features": [
+            "cuda"
+          ]
+        }
+      ]
+    },
+    "llama-vulkan": {
+      "description": "Build llama.cpp with Vulkan backend for GPU offload.",
+      "dependencies": [
+        {
+          "name": "ggml",
+          "features": [
+            "vulkan"
+          ]
+        }
+      ]
+    },
+    "llama-metal": {
+      "description": "Build llama.cpp with Metal backend for GPU offload.",
+      "dependencies": [
+        {
+          "name": "ggml",
+          "features": [
+            "metal"
+          ]
+        }
+      ]
+    }
+  }
+}
