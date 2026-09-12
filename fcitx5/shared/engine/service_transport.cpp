@@ -255,7 +255,9 @@ bool ServiceTransport::ensure_connected() {
     }
 
     int fd = connect_socket(options_.socket_path);
-    if (fd < 0 && options_.auto_start && !options_.service_path.empty()) {
+    const bool spawn_allowed = options_.auto_start && !options_.service_path.empty() &&
+                               std::chrono::steady_clock::now() >= spawn_backoff_until_;
+    if (fd < 0 && spawn_allowed) {
         std::vector<std::string> arguments;
         arguments.emplace_back(options_.service_path.string());
         arguments.emplace_back("--socket");
@@ -284,6 +286,9 @@ bool ServiceTransport::ensure_connected() {
                 fd = connect_socket(options_.socket_path);
             }
         }
+    }
+    if (fd < 0 && spawn_allowed) {
+        spawn_backoff_until_ = std::chrono::steady_clock::now() + std::chrono::seconds(30);
     }
     if (fd < 0) return false;
 

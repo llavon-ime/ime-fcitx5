@@ -27,6 +27,8 @@ class EventDispatcher;
 
 namespace ime::fcitx5 {
 
+class AccessibilityContextProvider;
+
 class ImeEngine final : public fcitx::InputMethodEngineV2 {
 public:
     explicit ImeEngine(fcitx::Instance* instance);
@@ -34,6 +36,7 @@ public:
 
     void keyEvent(const fcitx::InputMethodEntry& entry, fcitx::KeyEvent& event) override;
     void activate(const fcitx::InputMethodEntry& entry, fcitx::InputContextEvent& event) override;
+    void deactivate(const fcitx::InputMethodEntry& entry, fcitx::InputContextEvent& event) override;
     void reset(const fcitx::InputMethodEntry& entry, fcitx::InputContextEvent& event) override;
     void reloadConfig() override;
     void save() override;
@@ -58,6 +61,7 @@ private:
     void leave_context();
     void reload_config();
     void apply_context_cache_limits();
+    void apply_context_sources();
     void update_ui(fcitx::InputContext* input_context);
     void commit_current(fcitx::InputContext* input_context);
     bool handle_english_letter(fcitx::InputContext* input_context, char32_t letter, bool caps_on);
@@ -131,6 +135,9 @@ private:
     PendingInput pending_token_;
     MixedDecisionState mixed_decision_;
     ContextCache context_cache_;
+    std::unique_ptr<AccessibilityContextProvider> accessibility_context_;
+    std::uint64_t accessibility_base_sequence_ = 0;
+    std::size_t accessibility_max_code_units_ = 0;
 
     protocol::SessionId session_id_{};
     std::uint64_t next_request_id_ = 1;

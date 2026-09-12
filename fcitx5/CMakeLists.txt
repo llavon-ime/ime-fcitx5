@@ -51,6 +51,10 @@ target_compile_options(ime_fcitx5_shared PRIVATE -Wall -Wextra -Wpedantic)
 
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(Threads REQUIRED)
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND AND NOT WIN32)
+    pkg_check_modules(ATSPI QUIET IMPORTED_TARGET atspi-2 gobject-2.0)
+endif()
 target_sources(ime_fcitx5_shared PRIVATE shared/config/config.cpp)
 target_sources(ime_fcitx5_shared PRIVATE
     shared/text/utf.cpp
@@ -65,6 +69,7 @@ target_sources(ime_fcitx5_shared PRIVATE
     shared/input/mixed_input_decoder.cpp
     shared/protocol/protocol.cpp
     shared/symbol/symbol_menu.cpp
+    shared/context/accessibility_context.cpp
 )
 if(NOT WIN32)
     target_sources(ime_fcitx5_shared PRIVATE
@@ -73,6 +78,11 @@ if(NOT WIN32)
     )
 endif()
 target_link_libraries(ime_fcitx5_shared PUBLIC nlohmann_json::nlohmann_json Threads::Threads)
+if(ATSPI_FOUND AND NOT WIN32)
+    target_sources(ime_fcitx5_shared PRIVATE shared/atspi/atspi_context_provider.cpp)
+    target_compile_definitions(ime_fcitx5_shared PRIVATE IME_FCITX5_HAVE_ATSPI=1)
+    target_link_libraries(ime_fcitx5_shared PRIVATE PkgConfig::ATSPI)
+endif()
 install(FILES "${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/llavon-ime/tables")
 install(DIRECTORY "${IME_FCITX5_TABLE_SOURCE_DIR}/tokens"
@@ -124,6 +134,20 @@ elseif(Fcitx5_FOUND)
     message(STATUS "llavon-ime Fcitx5 frontend is only built on Linux/macOS")
 else()
     message(STATUS "fcitx5 development files not found; skipping llavon-ime-addon")
+endif()
+
+# Standalone probe that reports the text before the caret of the currently
+# focused editable widget through the same AT-SPI provider the addon uses. It
+# validates on a real desktop that the a11y bus provides reliable, low-latency
+# context for IME prediction.
+if(ATSPI_FOUND AND NOT WIN32)
+    add_executable(atspi_probe tools/atspi_probe.cpp)
+    target_include_directories(atspi_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/shared")
+    target_link_libraries(atspi_probe PRIVATE PkgConfig::ATSPI ime_fcitx5_shared)
+    target_compile_options(atspi_probe PRIVATE -Wall -Wextra)
+    install(TARGETS atspi_probe RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+elseif(PkgConfig_FOUND AND NOT WIN32)
+    message(STATUS "atspi-2 not found; skipping atspi_probe tool")
 endif()
 
 if(IME_FCITX5_BUILD_TESTS)

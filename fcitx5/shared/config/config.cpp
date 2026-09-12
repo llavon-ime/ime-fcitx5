@@ -268,6 +268,7 @@ Config config_from_fcitx_ini(const std::filesystem::path& path) {
     cfg.context_history_limit = ini_int_field(fields, "ContextHistoryLimit", cfg.context_history_limit, 0, 1048576);
     cfg.reset_context_on_focus_out = ini_bool_field(fields, "ResetContextOnFocusOut", cfg.reset_context_on_focus_out);
     cfg.context_edit_tracking = ini_bool_field(fields, "ContextEditTracking", cfg.context_edit_tracking);
+    cfg.use_accessibility_context = ini_bool_field(fields, "UseAccessibilityContext", cfg.use_accessibility_context);
     return cfg;
 }
 
@@ -374,6 +375,7 @@ nlohmann::json to_json(const Config& cfg) {
         {"context_history_limit", cfg.context_history_limit},
         {"reset_context_on_focus_out", cfg.reset_context_on_focus_out},
         {"context_edit_tracking", cfg.context_edit_tracking},
+        {"use_accessibility_context", cfg.use_accessibility_context},
     };
 }
 
@@ -406,6 +408,7 @@ Config config_from_json(const nlohmann::json& json) {
     cfg.context_history_limit = int_field(json, "context_history_limit", cfg.context_history_limit, 0, 1048576);
     cfg.reset_context_on_focus_out = bool_field(json, "reset_context_on_focus_out", cfg.reset_context_on_focus_out);
     cfg.context_edit_tracking = bool_field(json, "context_edit_tracking", cfg.context_edit_tracking);
+    cfg.use_accessibility_context = bool_field(json, "use_accessibility_context", cfg.use_accessibility_context);
     return cfg;
 }
 

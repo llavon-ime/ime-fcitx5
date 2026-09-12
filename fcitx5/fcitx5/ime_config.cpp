@@ -113,6 +113,7 @@ Config to_shared_config(const ImeFcitxConfig& config) {
     shared.context_history_limit = *config.contextHistoryLimit;
     shared.reset_context_on_focus_out = *config.resetContextOnFocusOut;
     shared.context_edit_tracking = *config.contextEditTracking;
+    shared.use_accessibility_context = *config.useAccessibilityContext;
     return shared;
 }
 
@@ -138,6 +139,7 @@ void apply_shared_config(ImeFcitxConfig& target, const Config& source) {
     (void)target.contextHistoryLimit.setValue(source.context_history_limit);
     (void)target.resetContextOnFocusOut.setValue(source.reset_context_on_focus_out);
     (void)target.contextEditTracking.setValue(source.context_edit_tracking);
+    (void)target.useAccessibilityContext.setValue(source.use_accessibility_context);
 }
 
 }  // namespace ime::fcitx5

@@ -17,6 +17,7 @@ void engine_test_candidate_navigation_tests(fcitx::Instance* instance);
 void engine_test_punctuation_tests(fcitx::Instance* instance);
 void engine_test_shift_letter_tests(fcitx::Instance* instance);
 void engine_test_context_cache(fcitx::Instance* instance);
+void engine_test_context_source(fcitx::Instance* instance);
 void engine_test_async_state_tests(fcitx::Instance* instance);
 void engine_test_smart_candidate(fcitx::Instance* instance);
 void engine_test_smart_chat(fcitx::Instance* instance);
@@ -44,6 +45,23 @@ int main() {
     setenv("FCITX_CONFIG_HOME", config_home.c_str(), 1);
     setenv("XDG_CONFIG_HOME", config_home.c_str(), 1);
 
+    // Back the accessibility context source with a file instead of the
+    // desktop accessibility bus so tests never depend on a running desktop.
+    const auto sample_path = config_home / "atspi-sample.txt";
+    setenv("IME_FCITX5_CONTEXT_SAMPLE_FILE", sample_path.c_str(), 1);
+    unsetenv("IME_FCITX5_ATSPI_SAMPLE_FILE");
+    unsetenv("IME_FCITX5_DISABLE_ATSPI");
+    std::filesystem::remove(sample_path);
+
+    // Keep predictions deterministic: never connect to (or auto-start) a real
+    // unix service from the engine tests. Without this, a warm service answers
+    // mid-test and reorders fallback candidates.
+    // Keep predictions deterministic and fast: never connect to a real unix
+    // service, and never pay the auto-start retry on every prediction.
+    setenv("LLAVON_IME_UNIX_SOCKET_PATH", (config_home / "no-service.sock").c_str(), 1);
+    setenv("LLAVON_IME_UNIX_SERVICE_PATH", (config_home / "no-service").c_str(), 1);
+    setenv("IME_FCITX5_DISABLE_SERVICE", "1", 1);
+
     char arg0[] = "test-engine";
     char arg1[] = "--disable=all";
     char arg2[] = "--enable=testim,testfrontend,llavon-ime";
@@ -58,6 +76,7 @@ int main() {
     engine_test_punctuation_tests(&instance);
     engine_test_shift_letter_tests(&instance);
     engine_test_context_cache(&instance);
+    engine_test_context_source(&instance);
     engine_test_async_state_tests(&instance);
     engine_test_smart_candidate(&instance);
     engine_test_smart_chat(&instance);
