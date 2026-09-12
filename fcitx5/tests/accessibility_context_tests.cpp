@@ -75,6 +75,17 @@ bool test_disabled_start() {
     return ok;
 }
 
+bool test_missing_library_is_graceful() {
+    ScopedEnv disable("IME_FCITX5_DISABLE_ATSPI", nullptr);
+    ScopedEnv sample("IME_FCITX5_CONTEXT_SAMPLE_FILE", nullptr);
+    ScopedEnv legacy("IME_FCITX5_ATSPI_SAMPLE_FILE", nullptr);
+    ScopedEnv library("IME_FCITX5_ATSPI_LIBRARY", "/nonexistent/llavon-ime-libatspi.so.0");
+    auto provider = make_provider(64);
+    bool ok = check(!provider->start(), "a missing AT-SPI library is not fatal");
+    ok &= check(!provider->running(), "a missing library leaves the provider stopped");
+    return ok;
+}
+
 bool test_file_backed_sample() {
     const auto path = std::filesystem::temp_directory_path() / "llavon-ime-context-sample-test.txt";
     std::filesystem::remove(path);
@@ -224,6 +235,7 @@ int run_accessibility_context_tests() {
     bool ok = true;
     ok &= test_publish_and_sequence();
     ok &= test_disabled_start();
+    ok &= test_missing_library_is_graceful();
     ok &= test_file_backed_sample();
     ok &= test_legacy_sample_alias();
     ok &= test_file_sample_bounded_utf16();
