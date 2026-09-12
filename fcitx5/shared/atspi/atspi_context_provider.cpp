@@ -6,22 +6,208 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdlib>
+#include <cstring>
+#include <filesystem>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include <atspi/atspi.h>
-
+#include <dlfcn.h>
+#include <gio/gio.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 
-#include <cstring>
-#include <filesystem>
-
 namespace ime::fcitx5 {
+
+// libatspi is optional at runtime: it is loaded with dlopen so the addon still
+// loads on systems without at-spi2-core. When the library is missing the
+// provider reports itself unavailable and the engine keeps using the commit
+// cache. IME_FCITX5_ATSPI_LIBRARY overrides the library name for tests.
+struct AtspiLibrary {
+    using Init = void (*)();
+    using IsInitialized = gboolean (*)();
+    using SetTimeout = void (*)(gint, gint);
+    using Exit = void (*)();
+    using GetDesktopCount = gint (*)();
+    using GetDesktop = AtspiAccessible* (*)(gint);
+    using GetTextIface = AtspiText* (*)(AtspiAccessible*);
+    using GetRole = AtspiRole (*)(AtspiAccessible*, GError**);
+    using GetChildCount = gint (*)(AtspiAccessible*, GError**);
+    using GetChildAtIndex = AtspiAccessible* (*)(AtspiAccessible*, gint, GError**);
+    using GetStateSet = AtspiStateSet* (*)(AtspiAccessible*);
+    using StateSetContains = gboolean (*)(AtspiStateSet*, AtspiStateType);
+    using TextGetCaretOffset = gint (*)(AtspiText*, GError**);
+    using TextGetText = gchar* (*)(AtspiText*, gint, gint, GError**);
+    using ListenerNewSimple = AtspiEventListener* (*)(AtspiEventListenerSimpleCB, GDestroyNotify);
+    using ListenerRegister = gboolean (*)(AtspiEventListener*, const gchar*, GError**);
+
+    bool open() {
+        if (handle != nullptr) return true;
+        const char* override = std::getenv("IME_FCITX5_ATSPI_LIBRARY");
+        const char* name = override != nullptr && override[0] != '\0' ? override : "libatspi.so.0";
+        handle = ::dlopen(name, RTLD_NOW | RTLD_LOCAL);
+        if (handle == nullptr) return false;
+
+#define IME_FCITX5_LOAD_ATSPI(field, symbol)                                  \
+    field = reinterpret_cast<decltype(field)>(::dlsym(handle, #symbol));      \
+    if (field == nullptr) {                                                   \
+        close();                                                              \
+        return false;                                                         \
+    }
+        IME_FCITX5_LOAD_ATSPI(init, atspi_init)
+        IME_FCITX5_LOAD_ATSPI(is_initialized, atspi_is_initialized)
+        IME_FCITX5_LOAD_ATSPI(set_timeout, atspi_set_timeout)
+        IME_FCITX5_LOAD_ATSPI(exit, atspi_exit)
+        IME_FCITX5_LOAD_ATSPI(get_desktop_count, atspi_get_desktop_count)
+        IME_FCITX5_LOAD_ATSPI(get_desktop, atspi_get_desktop)
+        IME_FCITX5_LOAD_ATSPI(get_text_iface, atspi_accessible_get_text_iface)
+        IME_FCITX5_LOAD_ATSPI(get_role, atspi_accessible_get_role)
+        IME_FCITX5_LOAD_ATSPI(get_child_count, atspi_accessible_get_child_count)
+        IME_FCITX5_LOAD_ATSPI(get_child_at_index, atspi_accessible_get_child_at_index)
+        IME_FCITX5_LOAD_ATSPI(get_state_set, atspi_accessible_get_state_set)
+        IME_FCITX5_LOAD_ATSPI(state_set_contains, atspi_state_set_contains)
+        IME_FCITX5_LOAD_ATSPI(text_get_caret_offset, atspi_text_get_caret_offset)
+        IME_FCITX5_LOAD_ATSPI(text_get_text, atspi_text_get_text)
+        IME_FCITX5_LOAD_ATSPI(listener_new_simple, atspi_event_listener_new_simple)
+        IME_FCITX5_LOAD_ATSPI(listener_register, atspi_event_listener_register)
+#undef IME_FCITX5_LOAD_ATSPI
+        return true;
+    }
+
+    void close() {
+        if (handle != nullptr) ::dlclose(handle);
+        handle = nullptr;
+    }
+
+    void* handle = nullptr;
+    Init init = nullptr;
+    IsInitialized is_initialized = nullptr;
+    SetTimeout set_timeout = nullptr;
+    Exit exit = nullptr;
+    GetDesktopCount get_desktop_count = nullptr;
+    GetDesktop get_desktop = nullptr;
+    GetTextIface get_text_iface = nullptr;
+    GetRole get_role = nullptr;
+    GetChildCount get_child_count = nullptr;
+    GetChildAtIndex get_child_at_index = nullptr;
+    GetStateSet get_state_set = nullptr;
+    StateSetContains state_set_contains = nullptr;
+    TextGetCaretOffset text_get_caret_offset = nullptr;
+    TextGetText text_get_text = nullptr;
+    ListenerNewSimple listener_new_simple = nullptr;
+    ListenerRegister listener_register = nullptr;
+
+    ~AtspiLibrary() { close(); }
+};
+
+namespace {
+
+bool connect_unix_path(const std::string& path) {
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return false;
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    if (path.size() >= sizeof(addr.sun_path)) {
+        ::close(fd);
+        return false;
+    }
+    std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
+    const int rc = ::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+    ::close(fd);
+    return rc == 0;
+}
+
+bool connect_unix_abstract(const std::string& name) {
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return false;
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    if (name.size() + 1 > sizeof(addr.sun_path)) {
+        ::close(fd);
+        return false;
+    }
+    addr.sun_path[0] = '\0';
+    std::memcpy(addr.sun_path + 1, name.data(), name.size());
+    const socklen_t length = static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) + 1 + name.size());
+    const int rc = ::connect(fd, reinterpret_cast<sockaddr*>(&addr), length);
+    ::close(fd);
+    return rc == 0;
+}
+
+bool connect_bus_address(const std::string& address) {
+    constexpr std::string_view path_prefix = "unix:path=";
+    constexpr std::string_view abstract_prefix = "unix:abstract=";
+    const std::string_view base = std::string_view(address).substr(0, address.find(','));
+    if (base.rfind(path_prefix, 0) == 0) return connect_unix_path(std::string(base.substr(path_prefix.size())));
+    if (base.rfind(abstract_prefix, 0) == 0) {
+        return connect_unix_abstract(std::string(base.substr(abstract_prefix.size())));
+    }
+    return false;
+}
+
+bool scan_atspi_dir(const std::filesystem::path& dir) {
+    std::error_code ec;
+    std::filesystem::directory_iterator it(dir, ec);
+    if (ec) return false;
+    for (const auto& entry : it) {
+        if (connect_unix_path(entry.path().string())) return true;
+    }
+    return false;
+}
+
+// Asking org.a11y.Bus for its address starts at-spi-bus-launcher through D-Bus
+// activation on desktops that do not keep the accessibility bus running.
+std::string query_a11y_bus_address() {
+    GError* error = nullptr;
+    GDBusConnection* connection = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, &error);
+    if (connection == nullptr) {
+        g_clear_error(&error);
+        return {};
+    }
+
+    GVariant* result = g_dbus_connection_call_sync(
+        connection, "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress", nullptr,
+        G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 2000, nullptr, &error);
+    std::string address;
+    if (result != nullptr) {
+        const char* value = nullptr;
+        g_variant_get(result, "(&s)", &value);
+        if (value != nullptr) address = value;
+        g_variant_unref(result);
+    }
+    g_clear_error(&error);
+    g_object_unref(connection);
+    return address;
+}
+
+bool bus_reachable() {
+    if (const char* address = std::getenv("AT_SPI_BUS_ADDRESS"); address != nullptr && address[0] != '\0') {
+        if (connect_bus_address(address)) return true;
+    }
+
+    std::vector<std::filesystem::path> dirs;
+    if (const char* runtime = std::getenv("XDG_RUNTIME_DIR"); runtime != nullptr && runtime[0] != '\0') {
+        dirs.emplace_back(std::filesystem::path(runtime) / "at-spi");
+    }
+    std::filesystem::path fallback(
+        "/run/user/" + std::to_string(static_cast<long long>(::getuid())) + "/at-spi");
+    if (dirs.empty() || dirs.front() != fallback) dirs.push_back(fallback);
+    for (const auto& dir : dirs) {
+        if (scan_atspi_dir(dir)) return true;
+    }
+
+    const std::string activated = query_a11y_bus_address();
+    return !activated.empty() && connect_bus_address(activated);
+}
+
+}  // namespace
 
 class AtspiContextProvider::Impl {
 public:
@@ -52,49 +238,15 @@ public:
 private:
     static inline Impl* active_instance_ = nullptr;
 
-    static bool connect_unix(const std::string& path) {
-        const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-        if (fd < 0) return false;
-        sockaddr_un addr{};
-        addr.sun_family = AF_UNIX;
-        if (path.size() >= sizeof(addr.sun_path)) {
-            ::close(fd);
-            return false;
-        }
-        std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
-        const int rc = ::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-        ::close(fd);
-        return rc == 0;
-    }
-
-    static std::string reachable_bus_socket() {
-        const char* address = std::getenv("AT_SPI_BUS_ADDRESS");
-        if (address == nullptr) {
-            const std::string dir =
-                "/run/user/" + std::to_string(static_cast<long long>(::getuid())) + "/at-spi";
-            std::error_code ec;
-            std::filesystem::directory_iterator it(dir, ec);
-            if (ec) return {};
-            for (const auto& entry : it) {
-                const auto candidate = entry.path().string();
-                if (connect_unix(candidate)) return candidate;
-            }
-            return {};
-        }
-        std::string path(address);
-        if (path.rfind("unix:path=", 0) == 0) path = path.substr(10);
-        return connect_unix(path) ? path : std::string();
-    }
-
-    static bool is_password_text(AtspiAccessible* object) {
+    static bool is_password_text(AtspiLibrary& api, AtspiAccessible* object) {
         GError* error = nullptr;
-        const AtspiRole role = atspi_accessible_get_role(object, &error);
+        const AtspiRole role = api.get_role(object, &error);
         g_clear_error(&error);
         return role == ATSPI_ROLE_PASSWORD_TEXT;
     }
 
-    static bool has_text_interface(AtspiAccessible* object) {
-        AtspiText* text = atspi_accessible_get_text_iface(object);
+    static bool has_text_interface(AtspiLibrary& api, AtspiAccessible* object) {
+        AtspiText* text = api.get_text_iface(object);
         if (text == nullptr) return false;
         g_object_unref(text);
         return true;
@@ -104,15 +256,15 @@ private:
         if (root == nullptr || depth > kMaxTreeDepth || *visits >= kMaxTreeVisits) return nullptr;
         ++*visits;
 
-        AtspiStateSet* states = atspi_accessible_get_state_set(root);
-        const bool focused = states != nullptr && atspi_state_set_contains(states, ATSPI_STATE_FOCUSED);
+        AtspiStateSet* states = api_.get_state_set(root);
+        const bool focused = states != nullptr && api_.state_set_contains(states, ATSPI_STATE_FOCUSED);
         if (states != nullptr) g_object_unref(states);
-        if (focused && has_text_interface(root) && !is_password_text(root)) return g_object_ref(root);
+        if (focused && has_text_interface(api_, root) && !is_password_text(api_, root)) return g_object_ref(root);
 
-        const int children = atspi_accessible_get_child_count(root, nullptr);
+        const int children = api_.get_child_count(root, nullptr);
         for (int i = 0; i < children; ++i) {
             GError* error = nullptr;
-            AtspiAccessible* child = atspi_accessible_get_child_at_index(root, i, &error);
+            AtspiAccessible* child = api_.get_child_at_index(root, i, &error);
             g_clear_error(&error);
             if (child == nullptr) continue;
             AtspiAccessible* found = find_focused_text(child, depth + 1, visits);
@@ -124,9 +276,9 @@ private:
 
     AtspiAccessible* focused_text_object() {
         int visits = 0;
-        const int count = atspi_get_desktop_count();
+        const int count = api_.get_desktop_count();
         for (int i = 0; i < count; ++i) {
-            AtspiAccessible* desktop = atspi_get_desktop(i);
+            AtspiAccessible* desktop = api_.get_desktop(i);
             if (desktop == nullptr) continue;
             if (AtspiAccessible* found = find_focused_text(desktop, 0, &visits)) return found;
         }
@@ -134,18 +286,18 @@ private:
     }
 
     void publish_from_object(AtspiAccessible* object) {
-        if (object == nullptr || is_password_text(object)) {
+        if (object == nullptr || is_password_text(api_, object)) {
             owner_.publish(std::u16string(), false);
             return;
         }
-        AtspiText* text = atspi_accessible_get_text_iface(object);
+        AtspiText* text = api_.get_text_iface(object);
         if (text == nullptr) {
             owner_.publish(std::u16string(), false);
             return;
         }
 
         GError* error = nullptr;
-        const gint caret = atspi_text_get_caret_offset(text, &error);
+        const gint caret = api_.text_get_caret_offset(text, &error);
         if (error != nullptr || caret < 0) {
             g_clear_error(&error);
             g_object_unref(text);
@@ -156,7 +308,7 @@ private:
         const gint window =
             static_cast<gint>(std::min<size_t>(max_code_units_, static_cast<size_t>(kMaxRequestCharacters)));
         const gint start = caret > window ? caret - window : 0;
-        gchar* raw = atspi_text_get_text(text, start, caret, &error);
+        gchar* raw = api_.text_get_text(text, start, caret, &error);
         std::u16string sample;
         bool usable = false;
         if (error == nullptr && raw != nullptr) {
@@ -218,7 +370,7 @@ private:
         // publish the previous field's text with a fresh sequence right after
         // the engine switched contexts.
         if (type == "object:state-changed:focused" && event->detail1 == 0) {
-            if (event->source != nullptr && has_text_interface(event->source)) {
+            if (event->source != nullptr && has_text_interface(self->api_, event->source)) {
                 if (self->pending_source_ != nullptr) {
                     g_object_unref(self->pending_source_);
                     self->pending_source_ = nullptr;
@@ -227,8 +379,8 @@ private:
             }
             return;
         }
-        if (event->source != nullptr && has_text_interface(event->source)) {
-            if (is_password_text(event->source)) {
+        if (event->source != nullptr && has_text_interface(self->api_, event->source)) {
+            if (is_password_text(self->api_, event->source)) {
                 self->owner_.publish(std::u16string(), false);
                 return;
             }
@@ -244,16 +396,16 @@ private:
         bool ok = false;
         AtspiEventListener* listener = nullptr;
         do {
-            if (reachable_bus_socket().empty()) break;
-            atspi_init();
-            if (!atspi_is_initialized()) break;
-            atspi_set_timeout(1000, 1000);
+            if (!bus_reachable()) break;
+            api_.init();
+            if (!api_.is_initialized()) break;
+            api_.set_timeout(1000, 1000);
 
             GError* error = nullptr;
-            listener = atspi_event_listener_new_simple(&Impl::on_event, nullptr);
-            if (!atspi_event_listener_register(listener, "object:state-changed:focused", &error) ||
-                !atspi_event_listener_register(listener, "object:text-caret-moved", &error) ||
-                !atspi_event_listener_register(listener, "object:text-changed", &error)) {
+            listener = api_.listener_new_simple(&Impl::on_event, nullptr);
+            if (!api_.listener_register(listener, "object:state-changed:focused", &error) ||
+                !api_.listener_register(listener, "object:text-caret-moved", &error) ||
+                !api_.listener_register(listener, "object:text-changed", &error)) {
                 g_clear_error(&error);
                 break;
             }
@@ -287,7 +439,7 @@ private:
         g_object_unref(listener);
         g_main_loop_unref(loop_);
         loop_ = nullptr;
-        atspi_exit();
+        api_.exit();
         g_main_context_pop_thread_default(context_);
         g_main_context_unref(context_);
         context_ = nullptr;
@@ -295,6 +447,7 @@ private:
     }
 
     bool start_backend() {
+        if (!api_.open()) return false;
         {
             std::lock_guard lock(ready_mutex_);
             ready_ = false;
@@ -316,6 +469,7 @@ private:
 
     AtspiContextProvider& owner_;
     size_t max_code_units_ = 0;
+    AtspiLibrary api_;
     std::atomic<bool> running_{false};
     GMainContext* context_ = nullptr;
     GMainLoop* loop_ = nullptr;

@@ -32,6 +32,23 @@ void engine_test_context_source(fcitx::Instance* instance) {
         std::filesystem::remove(path);
     });
 
+    // Disabling self-managed history must not disable the accessibility
+    // source: the sample is adopted through the surrounding-text budget.
+    instance->eventDispatcher().schedule([instance, path]() {
+        {
+            std::ofstream output(path, std::ios::binary | std::ios::trunc);
+            output << "歷史關閉仍可用";
+        }
+        EngineHarness harness(instance);
+        harness.set_configs({{"SmartEnglish", "False"},
+                             {"UseAccessibilityContext", "True"},
+                             {"ContextHistoryLimit", "0"}});
+        harness.type("su3");
+        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"歷史關閉仍可用");
+        std::filesystem::remove(path);
+        harness.set_config("ContextHistoryLimit", "1024");
+    });
+
     // An unusable sample (missing file) leaves the self-managed history alone.
     instance->eventDispatcher().schedule([instance]() {
         EngineHarness harness(instance);

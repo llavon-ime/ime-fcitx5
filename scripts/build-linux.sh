@@ -28,6 +28,11 @@ for command in git cmake curl install pkg-config sed; do
     fi
 done
 
+if ! pkg-config --exists atspi-2; then
+    echo "Note: at-spi2-core development files not found; building without AT-SPI context support." >&2
+    echo "      Install them (e.g. at-spi2-core-devel / libatspi2.0-dev / at-spi2-core) to enable it." >&2
+fi
+
 DISPLAY_VERSION="${IME_FCITX5_VERSION:-}"
 if [[ -z "${DISPLAY_VERSION}" ]]; then
     describe="$(git -C "${ROOT_DIR}" describe --long --tags --abbrev=7 2>/dev/null || true)"

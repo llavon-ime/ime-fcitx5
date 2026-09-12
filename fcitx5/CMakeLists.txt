@@ -53,7 +53,11 @@ find_package(nlohmann_json CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND AND NOT WIN32)
-    pkg_check_modules(ATSPI QUIET IMPORTED_TARGET atspi-2 gobject-2.0)
+    # Compile-time headers for the AT-SPI backend, glib/gio for the worker
+    # loop and bus activation, and a hard link only for the standalone probe.
+    pkg_check_modules(ATSPI QUIET atspi-2)
+    pkg_check_modules(ATSPI_LINK QUIET IMPORTED_TARGET atspi-2)
+    pkg_check_modules(ATSPI_GLIB QUIET IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
 endif()
 target_sources(ime_fcitx5_shared PRIVATE shared/config/config.cpp)
 target_sources(ime_fcitx5_shared PRIVATE
@@ -78,10 +82,13 @@ if(NOT WIN32)
     )
 endif()
 target_link_libraries(ime_fcitx5_shared PUBLIC nlohmann_json::nlohmann_json Threads::Threads)
-if(ATSPI_FOUND AND NOT WIN32)
+if(ATSPI_FOUND AND ATSPI_GLIB_FOUND AND NOT WIN32)
     target_sources(ime_fcitx5_shared PRIVATE shared/atspi/atspi_context_provider.cpp)
     target_compile_definitions(ime_fcitx5_shared PRIVATE IME_FCITX5_HAVE_ATSPI=1)
-    target_link_libraries(ime_fcitx5_shared PRIVATE PkgConfig::ATSPI)
+    target_include_directories(ime_fcitx5_shared PRIVATE ${ATSPI_INCLUDE_DIRS})
+    # libatspi is loaded at runtime with dlopen so the addon still loads on
+    # systems without at-spi2-core; only glib/gio are hard dependencies.
+    target_link_libraries(ime_fcitx5_shared PRIVATE PkgConfig::ATSPI_GLIB ${CMAKE_DL_LIBS})
 endif()
 install(FILES "${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/llavon-ime/tables")
@@ -140,10 +147,10 @@ endif()
 # focused editable widget through the same AT-SPI provider the addon uses. It
 # validates on a real desktop that the a11y bus provides reliable, low-latency
 # context for IME prediction.
-if(ATSPI_FOUND AND NOT WIN32)
+if(ATSPI_FOUND AND ATSPI_LINK_FOUND AND NOT WIN32)
     add_executable(atspi_probe tools/atspi_probe.cpp)
     target_include_directories(atspi_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/shared")
-    target_link_libraries(atspi_probe PRIVATE PkgConfig::ATSPI ime_fcitx5_shared)
+    target_link_libraries(atspi_probe PRIVATE PkgConfig::ATSPI_LINK ime_fcitx5_shared)
     target_compile_options(atspi_probe PRIVATE -Wall -Wextra)
     install(TARGETS atspi_probe RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 elseif(PkgConfig_FOUND AND NOT WIN32)
