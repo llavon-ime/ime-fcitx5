@@ -1,0 +1,76 @@
+#pragma once
+
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+
+namespace ime::fcitx5 {
+
+// The most recent text before the caret observed by a context source.
+struct AccessibilityContextSample {
+    std::u16string text;
+    std::uint64_t sequence = 0;
+    bool usable = false;
+};
+
+// Platform-independent state and interface for sampling the text before the
+// caret of the focused editable widget, independently of what this IME has
+// committed.
+//
+// The base class owns the sample store and the input-method-active gate so
+// every backend shares the same sequence/gating semantics. Backends implement
+// only the platform lifecycle: AT-SPI on Linux, Accessibility (AX) on macOS,
+// or the file-backed source used by tests and headless validation.
+//
+// Every publish advances sequence(), even when the sample is not usable, so
+// callers can detect that the focused widget changed and must not reuse stale
+// text. latest() is lock-protected and cheap: the engine calls it while
+// building a prediction request.
+class AccessibilityContextProvider {
+public:
+    explicit AccessibilityContextProvider(size_t max_code_units);
+    virtual ~AccessibilityContextProvider();
+
+    AccessibilityContextProvider(const AccessibilityContextProvider&) = delete;
+    AccessibilityContextProvider& operator=(const AccessibilityContextProvider&) = delete;
+
+    virtual bool start() = 0;
+    virtual void stop() = 0;
+    virtual bool running() const noexcept = 0;
+
+    // Asks the source to resample the focused widget.
+    virtual void refresh() = 0;
+
+    // Collection is gated on the input method being active: while inactive the
+    // backend ignores events and the latest sample becomes unusable, so the
+    // focused widget's text is not retained behind the user's back.
+    void set_active(bool active);
+    bool active() const noexcept;
+
+    void publish(std::u16string text, bool usable);
+
+    std::optional<AccessibilityContextSample> latest() const;
+    std::uint64_t sequence() const;
+
+    size_t max_code_units() const noexcept { return max_code_units_; }
+
+private:
+    size_t max_code_units_;
+    mutable std::mutex mutex_;
+    AccessibilityContextSample sample_;
+    bool has_sample_ = false;
+    std::uint64_t next_sequence_ = 0;
+    std::atomic<bool> active_{false};
+};
+
+// Creates the best available backend for the current platform. The
+// IME_FCITX5_DISABLE_ATSPI and IME_FCITX5_CONTEXT_SAMPLE_FILE environment
+// variables override the platform backend for opting out and for headless
+// tests (IME_FCITX5_ATSPI_SAMPLE_FILE is kept as a legacy alias).
+std::unique_ptr<AccessibilityContextProvider> create_accessibility_context_provider(size_t max_code_units);
+
+}  // namespace ime::fcitx5

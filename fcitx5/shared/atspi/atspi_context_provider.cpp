@@ -1,4 +1,4 @@
-#include "atspi/accessibility_context.hpp"
+#include "atspi/atspi_context_provider.hpp"
 
 #include "text/utf.hpp"
 
@@ -7,14 +7,11 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
-#include <fstream>
-#include <iterator>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
 
-#ifdef IME_FCITX5_HAVE_ATSPI
 #include <atspi/atspi.h>
 
 #include <sys/socket.h>
@@ -23,107 +20,36 @@
 
 #include <cstring>
 #include <filesystem>
-#endif
 
 namespace ime::fcitx5 {
 
-class AccessibilityContextProvider::Impl {
+class AtspiContextProvider::Impl {
 public:
-    explicit Impl(size_t max_code_units) : max_code_units_(max_code_units) {}
-
-    void publish(std::u16string text, bool usable) {
-        std::lock_guard lock(mutex_);
-        sample_.text = std::move(text);
-        sample_.usable = usable;
-        sample_.sequence = ++next_sequence_;
-        has_sample_ = true;
-    }
-
-    std::optional<AccessibilityContextSample> latest() const {
-        std::lock_guard lock(mutex_);
-        if (!has_sample_) return std::nullopt;
-        return sample_;
-    }
-
-    std::uint64_t sequence() const {
-        std::lock_guard lock(mutex_);
-        return sample_.sequence;
-    }
+    Impl(AtspiContextProvider& owner, size_t max_code_units)
+        : owner_(owner), max_code_units_(max_code_units) {}
 
     bool running() const noexcept { return running_.load(); }
 
     bool start() {
         if (running_.load()) return true;
         stop();
-        if (const char* disabled = std::getenv("IME_FCITX5_DISABLE_ATSPI"); disabled != nullptr && disabled[0] != '\0') {
-            return false;
-        }
-        if (const char* file = std::getenv("IME_FCITX5_ATSPI_SAMPLE_FILE"); file != nullptr && file[0] != '\0') {
-            sample_file_ = file;
-            running_.store(true);
-            refresh_file();
-            return true;
-        }
-#ifdef IME_FCITX5_HAVE_ATSPI
         return start_backend();
-#else
-        return false;
-#endif
     }
 
     void stop() {
         running_.store(false);
-#ifdef IME_FCITX5_HAVE_ATSPI
         if (backend_thread_.joinable()) {
             if (loop_ != nullptr) g_main_loop_quit(loop_);
             backend_thread_.join();
         }
-#endif
     }
-
-    void set_active(bool active) {
-        if (active_.exchange(active) == active) return;
-        if (!active) publish(std::u16string(), false);
-    }
-
-    bool active() const noexcept { return active_.load(); }
 
     void refresh() {
-        if (!running_.load() || !active_.load()) return;
-        if (!sample_file_.empty()) {
-            refresh_file();
-            return;
-        }
-#ifdef IME_FCITX5_HAVE_ATSPI
+        if (!running_.load() || !owner_.active()) return;
         queue_idle();
-#endif
     }
 
 private:
-    void refresh_file() {
-        std::ifstream input(sample_file_, std::ios::binary);
-        if (!input) {
-            publish(std::u16string(), false);
-            return;
-        }
-        const std::string raw((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-        try {
-            publish(utf8_prefix_tail(raw, raw.size(), max_code_units_), true);
-        } catch (const std::exception&) {
-            publish(std::u16string(), false);
-        }
-    }
-
-    std::size_t max_code_units_;
-    std::string sample_file_;
-    mutable std::mutex mutex_;
-    AccessibilityContextSample sample_;
-    bool has_sample_ = false;
-    std::uint64_t next_sequence_ = 0;
-    std::atomic<bool> running_{false};
-    std::atomic<bool> active_{false};
-
-#ifdef IME_FCITX5_HAVE_ATSPI
     static inline Impl* active_instance_ = nullptr;
 
     static bool connect_unix(const std::string& path) {
@@ -209,12 +135,12 @@ private:
 
     void publish_from_object(AtspiAccessible* object) {
         if (object == nullptr || is_password_text(object)) {
-            publish(std::u16string(), false);
+            owner_.publish(std::u16string(), false);
             return;
         }
         AtspiText* text = atspi_accessible_get_text_iface(object);
         if (text == nullptr) {
-            publish(std::u16string(), false);
+            owner_.publish(std::u16string(), false);
             return;
         }
 
@@ -223,7 +149,7 @@ private:
         if (error != nullptr || caret < 0) {
             g_clear_error(&error);
             g_object_unref(text);
-            publish(std::u16string(), false);
+            owner_.publish(std::u16string(), false);
             return;
         }
 
@@ -244,7 +170,7 @@ private:
         if (raw != nullptr) g_free(raw);
         g_clear_error(&error);
         g_object_unref(text);
-        publish(std::move(sample), usable);
+        owner_.publish(std::move(sample), usable);
     }
 
     void queue_idle() {
@@ -259,7 +185,7 @@ private:
     static gboolean on_idle(gpointer data) {
         auto* self = static_cast<Impl*>(data);
         self->idle_source_.store(0);
-        if (!self->active_.load()) {
+        if (!self->owner_.active()) {
             if (self->pending_source_ != nullptr) {
                 g_object_unref(self->pending_source_);
                 self->pending_source_ = nullptr;
@@ -282,7 +208,7 @@ private:
     static void on_event(const AtspiEvent* event) {
         Impl* self = active_instance_;
         if (self == nullptr || event == nullptr || event->type == nullptr) return;
-        if (!self->active_.load()) return;
+        if (!self->owner_.active()) return;
         const std::string type(event->type);
         if (type != "object:state-changed:focused" && type != "object:text-caret-moved" &&
             type.find("object:text-changed") != 0) {
@@ -297,13 +223,13 @@ private:
                     g_object_unref(self->pending_source_);
                     self->pending_source_ = nullptr;
                 }
-                self->publish(std::u16string(), false);
+                self->owner_.publish(std::u16string(), false);
             }
             return;
         }
         if (event->source != nullptr && has_text_interface(event->source)) {
             if (is_password_text(event->source)) {
-                self->publish(std::u16string(), false);
+                self->owner_.publish(std::u16string(), false);
                 return;
             }
             if (self->pending_source_ != nullptr) g_object_unref(self->pending_source_);
@@ -388,6 +314,9 @@ private:
     static constexpr int kMaxTreeVisits = 20000;
     static constexpr gint kMaxRequestCharacters = 8192;
 
+    AtspiContextProvider& owner_;
+    size_t max_code_units_ = 0;
+    std::atomic<bool> running_{false};
     GMainContext* context_ = nullptr;
     GMainLoop* loop_ = nullptr;
     std::thread backend_thread_;
@@ -397,32 +326,20 @@ private:
     std::condition_variable ready_cv_;
     bool ready_ = false;
     bool ready_ok_ = false;
-#endif
 };
 
-AccessibilityContextProvider::AccessibilityContextProvider(size_t max_code_units)
-    : impl_(std::make_unique<Impl>(max_code_units)) {}
+AtspiContextProvider::AtspiContextProvider(size_t max_code_units)
+    : AccessibilityContextProvider(max_code_units),
+      impl_(std::make_unique<Impl>(*this, max_code_units)) {}
 
-AccessibilityContextProvider::~AccessibilityContextProvider() { stop(); }
+AtspiContextProvider::~AtspiContextProvider() { stop(); }
 
-bool AccessibilityContextProvider::start() { return impl_->start(); }
+bool AtspiContextProvider::start() { return impl_->start(); }
 
-void AccessibilityContextProvider::stop() { impl_->stop(); }
+void AtspiContextProvider::stop() { impl_->stop(); }
 
-bool AccessibilityContextProvider::running() const noexcept { return impl_->running(); }
+bool AtspiContextProvider::running() const noexcept { return impl_->running(); }
 
-void AccessibilityContextProvider::set_active(bool active) { impl_->set_active(active); }
-
-bool AccessibilityContextProvider::active() const noexcept { return impl_->active(); }
-
-void AccessibilityContextProvider::refresh() { impl_->refresh(); }
-
-void AccessibilityContextProvider::publish(std::u16string text, bool usable) {
-    impl_->publish(std::move(text), usable);
-}
-
-std::optional<AccessibilityContextSample> AccessibilityContextProvider::latest() const { return impl_->latest(); }
-
-std::uint64_t AccessibilityContextProvider::sequence() const { return impl_->sequence(); }
+void AtspiContextProvider::refresh() { impl_->refresh(); }
 
 }  // namespace ime::fcitx5

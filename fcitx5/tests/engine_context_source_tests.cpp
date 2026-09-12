@@ -12,10 +12,10 @@ using namespace ime::fcitx5::test;
 
 // The engine prefers the AT-SPI caret sample over its own commit history when
 // the client never pushes surrounding text. The engine tests run with
-// IME_FCITX5_ATSPI_SAMPLE_FILE, which backs the provider with a file instead of
+// IME_FCITX5_CONTEXT_SAMPLE_FILE, which backs the provider with a file instead of
 // the accessibility bus: writing the file publishes a sample.
 void engine_test_context_source(fcitx::Instance* instance) {
-    const char* sample_path = std::getenv("IME_FCITX5_ATSPI_SAMPLE_FILE");
+    const char* sample_path = std::getenv("IME_FCITX5_CONTEXT_SAMPLE_FILE");
     FCITX_ASSERT(sample_path != nullptr && sample_path[0] != '\0');
     const std::filesystem::path path(sample_path);
 

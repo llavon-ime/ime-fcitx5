@@ -48,7 +48,8 @@ int main() {
     // Back the accessibility context source with a file instead of the
     // desktop accessibility bus so tests never depend on a running desktop.
     const auto sample_path = config_home / "atspi-sample.txt";
-    setenv("IME_FCITX5_ATSPI_SAMPLE_FILE", sample_path.c_str(), 1);
+    setenv("IME_FCITX5_CONTEXT_SAMPLE_FILE", sample_path.c_str(), 1);
+    unsetenv("IME_FCITX5_ATSPI_SAMPLE_FILE");
     unsetenv("IME_FCITX5_DISABLE_ATSPI");
     std::filesystem::remove(sample_path);
 

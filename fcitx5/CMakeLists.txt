@@ -69,7 +69,7 @@ target_sources(ime_fcitx5_shared PRIVATE
     shared/input/mixed_input_decoder.cpp
     shared/protocol/protocol.cpp
     shared/symbol/symbol_menu.cpp
-    shared/atspi/accessibility_context.cpp
+    shared/context/accessibility_context.cpp
 )
 if(NOT WIN32)
     target_sources(ime_fcitx5_shared PRIVATE
@@ -79,6 +79,7 @@ if(NOT WIN32)
 endif()
 target_link_libraries(ime_fcitx5_shared PUBLIC nlohmann_json::nlohmann_json Threads::Threads)
 if(ATSPI_FOUND AND NOT WIN32)
+    target_sources(ime_fcitx5_shared PRIVATE shared/atspi/atspi_context_provider.cpp)
     target_compile_definitions(ime_fcitx5_shared PRIVATE IME_FCITX5_HAVE_ATSPI=1)
     target_link_libraries(ime_fcitx5_shared PRIVATE PkgConfig::ATSPI)
 endif()

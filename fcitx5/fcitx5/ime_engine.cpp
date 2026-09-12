@@ -20,7 +20,7 @@
 #include <string_view>
 #include <utility>
 
-#include "atspi/accessibility_context.hpp"
+#include "context/accessibility_context.hpp"
 #include "bopomofo/keymap.hpp"
 #include "input/ascii_tokenizer.hpp"
 #include "input/keypad.hpp"
@@ -1006,7 +1006,7 @@ void ImeEngine::apply_context_sources() {
             accessibility_base_sequence_ = 0;
         }
         if (!accessibility_context_) {
-            accessibility_context_ = std::make_unique<AccessibilityContextProvider>(limit);
+            accessibility_context_ = create_accessibility_context_provider(limit);
             accessibility_max_code_units_ = limit;
             accessibility_base_sequence_ = 0;
         }
