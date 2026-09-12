@@ -11,6 +11,8 @@ set(IME_FCITX5_TEST_SOURCES
     ascii_tokenizer_tests.cpp
     context_cache_tests.cpp
     caret_prefix_sampler_tests.cpp
+    accessibility_context_tests.cpp
+    real_service_tests.cpp
     fallback_engine_tests.cpp
     mixed_input_decoder_tests.cpp
 )
@@ -44,6 +46,7 @@ if(Fcitx5_FOUND AND NOT WIN32)
             engine_punctuation_tests.cpp
             engine_shift_letter_tests.cpp
             engine_context_cache_tests.cpp
+            engine_context_source_tests.cpp
             engine_async_state_tests.cpp
             engine_smart_candidate_tests.cpp
             engine_smart_chat_tests.cpp

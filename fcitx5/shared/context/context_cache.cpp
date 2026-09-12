@@ -62,9 +62,12 @@ void ContextCache::trim_to(size_t limit) {
     size_t start = history_.size() - limit;
     snap_after_split_pair(history_, start);
     if (start > history_.size()) start = history_.size();
-    std::u16string(history_, start).swap(history_);
-    if (history_.empty()) valid_ = false;
-}
+    if (history_.capacity() > limit * 2) {
+        std::u16string(history_, start).swap(history_);
+    } else {
+        history_.erase(0, start);
+    }
+    if (history_.empty()) valid_ = false;}
 
 void ContextCache::on_surrounding(std::u16string_view text, size_t cursor) {
     cursor = std::min(cursor, text.size());

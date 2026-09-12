@@ -39,6 +39,10 @@ struct Config {
     // undo/cut/paste/select-all shortcuts clear the cache. Backspace may remove
     // a selection or grapheme, so its effect cannot be inferred safely.
     bool context_edit_tracking = true;
+    // Read the text before the caret from the focused widget through the AT-SPI2
+    // accessibility bus. This is the authoritative source when the client never
+    // pushes surrounding text; commit tracking stays as the fallback.
+    bool use_accessibility_context = true;
 };
 
 Config default_config();

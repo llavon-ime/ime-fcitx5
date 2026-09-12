@@ -12,6 +12,7 @@
 #include <fcitx/instance.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
@@ -19,6 +20,7 @@
 #include <string_view>
 #include <utility>
 
+#include "atspi/accessibility_context.hpp"
 #include "bopomofo/keymap.hpp"
 #include "input/ascii_tokenizer.hpp"
 #include "input/keypad.hpp"
@@ -42,6 +44,30 @@ std::string to_utf8(const std::u32string& value) {
     result.reserve(value.size());
     for (const char32_t codepoint : value) result += char32_to_utf8(codepoint);
     return result;
+}
+
+bool context_debug_enabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("IME_FCITX5_CONTEXT_DEBUG");
+        return value != nullptr && value[0] != '\0';
+    }();
+    return enabled;
+}
+
+std::string context_preview(std::u16string_view text, size_t max_units = 40) {
+    std::u16string preview(text.substr(0, std::min(text.size(), max_units)));
+    if (!preview.empty() && preview.back() >= 0xD800 && preview.back() <= 0xDBFF) preview.pop_back();
+    try {
+        return u16_to_utf8(preview);
+    } catch (const std::exception&) {
+        return "<invalid>";
+    }
+}
+
+void log_context(const char* source, std::u16string_view text) {
+    if (!context_debug_enabled()) return;
+    std::fprintf(stderr, "[CTX] source=%s units=%zu text=\"%s\"\n", source, text.size(),
+                 context_preview(text).c_str());
 }
 
 std::u16string to_utf16(char32_t value) {
@@ -80,6 +106,7 @@ ServiceTransportOptions default_transport_options() {
     options.gpu_layers = config.gpu_layers;
     options.idle_timeout_seconds = static_cast<std::uint32_t>(config.idle_timeout_seconds);
     if (const char* model = non_empty_env("IME_FCITX5_MODEL_PATH")) options.model_path = model;
+    if (non_empty_env("IME_FCITX5_DISABLE_SERVICE") != nullptr) options.auto_start = false;
     return options;
 }
 
@@ -196,7 +223,10 @@ bool is_shifted_ascii_symbol(char32_t symbol) {
 }
 
 std::optional<char32_t> chewing_punctuation_for_key(const fcitx::Key& key, BopomofoKeyboardLayout layout) {
-    if ((key.states() & fcitx::KeyState::Alt) || (key.states() & fcitx::KeyState::Super)) return std::nullopt;
+    if ((key.states() & fcitx::KeyState::Alt) || (key.states() & fcitx::KeyState::Super) ||
+        (key.states() & fcitx::KeyState::Meta)) {
+        return std::nullopt;
+    }
     const char32_t raw_symbol = static_cast<char32_t>(key.sym());
     const char32_t shifted_symbol = shifted_ascii_key(key.sym());
     const bool shifted = static_cast<bool>(key.states() & fcitx::KeyState::Shift) ||
@@ -340,7 +370,10 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
     auto* input_context = event.inputContext();
     StateScope state_scope(*this, input_context);
     const auto raw_key = event.rawKey();
-    const auto key = event.key().sym();
+    const fcitx::Key effective_key(event.key().sym(),
+                                   event.key().states() | (raw_key.states() & fcitx::KeyState::Meta),
+                                   event.key().code());
+    const auto key = effective_key.sym();
 
     // CapsLock state only exists in the raw key. When Chinese input is
     // disabled under CapsLock, everything passes through to the application
@@ -384,7 +417,7 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
     // a selection or a multi-scalar grapheme rather than one scalar.
     // These keys always pass through to the application.
     if (composition_empty() && config_.context_edit_tracking) {
-        const auto states = event.key().states();
+        const auto states = effective_key.states();
         const bool edit_shortcut = states.testAny(
             fcitx::KeyStates{fcitx::KeyState::Ctrl, fcitx::KeyState::Super, fcitx::KeyState::Meta});
         if (key == FcitxKey_BackSpace || key == FcitxKey_Delete || key == FcitxKey_Left ||
@@ -404,10 +437,10 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
 
     const auto layout = config_.keyboard_layout == "hsu" ? BopomofoKeyboardLayout::Hsu
                                                          : BopomofoKeyboardLayout::Standard;
-    const auto chewing_punctuation = chewing_punctuation_for_key(event.key(), layout);
+    const auto chewing_punctuation = chewing_punctuation_for_key(effective_key, layout);
     const auto raw_symbol = static_cast<char32_t>(key);
     const bool punctuation_is_standard_bopomofo =
-        layout == BopomofoKeyboardLayout::Standard && !has_blocking_modifier(event.key()) &&
+        layout == BopomofoKeyboardLayout::Standard && !has_blocking_modifier(effective_key) &&
         (raw_symbol == U',' || raw_symbol == U'.' || raw_symbol == U';');
     const auto punctuation = punctuation_is_standard_bopomofo ? std::nullopt : chewing_punctuation;
     if (!punctuation && has_blocking_modifier(event.key())) return;
@@ -418,7 +451,7 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
         return;
     }
 
-    if (key == FcitxKey_grave && !has_blocking_modifier(event.key())) {
+    if (key == FcitxKey_grave && !has_blocking_modifier(effective_key)) {
         if (config_.smart_english && !pending_token_.empty()) {
             (void)settle_pending_preview(input_context);
             open_symbol_menu(input_context);
@@ -493,7 +526,7 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
         }
 
         const int digit_index = ascii_digit_selection_index(static_cast<std::uint32_t>(key));
-        if (digit_index >= 0 && !has_blocking_modifier(event.key())) {
+        if (digit_index >= 0 && !has_blocking_modifier(effective_key)) {
             (void)select_candidate(input_context, candidate_page_offset() + digit_index);
             event.filterAndAccept();
             return;
@@ -629,7 +662,7 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
                 return;
             }
 
-            if (raw_symbol >= 0x21 && raw_symbol <= 0x7e && !has_blocking_modifier(event.key())) {
+            if (raw_symbol >= 0x21 && raw_symbol <= 0x7e && !has_blocking_modifier(effective_key)) {
                 if (mixed_decision_.active() && mixed_decision_.english_boundary) {
                     if (mixed_decision_.preview_path == 0) {
                         settle_pending_as_literals();
@@ -654,7 +687,7 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
                                   std::all_of(segments.begin(), segments.end(),
                                               [](const Segment& segment) { return segment.literal != 0; });
         if (pending_token_.empty() && all_literals && !buffer_.caret_at_end() &&
-            raw_symbol >= 0x20 && raw_symbol <= 0x7e && !has_blocking_modifier(event.key())) {
+            raw_symbol >= 0x20 && raw_symbol <= 0x7e && !has_blocking_modifier(effective_key)) {
             (void)buffer_.add_literal(raw_symbol);
             (void)transition_to(InputState::Inputting);
             mark_prediction_dirty();
@@ -837,7 +870,20 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
 void ImeEngine::activate(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& event) {
     StateScope state_scope(*this, event.inputContext());
     reload_config();
+    if (accessibility_context_) {
+        accessibility_context_->set_active(true);
+        accessibility_base_sequence_ = accessibility_context_->sequence();
+        accessibility_context_->refresh();
+    }
     update_ui(event.inputContext());
+}
+
+void ImeEngine::deactivate(const fcitx::InputMethodEntry& entry, fcitx::InputContextEvent& event) {
+    if (accessibility_context_) {
+        accessibility_context_->set_active(false);
+        accessibility_base_sequence_ = accessibility_context_->sequence();
+    }
+    reset(entry, event);
 }
 
 void ImeEngine::reset(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& event) {
@@ -860,6 +906,10 @@ void ImeEngine::reset(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& 
         context_cache_.clear();
     }
     if (focus_out && config_.reset_context_on_focus_out) context_cache_.clear();
+    if (focus_out && accessibility_context_) {
+        accessibility_context_->set_active(false);
+        accessibility_base_sequence_ = accessibility_context_->sequence();
+    }
     (void)transition_to(InputState::Empty);
     ++generation_;
     prediction_pending_ = false;
@@ -887,6 +937,7 @@ void ImeEngine::setConfig(const fcitx::RawConfig& config) {
     (void)fcitx_config_.version.setValue(DisplayVersion::Current);
     config_ = to_shared_config(fcitx_config_);
     apply_context_cache_limits();
+    apply_context_sources();
     save();
     ++generation_;
     inflight_request_id_.reset();
@@ -926,6 +977,7 @@ void ImeEngine::reload_config() {
     if (!has_fcitx_config) save();
     config_ = to_shared_config(fcitx_config_);
     apply_context_cache_limits();
+    apply_context_sources();
 }
 
 void ImeEngine::apply_context_cache_limits() {
@@ -942,6 +994,31 @@ void ImeEngine::apply_context_cache_limits() {
         state->context_cache.set_surrounding_limit(surrounding_limit);
         return true;
     });
+}
+
+void ImeEngine::apply_context_sources() {
+    if (config_.use_accessibility_context) {
+        const size_t limit = static_cast<size_t>(std::max(1, config_.context_length));
+        if (accessibility_context_ && accessibility_max_code_units_ != limit) {
+            accessibility_context_->stop();
+            accessibility_context_.reset();
+            accessibility_max_code_units_ = 0;
+            accessibility_base_sequence_ = 0;
+        }
+        if (!accessibility_context_) {
+            accessibility_context_ = std::make_unique<AccessibilityContextProvider>(limit);
+            accessibility_max_code_units_ = limit;
+            accessibility_base_sequence_ = 0;
+        }
+        (void)accessibility_context_->start();
+        return;
+    }
+    if (accessibility_context_) {
+        accessibility_context_->stop();
+        accessibility_context_.reset();
+        accessibility_max_code_units_ = 0;
+        accessibility_base_sequence_ = 0;
+    }
 }
 
 void ImeEngine::update_ui(fcitx::InputContext* input_context) {
@@ -1734,9 +1811,9 @@ void ImeEngine::request_prediction_if_ready(fcitx::InputContext* input_context) 
         return;
     }
     resync_context_cache(input_context);
-    const auto request = build_predict_request(input_context);
-    if (request.padding.empty()) return;
-    prediction_segment_indices_ = buffer_.completed_segment_indices();
+    auto completed = buffer_.completed_segment_indices();
+    if (completed.empty()) return;
+    prediction_segment_indices_ = std::move(completed);
     prediction_pending_ = true;
     prediction_dirty_ = false;
     prediction_key_ = buffer_.raw_composition();
@@ -1790,7 +1867,20 @@ void ImeEngine::resync_context_cache(const fcitx::InputContext* input_context) {
     }
 
     const auto& surrounding = input_context->surroundingText();
-    if (!surrounding.isValid()) return;
+    if (!surrounding.isValid()) {
+        if (accessibility_context_) {
+            const auto sample = accessibility_context_->latest();
+            if (sample && sample->usable && sample->sequence > accessibility_base_sequence_) {
+                context_cache_.on_surrounding(sample->text, sample->text.size());
+                log_context("atspi", sample->text);
+                return;
+            }
+            log_context("atspi-unusable", {});
+        } else {
+            log_context("cache-fallback", {});
+        }
+        return;
+    }
 
     try {
         const size_t cursor = std::min(surrounding.cursor(), surrounding.anchor());
@@ -1798,6 +1888,7 @@ void ImeEngine::resync_context_cache(const fcitx::InputContext* input_context) {
                                                        : context_cache_.surrounding_limit();
         const auto text = utf8_prefix_tail(surrounding.text(), cursor, limit);
         context_cache_.on_surrounding(text, text.size());
+        log_context("client-surrounding", text);
     } catch (const std::runtime_error&) {
         // Ignore malformed surrounding text supplied by a client.
     }
@@ -1829,6 +1920,7 @@ protocol::PredictRequest ImeEngine::build_predict_request(const fcitx::InputCont
                                      ? static_cast<size_t>(config_.context_length) - reserved_tokens
                                      : 0;
     request.context = context_cache_.window(context_limit);
+    log_context("model", request.context);
     return request;
 }
 

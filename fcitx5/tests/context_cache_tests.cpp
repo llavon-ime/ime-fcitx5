@@ -1,9 +1,12 @@
 #include "context/context_cache.hpp"
 #include "text/utf.hpp"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace ime::fcitx5 {
 namespace {
@@ -265,6 +268,260 @@ bool test_utf8_bounded_prefix() {
     return ok;
 }
 
+size_t code_units(char32_t scalar) { return scalar > 0xFFFF ? 2 : 1; }
+
+size_t code_units(const std::u32string& text) {
+    size_t units = 0;
+    for (char32_t scalar : text) units += code_units(scalar);
+    return units;
+}
+
+std::u32string to_scalars(std::u16string_view text) {
+    std::u32string result;
+    for (size_t i = 0; i < text.size(); ++i) {
+        char32_t scalar = text[i];
+        if (scalar >= 0xD800 && scalar <= 0xDBFF && i + 1 < text.size()) {
+            scalar = 0x10000 + (((scalar - 0xD800) << 10U) | (text[++i] - 0xDC00));
+        }
+        result.push_back(scalar);
+    }
+    return result;
+}
+
+std::u16string to_units(const std::u32string& text) {
+    std::u16string result;
+    for (char32_t scalar : text) {
+        if (scalar > 0xFFFF) {
+            scalar -= 0x10000;
+            result.push_back(static_cast<char16_t>(0xD800 + (scalar >> 10U)));
+            result.push_back(static_cast<char16_t>(0xDC00 + (scalar & 0x3FFU)));
+        } else {
+            result.push_back(static_cast<char16_t>(scalar));
+        }
+    }
+    return result;
+}
+
+std::u32string tail_by_units(const std::u32string& text, size_t limit) {
+    std::u32string result;
+    size_t units = 0;
+    for (auto it = text.rbegin(); it != text.rend(); ++it) {
+        const size_t width = code_units(*it);
+        if (units + width > limit) break;
+        units += width;
+        result.push_back(*it);
+    }
+    std::reverse(result.begin(), result.end());
+    return result;
+}
+
+std::u32string prefix_by_units(const std::u32string& text, size_t limit) {
+    size_t units = 0;
+    size_t end = 0;
+    while (end < text.size() && units + code_units(text[end]) <= limit) {
+        units += code_units(text[end]);
+        ++end;
+    }
+    return text.substr(0, end);
+}
+
+// Independent scalar-based model of the cache. Operations are expressed in
+// scalars so the randomized comparison does not share code with the cache's
+// UTF-16 boundary handling.
+struct ReferenceCache {
+    std::u32string history;
+    size_t limit = 1024;
+    size_t surrounding_limit = 1024;
+    bool valid = false;
+
+    void trim() {
+        if (limit == 0) {
+            history.clear();
+            valid = false;
+            return;
+        }
+        if (history.empty()) return;
+        history = tail_by_units(history, limit);
+        if (history.empty()) valid = false;
+    }
+
+    void rebind_surrounding() {
+        if (surrounding_limit == 0) {
+            history.clear();
+            valid = false;
+            return;
+        }
+        if (history.empty()) return;
+        history = tail_by_units(history, surrounding_limit);
+        if (history.empty()) valid = false;
+    }
+
+    void commit(std::u16string_view text) {
+        if (text.empty() || limit == 0) return;
+        history += to_scalars(text);
+        valid = true;
+        trim();
+    }
+
+    void surrounding(std::u16string_view text, size_t cursor) {
+        auto scalars = to_scalars(text);
+        size_t units = 0;
+        size_t prefix_scalars = 0;
+        while (prefix_scalars < scalars.size() && units + code_units(scalars[prefix_scalars]) <= cursor) {
+            units += code_units(scalars[prefix_scalars]);
+            ++prefix_scalars;
+        }
+        scalars.resize(prefix_scalars);
+        const size_t bound = limit > 0 ? limit : surrounding_limit;
+        scalars = tail_by_units(scalars, bound);
+        if (scalars.empty()) {
+            history.clear();
+            valid = false;
+            return;
+        }
+        history = std::move(scalars);
+        valid = true;
+    }
+
+    void backspace(size_t count) {
+        if (!valid || history.empty()) return;
+        while (count > 0 && !history.empty()) {
+            history.pop_back();
+            --count;
+        }
+        if (history.empty()) valid = false;
+    }
+
+    std::u16string window(size_t units) const { return to_units(tail_by_units(history, units)); }
+};
+
+bool test_randomized_matches_reference() {
+    ContextCache cache;
+    ReferenceCache reference;
+    uint32_t state = 0x1234ABCDU;
+    auto next = [&state]() {
+        state = state * 1664525U + 1013904223U;
+        return state >> 8U;
+    };
+    auto random_text = [&next](size_t max_scalars) {
+        std::u16string text;
+        for (size_t i = 0, count = next() % max_scalars; i < count; ++i) {
+            switch (next() % 5U) {
+                case 0:
+                    text.push_back(static_cast<char16_t>(U'a' + next() % 26U));
+                    break;
+                case 1:
+                    text.push_back(static_cast<char16_t>(0x4E00 + next() % 0x100));
+                    break;
+                case 2: {
+                    const char32_t scalar = 0x1F600 + next() % 0x40;
+                    text.push_back(static_cast<char16_t>(0xD800 + ((scalar - 0x10000) >> 10U)));
+                    text.push_back(static_cast<char16_t>(0xDC00 + ((scalar - 0x10000) & 0x3FFU)));
+                    break;
+                }
+                default:
+                    text.push_back(static_cast<char16_t>(U'0' + next() % 10U));
+                    break;
+            }
+        }
+        return text;
+    };
+
+    std::vector<std::string> trace;
+    for (int iteration = 0; iteration < 4000; ++iteration) {
+        const unsigned op = next() % 8U;
+        std::string step = "op" + std::to_string(op);
+        if (op == 7) {
+            const size_t window = next() % 15U;
+            const auto got = cache.window(window);
+            const auto want = reference.window(window);
+            if (got != want || cache.valid() != reference.valid) {
+                std::printf("[FAIL] randomized cache mismatch at iteration %d window=%zu\n", iteration, window);
+                std::printf("  got  valid=%d size=%zu\n", cache.valid() ? 1 : 0, got.size());
+                std::printf("  want valid=%d size=%zu\n", reference.valid ? 1 : 0, want.size());
+                for (const auto& entry : trace) std::printf("  %s\n", entry.c_str());
+                return false;
+            }
+            continue;
+        }
+        switch (op) {
+            case 0: {
+                auto text = random_text(6);
+                step += " commit=" + std::to_string(text.size());
+                cache.on_commit(text);
+                reference.commit(text);
+                break;
+            }
+            case 1: {
+                auto text = random_text(12);
+                const size_t cursor = next() % (text.size() + 1U);
+                step += " surrounding=" + std::to_string(text.size()) + "/" + std::to_string(cursor);
+                cache.on_surrounding(text, cursor);
+                reference.surrounding(text, cursor);
+                break;
+            }
+            case 2: {
+                const size_t count = next() % 4U;
+                step += " backspace=" + std::to_string(count);
+                cache.on_backspace(count);
+                reference.backspace(count);
+                break;
+            }
+            case 3: {
+                const size_t limit = next() % 12U;
+                step += " limit=" + std::to_string(limit);
+                cache.set_limit(limit);
+                if (reference.limit != 0 && limit == 0) {
+                    reference.history.clear();
+                    reference.valid = false;
+                }
+                reference.limit = limit;
+                if (reference.limit != 0) reference.trim();
+                break;
+            }
+            case 4: {
+                const size_t limit = next() % 12U;
+                step += " surround_limit=" + std::to_string(limit);
+                cache.set_surrounding_limit(limit);
+                reference.surrounding_limit = limit;
+                if (reference.limit == 0) reference.rebind_surrounding();
+                break;
+            }
+            case 5:
+                step += " clear";
+                cache.clear();
+                reference.history.clear();
+                reference.valid = false;
+                break;
+            case 6: {
+                auto text = random_text(8);
+                const size_t count = next() % 3U;
+                step += " commit_backspace=" + std::to_string(text.size()) + "/" + std::to_string(count);
+                cache.on_commit(text);
+                reference.commit(text);
+                cache.on_backspace(count);
+                reference.backspace(count);
+                break;
+            }
+            default:
+                break;
+        }
+        step += " -> cache(valid=" + std::to_string(cache.valid() ? 1 : 0) + ",size=" +
+                std::to_string(cache.window(1u << 20).size()) + ") ref(valid=" +
+                std::to_string(reference.valid ? 1 : 0) + ",size=" +
+                std::to_string(reference.window(1u << 20).size()) + ")";
+        trace.push_back(std::move(step));
+        if (trace.size() > 24) trace.erase(trace.begin());
+    }
+
+    // Final full-state comparison.
+    const auto got = cache.window(1u << 20);
+    const auto want = reference.window(1u << 20);
+    bool ok = check(got == want, "randomized cache converges to the reference");
+    ok &= check(cache.valid() == reference.valid, "randomized validity converges to the reference");
+    return ok;
+}
+
 }  // namespace
 
 }  // namespace ime::fcitx5
@@ -295,6 +552,7 @@ int run_context_cache_tests() {
     ok &= test_surrounding_limit_bounds_zero_history();
     ok &= test_surrounding_positive_history_and_boundaries();
     ok &= test_utf8_bounded_prefix();
+    ok &= test_randomized_matches_reference();
     if (ok) std::printf("context cache tests passed\n");
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

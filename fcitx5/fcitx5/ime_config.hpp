@@ -77,7 +77,9 @@ FCITX_CONFIGURATION(ImeFcitxConfig,
     fcitx::Option<bool> resetContextOnFocusOut{this, "ResetContextOnFocusOut", "失焦時清除上下文",
                                                default_config().reset_context_on_focus_out};
     fcitx::Option<bool> contextEditTracking{this, "ContextEditTracking", "追蹤編輯以更新上下文",
-                                             default_config().context_edit_tracking};);
+                                             default_config().context_edit_tracking};
+    fcitx::Option<bool> useAccessibilityContext{this, "UseAccessibilityContext", "使用無障礙介面取得上下文",
+                                                 default_config().use_accessibility_context};);
 
 Config to_shared_config(const ImeFcitxConfig& config);
 void apply_shared_config(ImeFcitxConfig& target, const Config& source);

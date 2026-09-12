@@ -3,6 +3,7 @@
 #include "protocol/protocol.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
@@ -81,6 +82,7 @@ private:
     bool connected_ = false;
     int socket_fd_ = -1;
     std::thread worker_;
+    std::chrono::steady_clock::time_point spawn_backoff_until_{};
 };
 
 }  // namespace ime::fcitx5

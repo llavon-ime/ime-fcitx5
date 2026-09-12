@@ -12,25 +12,33 @@ namespace ime::fcitx5 {
 // regardless of how many lines it spans. The only transformation this helper
 // applies is bounding the sample to `max_code_units`, dropping the oldest
 // text first (matching the context-cache window semantics used elsewhere).
-// An empty widget simply produces no sample.
+// An empty widget simply produces no sample. UTF-16 operations never keep a
+// half surrogate pair: a pair that does not fit is dropped whole.
 class CaretPrefixSampler {
 public:
     explicit CaretPrefixSampler(size_t max_code_units) : max_code_units_(max_code_units) {}
 
     // Replaces the current widget text and caret offset (UTF-16 code units).
     void set_text(std::u16string text, size_t caret) {
-        text_ = std::move(text);
+        text_before_caret_.clear();
+        window_start_ = 0;
         sampled_ = false;
         usable_ = false;
-        window_start_ = 0;
-        text_before_caret_.clear();
-        if (text_.empty()) return;
+        if (text.empty()) return;
 
-        if (caret > text_.size()) caret = text_.size();
-        caret_ = caret;
+        if (caret > text.size()) caret = text.size();
+        text.resize(caret);
+        if (!text.empty() && is_high_surrogate(text.back())) text.pop_back();
+
         sampled_ = true;
         usable_ = true;
-        emit_prefix();
+        if (text.size() > max_code_units_) {
+            size_t start = text.size() - max_code_units_;
+            if (is_low_surrogate(text[start]) && start > 0 && is_high_surrogate(text[start - 1])) ++start;
+            text.erase(0, start);
+            window_start_ = start;
+        }
+        text_before_caret_ = std::move(text);
     }
 
     // The text right before the caret after applying the window bound.
@@ -47,19 +55,15 @@ public:
     bool usable() const noexcept { return usable_; }
 
 private:
-    void emit_prefix() {
-        std::u16string prefix = text_.substr(0, caret_);
-        if (prefix.size() > max_code_units_) {
-            const size_t drop = prefix.size() - max_code_units_;
-            prefix.erase(0, drop);
-            window_start_ += drop;
-        }
-        text_before_caret_ = std::move(prefix);
+    static bool is_high_surrogate(char16_t unit) noexcept {
+        return unit >= 0xD800 && unit <= 0xDBFF;
+    }
+
+    static bool is_low_surrogate(char16_t unit) noexcept {
+        return unit >= 0xDC00 && unit <= 0xDFFF;
     }
 
     std::size_t max_code_units_;
-    std::u16string text_;
-    std::size_t caret_ = 0;
     std::size_t window_start_ = 0;
     std::u16string text_before_caret_;
     bool sampled_ = false;
