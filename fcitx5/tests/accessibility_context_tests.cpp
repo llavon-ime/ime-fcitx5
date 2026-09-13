@@ -70,8 +70,28 @@ bool test_disabled_start() {
     ScopedEnv sample("IME_FCITX5_CONTEXT_SAMPLE_FILE", nullptr);
     ScopedEnv legacy("IME_FCITX5_ATSPI_SAMPLE_FILE", nullptr);
     auto provider = make_provider(64);
-    bool ok = check(!provider->start(), "start() refuses while accessibility is disabled");
+    bool ok = check(provider->availability().availability == AccessibilityAvailability::Disabled,
+                    "the disabled source reports Disabled");
+    ok &= check(!provider->start(), "start() refuses while accessibility is disabled");
     ok &= check(!provider->running(), "a refused provider is not running");
+    return ok;
+}
+
+bool test_availability_missing_library() {
+    ScopedEnv disable("IME_FCITX5_DISABLE_ATSPI", nullptr);
+    ScopedEnv sample("IME_FCITX5_CONTEXT_SAMPLE_FILE", nullptr);
+    ScopedEnv legacy("IME_FCITX5_ATSPI_SAMPLE_FILE", nullptr);
+    ScopedEnv library("IME_FCITX5_ATSPI_LIBRARY", "/nonexistent/llavon-ime-libatspi.so.0");
+    auto provider = make_provider(64);
+    bool ok = check(!provider->start(), "start() fails when the library is missing");
+    const auto state = provider->availability();
+    ok &= check(state.availability != AccessibilityAvailability::Available,
+                "a missing library never reports Available");
+#if defined(__linux__)
+    if (state.availability == AccessibilityAvailability::Unavailable) {
+        ok &= check(state.detail == "libatspi-missing", "the missing library detail is reported");
+    }
+#endif
     return ok;
 }
 
@@ -98,8 +118,13 @@ bool test_file_backed_sample() {
     ScopedEnv disable("IME_FCITX5_DISABLE_ATSPI", nullptr);
 
     auto provider = make_provider(64);
-    bool ok = check(provider->start(), "the file-backed source starts headlessly");
+    bool ok = check(provider->availability().availability == AccessibilityAvailability::Unsupported,
+                    "availability is Unsupported before the source starts");
+    ok &= check(provider->start(), "the file-backed source starts headlessly");
     ok &= check(provider->running(), "the file-backed source reports running");
+    const auto state = provider->availability();
+    ok &= check(state.availability == AccessibilityAvailability::Available && state.detail == "sample-file",
+                "the file-backed source reports Available");
     const auto first = provider->latest();
     ok &= check(first.has_value() && first->usable && first->text == u"早安，世界",
                 "the file content becomes the sample");
@@ -235,6 +260,7 @@ int run_accessibility_context_tests() {
     bool ok = true;
     ok &= test_publish_and_sequence();
     ok &= test_disabled_start();
+    ok &= test_availability_missing_library();
     ok &= test_missing_library_is_graceful();
     ok &= test_file_backed_sample();
     ok &= test_legacy_sample_alias();

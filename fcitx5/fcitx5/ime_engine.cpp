@@ -70,6 +70,34 @@ void log_context(const char* source, std::u16string_view text) {
                  context_preview(text).c_str());
 }
 
+std::string accessibility_status_text(const AccessibilityContextState& state) {
+    switch (state.availability) {
+        case AccessibilityAvailability::Disabled:
+            return "已停用";
+        case AccessibilityAvailability::Unsupported:
+            return "此平台不支援";
+        case AccessibilityAvailability::Available:
+            if (state.detail == "sample-file") return "樣本檔案: 可取得";
+            if (state.detail == "atspi") return "AT-SPI: 可取得";
+            if (state.detail == "ax") return "macOS 輔助使用: 可取得";
+            return "無障礙: 可取得";
+        case AccessibilityAvailability::Unavailable:
+            if (state.detail == "libatspi-missing") return "AT-SPI: 不可用(未安裝 at-spi2-core)";
+            if (state.detail == "a11y-bus-unavailable") {
+                return "AT-SPI: 不可用(無法連線 a11y bus;請安裝或啟動 at-spi2-core)";
+            }
+            if (state.detail == "atspi-init-failed") return "AT-SPI: 不可用(初始化失敗)";
+            if (state.detail == "atspi-listener-failed") return "AT-SPI: 不可用(無法註冊事件監聽)";
+            if (state.detail == "atspi-loop-failed") return "AT-SPI: 不可用(事件迴圈建立失敗)";
+            if (state.detail == "ax-permission-required") {
+                return "macOS 輔助使用: 未授權(系統設定 → 隱私權與安全性 → 輔助使用)";
+            }
+            if (state.detail == "ax-sampling-not-implemented") return "macOS 輔助使用: 尚未支援取樣";
+            return state.detail.empty() ? "無障礙: 不可用" : "無障礙: 不可用(" + state.detail + ")";
+    }
+    return "無障礙: 未知";
+}
+
 std::u16string to_utf16(char32_t value) {
     return utf8_to_u16(char32_to_utf8(value));
 }
@@ -925,7 +953,11 @@ void ImeEngine::reloadConfig() {
 
 void ImeEngine::save() {
     // The default INI location is PkgConfig, matching shared config_path().
+    // The accessibility status is informational and must not be persisted.
+    const std::string status = *fcitx_config_.accessibilityStatus;
+    (void)fcitx_config_.accessibilityStatus.setValue(std::string());
     fcitx::safeSaveAsIni(fcitx_config_, kFcitxConfigFile);
+    (void)fcitx_config_.accessibilityStatus.setValue(status);
 }
 
 const fcitx::Configuration* ImeEngine::getConfig() const {
@@ -997,28 +1029,28 @@ void ImeEngine::apply_context_cache_limits() {
 }
 
 void ImeEngine::apply_context_sources() {
-    if (config_.use_accessibility_context) {
-        const size_t limit = static_cast<size_t>(std::max(1, config_.context_length));
-        if (accessibility_context_ && accessibility_max_code_units_ != limit) {
-            accessibility_context_->stop();
-            accessibility_context_.reset();
-            accessibility_max_code_units_ = 0;
-            accessibility_base_sequence_ = 0;
-        }
-        if (!accessibility_context_) {
-            accessibility_context_ = create_accessibility_context_provider(limit);
-            accessibility_max_code_units_ = limit;
-            accessibility_base_sequence_ = 0;
-        }
-        (void)accessibility_context_->start();
-        return;
-    }
-    if (accessibility_context_) {
+    const size_t limit = static_cast<size_t>(std::max(1, config_.context_length));
+    if (accessibility_context_ && accessibility_max_code_units_ != limit) {
         accessibility_context_->stop();
         accessibility_context_.reset();
         accessibility_max_code_units_ = 0;
         accessibility_base_sequence_ = 0;
     }
+    if (!accessibility_context_) {
+        accessibility_context_ = create_accessibility_context_provider(limit);
+        accessibility_max_code_units_ = limit;
+        accessibility_base_sequence_ = 0;
+    }
+    (void)accessibility_context_->start();
+    update_accessibility_status();
+}
+
+void ImeEngine::update_accessibility_status() {
+    const AccessibilityContextState state = accessibility_context_ ? accessibility_context_->availability()
+                                                                   : AccessibilityContextState{};
+    const std::string status = accessibility_status_text(state);
+    if (*fcitx_config_.accessibilityStatus == status) return;
+    (void)fcitx_config_.accessibilityStatus.setValue(status);
 }
 
 void ImeEngine::update_ui(fcitx::InputContext* input_context) {

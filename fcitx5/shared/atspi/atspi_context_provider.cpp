@@ -396,9 +396,15 @@ private:
         bool ok = false;
         AtspiEventListener* listener = nullptr;
         do {
-            if (!bus_reachable()) break;
+            if (!bus_reachable()) {
+                owner_.set_availability(AccessibilityAvailability::Unavailable, "a11y-bus-unavailable");
+                break;
+            }
             api_.init();
-            if (!api_.is_initialized()) break;
+            if (!api_.is_initialized()) {
+                owner_.set_availability(AccessibilityAvailability::Unavailable, "atspi-init-failed");
+                break;
+            }
             api_.set_timeout(1000, 1000);
 
             GError* error = nullptr;
@@ -407,10 +413,14 @@ private:
                 !api_.listener_register(listener, "object:text-caret-moved", &error) ||
                 !api_.listener_register(listener, "object:text-changed", &error)) {
                 g_clear_error(&error);
+                owner_.set_availability(AccessibilityAvailability::Unavailable, "atspi-listener-failed");
                 break;
             }
             loop_ = g_main_loop_new(context_, FALSE);
             ok = loop_ != nullptr;
+            if (!ok) {
+                owner_.set_availability(AccessibilityAvailability::Unavailable, "atspi-loop-failed");
+            }
         } while (false);
 
         {
@@ -428,6 +438,7 @@ private:
             return;
         }
 
+        owner_.set_availability(AccessibilityAvailability::Available, "atspi");
         active_instance_ = this;
         queue_idle();
         g_main_loop_run(loop_);
@@ -447,7 +458,10 @@ private:
     }
 
     bool start_backend() {
-        if (!api_.open()) return false;
+        if (!api_.open()) {
+            owner_.set_availability(AccessibilityAvailability::Unavailable, "libatspi-missing");
+            return false;
+        }
         {
             std::lock_guard lock(ready_mutex_);
             ready_ = false;

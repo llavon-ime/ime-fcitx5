@@ -82,13 +82,19 @@ if(NOT WIN32)
     )
 endif()
 target_link_libraries(ime_fcitx5_shared PUBLIC nlohmann_json::nlohmann_json Threads::Threads)
-if(ATSPI_FOUND AND ATSPI_GLIB_FOUND AND NOT WIN32)
+if(ATSPI_FOUND AND ATSPI_GLIB_FOUND AND NOT WIN32 AND NOT APPLE)
     target_sources(ime_fcitx5_shared PRIVATE shared/atspi/atspi_context_provider.cpp)
     target_compile_definitions(ime_fcitx5_shared PRIVATE IME_FCITX5_HAVE_ATSPI=1)
     target_include_directories(ime_fcitx5_shared PRIVATE ${ATSPI_INCLUDE_DIRS})
     # libatspi is loaded at runtime with dlopen so the addon still loads on
     # systems without at-spi2-core; only glib/gio are hard dependencies.
     target_link_libraries(ime_fcitx5_shared PRIVATE PkgConfig::ATSPI_GLIB ${CMAKE_DL_LIBS})
+endif()
+if(APPLE)
+    find_library(APPLICATION_SERVICES_FRAMEWORK ApplicationServices REQUIRED)
+    target_sources(ime_fcitx5_shared PRIVATE shared/ax/ax_context_provider.cpp)
+    target_compile_definitions(ime_fcitx5_shared PRIVATE IME_FCITX5_HAVE_AX=1)
+    target_link_libraries(ime_fcitx5_shared PRIVATE ${APPLICATION_SERVICES_FRAMEWORK})
 endif()
 install(FILES "${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/llavon-ime/tables")
@@ -147,7 +153,7 @@ endif()
 # focused editable widget through the same AT-SPI provider the addon uses. It
 # validates on a real desktop that the a11y bus provides reliable, low-latency
 # context for IME prediction.
-if(ATSPI_FOUND AND ATSPI_LINK_FOUND AND NOT WIN32)
+if(ATSPI_FOUND AND ATSPI_LINK_FOUND AND NOT WIN32 AND NOT APPLE)
     add_executable(atspi_probe tools/atspi_probe.cpp)
     target_include_directories(atspi_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/shared")
     target_link_libraries(atspi_probe PRIVATE PkgConfig::ATSPI_LINK ime_fcitx5_shared)
