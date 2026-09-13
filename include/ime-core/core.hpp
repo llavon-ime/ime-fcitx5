@@ -16,6 +16,7 @@ enum class InferenceBackend : std::uint8_t {
     cpu,
     cuda,
     vulkan,
+    metal,
 };
 
 enum class InferenceDeviceType : std::uint8_t {
