@@ -1571,7 +1571,7 @@ bool ImeEngine::select_candidate(fcitx::InputContext* input_context, int index) 
     if (!buffer_.select_candidate(*target, static_cast<size_t>(index), config_.move_cursor_after_selection))
         return false;
     (void)transition_to(InputState::Inputting);
-    mark_prediction_dirty();
+    request_prediction_if_ready(input_context);
     update_ui(input_context);
     return true;
 }

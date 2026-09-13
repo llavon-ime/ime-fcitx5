@@ -139,6 +139,13 @@ public:
             input_context()->property("llavon-ime-input-state"));
     }
 
+    // Simulates an in-flight prediction settling (its response has been
+    // consumed) so tests can observe which state changes must issue a fresh
+    // request. Bumps the generation so late responses are ignored.
+    void settle_prediction() {
+        if (auto* state = engine_state()) state->invalidate_generation();
+    }
+
     fcitx::Instance* instance() const { return instance_; }
 
 private:
