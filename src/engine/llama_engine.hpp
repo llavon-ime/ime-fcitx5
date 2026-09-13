@@ -115,7 +115,7 @@ private:
         if (registry_name.find("vulkan") != std::string::npos) {
             return InferenceBackend::vulkan;
         }
-        if (registry_name.find("metal") != std::string::npos) {
+        if (registry_name == "mtl" || registry_name.find("metal") != std::string::npos) {
             return InferenceBackend::metal;
         }
         return std::nullopt;
