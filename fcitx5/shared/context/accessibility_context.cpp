@@ -11,6 +11,8 @@
 
 #ifdef IME_FCITX5_HAVE_ATSPI
 #include "atspi/atspi_context_provider.hpp"
+#elif defined(IME_FCITX5_HAVE_AX)
+#include "ax/ax_context_provider.hpp"
 #endif
 
 namespace ime::fcitx5 {
@@ -46,13 +48,27 @@ std::uint64_t AccessibilityContextProvider::sequence() const {
     return sample_.sequence;
 }
 
+AccessibilityContextState AccessibilityContextProvider::availability() const {
+    std::lock_guard lock(mutex_);
+    return availability_;
+}
+
+void AccessibilityContextProvider::set_availability(AccessibilityAvailability availability, std::string detail) {
+    std::lock_guard lock(mutex_);
+    availability_.availability = availability;
+    availability_.detail = std::move(detail);
+}
+
 namespace {
 
 // Refuses to run; used when accessibility is explicitly disabled or the
 // platform has no supported backend.
 class UnavailableContextProvider final : public AccessibilityContextProvider {
 public:
-    using AccessibilityContextProvider::AccessibilityContextProvider;
+    UnavailableContextProvider(size_t max_code_units, AccessibilityAvailability availability, std::string detail)
+        : AccessibilityContextProvider(max_code_units) {
+        set_availability(availability, std::move(detail));
+    }
 
     bool start() override { return false; }
     void stop() override {}
@@ -69,6 +85,7 @@ public:
 
     bool start() override {
         running_.store(true);
+        set_availability(AccessibilityAvailability::Available, "sample-file");
         refresh_file();
         return true;
     }
@@ -110,7 +127,8 @@ const char* non_empty_env(const char* name) {
 
 std::unique_ptr<AccessibilityContextProvider> create_accessibility_context_provider(size_t max_code_units) {
     if (non_empty_env("IME_FCITX5_DISABLE_ATSPI") != nullptr) {
-        return std::make_unique<UnavailableContextProvider>(max_code_units);
+        return std::make_unique<UnavailableContextProvider>(max_code_units, AccessibilityAvailability::Disabled,
+                                                            "configured");
     }
     if (const char* file = non_empty_env("IME_FCITX5_CONTEXT_SAMPLE_FILE"); file != nullptr) {
         return std::make_unique<FileContextProvider>(max_code_units, file);
@@ -120,8 +138,11 @@ std::unique_ptr<AccessibilityContextProvider> create_accessibility_context_provi
     }
 #ifdef IME_FCITX5_HAVE_ATSPI
     return std::make_unique<AtspiContextProvider>(max_code_units);
+#elif defined(IME_FCITX5_HAVE_AX)
+    return std::make_unique<AxContextProvider>(max_code_units);
 #else
-    return std::make_unique<UnavailableContextProvider>(max_code_units);
+    return std::make_unique<UnavailableContextProvider>(max_code_units, AccessibilityAvailability::Unsupported,
+                                                        "no-backend");
 #endif
 }
 

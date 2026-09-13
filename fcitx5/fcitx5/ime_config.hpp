@@ -78,8 +78,15 @@ FCITX_CONFIGURATION(ImeFcitxConfig,
                                                default_config().reset_context_on_focus_out};
     fcitx::Option<bool> contextEditTracking{this, "ContextEditTracking", "追蹤編輯以更新上下文",
                                              default_config().context_edit_tracking};
-    fcitx::Option<bool> useAccessibilityContext{this, "UseAccessibilityContext", "使用無障礙介面取得上下文",
-                                                 default_config().use_accessibility_context};);
+    fcitx::Option<std::string, fcitx::NoConstrain<std::string>, fcitx::DefaultMarshaller<std::string>,
+                  fcitx::ToolTipAnnotation>
+        accessibilityStatus{this,
+                            "AccessibilityStatus",
+                            "無障礙狀態",
+                            "",
+                            fcitx::NoConstrain<std::string>(),
+                            fcitx::DefaultMarshaller<std::string>(),
+                            fcitx::ToolTipAnnotation("由 IME 更新的唯讀狀態:顯示能否取得聚焦視窗的文字作為預測上下文;可用時會自動使用")};);
 
 Config to_shared_config(const ImeFcitxConfig& config);
 void apply_shared_config(ImeFcitxConfig& target, const Config& source);

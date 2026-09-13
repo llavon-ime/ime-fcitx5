@@ -62,6 +62,7 @@ private:
     void reload_config();
     void apply_context_cache_limits();
     void apply_context_sources();
+    void update_accessibility_status();
     void update_ui(fcitx::InputContext* input_context);
     void commit_current(fcitx::InputContext* input_context);
     bool handle_english_letter(fcitx::InputContext* input_context, char32_t letter, bool caps_on);

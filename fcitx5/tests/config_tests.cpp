@@ -50,7 +50,6 @@ int run_config_tests() {
     ok = ok && cfg.context_history_limit == 1024;
     ok = ok && cfg.reset_context_on_focus_out;
     ok = ok && cfg.context_edit_tracking;
-    ok = ok && cfg.use_accessibility_context;
 
     auto json = ime::fcitx5::to_json(cfg);
     auto roundtrip = ime::fcitx5::config_from_json(json);
@@ -64,7 +63,6 @@ int run_config_tests() {
     ok = ok && roundtrip.context_history_limit == cfg.context_history_limit;
     ok = ok && roundtrip.reset_context_on_focus_out == cfg.reset_context_on_focus_out;
     ok = ok && roundtrip.context_edit_tracking == cfg.context_edit_tracking;
-    ok = ok && roundtrip.use_accessibility_context == cfg.use_accessibility_context;
     ok = ok && ime::fcitx5::socket_path().filename() == "ime.sock";
     ok = ok && ime::fcitx5::pid_path().filename() == "service.pid";
 

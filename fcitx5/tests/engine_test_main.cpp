@@ -34,14 +34,12 @@ void engine_test_smart_usability(fcitx::Instance* instance);
 void engine_test_smart_work(fcitx::Instance* instance);
 
 int main() {
-    fcitx::setupTestingEnvironment(TESTING_BINARY_DIR, {TESTING_BINARY_DIR},
-                                   {TESTING_BINARY_DIR "/tests/test"});
-    fcitx::Log::setLogRule("default=5");
-
     // Isolate fcitx and shared config into the build directory so the tests
     // never read or overwrite the user's real ~/.config/fcitx5 configuration.
+    // Must be set before the testing environment initializes StandardPath.
     const auto config_home = std::filesystem::path(TESTING_BINARY_DIR) / "test-config";
-    std::filesystem::create_directories(config_home);
+    std::filesystem::create_directories(config_home / "conf");
+    std::filesystem::create_directories(config_home / "fcitx5" / "conf");
     setenv("FCITX_CONFIG_HOME", config_home.c_str(), 1);
     setenv("XDG_CONFIG_HOME", config_home.c_str(), 1);
 
@@ -53,14 +51,15 @@ int main() {
     unsetenv("IME_FCITX5_DISABLE_ATSPI");
     std::filesystem::remove(sample_path);
 
-    // Keep predictions deterministic: never connect to (or auto-start) a real
-    // unix service from the engine tests. Without this, a warm service answers
-    // mid-test and reorders fallback candidates.
     // Keep predictions deterministic and fast: never connect to a real unix
     // service, and never pay the auto-start retry on every prediction.
     setenv("LLAVON_IME_UNIX_SOCKET_PATH", (config_home / "no-service.sock").c_str(), 1);
     setenv("LLAVON_IME_UNIX_SERVICE_PATH", (config_home / "no-service").c_str(), 1);
     setenv("IME_FCITX5_DISABLE_SERVICE", "1", 1);
+
+    fcitx::setupTestingEnvironment(TESTING_BINARY_DIR, {TESTING_BINARY_DIR},
+                                   {TESTING_BINARY_DIR "/tests/test"});
+    fcitx::Log::setLogRule("default=5");
 
     char arg0[] = "test-engine";
     char arg1[] = "--disable=all";

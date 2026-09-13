@@ -17,6 +17,21 @@ struct AccessibilityContextSample {
     bool usable = false;
 };
 
+// Whether the platform can currently produce accessibility context samples.
+enum class AccessibilityAvailability {
+    Unsupported,  // no backend for this platform / build
+    Disabled,     // turned off by configuration
+    Unavailable,  // backend exists but cannot sample right now
+    Available,    // backend can sample the focused widget
+};
+
+// Availability plus a stable identifier describing the reason. The engine
+// maps the identifier to user-facing text for the read-only config status.
+struct AccessibilityContextState {
+    AccessibilityAvailability availability = AccessibilityAvailability::Unsupported;
+    std::string detail;
+};
+
 // Platform-independent state and interface for sampling the text before the
 // caret of the focused editable widget, independently of what this IME has
 // committed.
@@ -56,12 +71,20 @@ public:
     std::optional<AccessibilityContextSample> latest() const;
     std::uint64_t sequence() const;
 
+    AccessibilityContextState availability() const;
+
     size_t max_code_units() const noexcept { return max_code_units_; }
+
+protected:
+    // Backends report their capability here; the engine reads it to render the
+    // read-only config status.
+    void set_availability(AccessibilityAvailability availability, std::string detail = {});
 
 private:
     size_t max_code_units_;
     mutable std::mutex mutex_;
     AccessibilityContextSample sample_;
+    AccessibilityContextState availability_;
     bool has_sample_ = false;
     std::uint64_t next_sequence_ = 0;
     std::atomic<bool> active_{false};
