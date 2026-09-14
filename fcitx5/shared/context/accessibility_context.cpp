@@ -11,8 +11,6 @@
 
 #ifdef IME_FCITX5_HAVE_ATSPI
 #include "atspi/atspi_context_provider.hpp"
-#elif defined(IME_FCITX5_HAVE_AX)
-#include "ax/ax_context_provider.hpp"
 #endif
 
 namespace ime::fcitx5 {
@@ -138,8 +136,6 @@ std::unique_ptr<AccessibilityContextProvider> create_accessibility_context_provi
     }
 #ifdef IME_FCITX5_HAVE_ATSPI
     return std::make_unique<AtspiContextProvider>(max_code_units);
-#elif defined(IME_FCITX5_HAVE_AX)
-    return std::make_unique<AxContextProvider>(max_code_units);
 #else
     return std::make_unique<UnavailableContextProvider>(max_code_units, AccessibilityAvailability::Unsupported,
                                                         "no-backend");

@@ -11,6 +11,7 @@ set(IME_FCITX5_TEST_SOURCES
     ascii_tokenizer_tests.cpp
     context_cache_tests.cpp
     caret_prefix_sampler_tests.cpp
+    sample_adoption_tests.cpp
     accessibility_context_tests.cpp
     real_service_tests.cpp
     fallback_engine_tests.cpp

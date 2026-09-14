@@ -82,17 +82,21 @@ bool test_availability_missing_library() {
     ScopedEnv sample("IME_FCITX5_CONTEXT_SAMPLE_FILE", nullptr);
     ScopedEnv legacy("IME_FCITX5_ATSPI_SAMPLE_FILE", nullptr);
     ScopedEnv library("IME_FCITX5_ATSPI_LIBRARY", "/nonexistent/llavon-ime-libatspi.so.0");
+#if defined(__linux__)
     auto provider = make_provider(64);
     bool ok = check(!provider->start(), "start() fails when the library is missing");
     const auto state = provider->availability();
     ok &= check(state.availability != AccessibilityAvailability::Available,
                 "a missing library never reports Available");
-#if defined(__linux__)
     if (state.availability == AccessibilityAvailability::Unavailable) {
         ok &= check(state.detail == "libatspi-missing", "the missing library detail is reported");
     }
-#endif
     return ok;
+#else
+    // The library override only affects the Linux AT-SPI backend.
+    (void)make_provider(64);
+    return true;
+#endif
 }
 
 bool test_missing_library_is_graceful() {
@@ -100,10 +104,15 @@ bool test_missing_library_is_graceful() {
     ScopedEnv sample("IME_FCITX5_CONTEXT_SAMPLE_FILE", nullptr);
     ScopedEnv legacy("IME_FCITX5_ATSPI_SAMPLE_FILE", nullptr);
     ScopedEnv library("IME_FCITX5_ATSPI_LIBRARY", "/nonexistent/llavon-ime-libatspi.so.0");
+#if defined(__linux__)
     auto provider = make_provider(64);
     bool ok = check(!provider->start(), "a missing AT-SPI library is not fatal");
     ok &= check(!provider->running(), "a missing library leaves the provider stopped");
     return ok;
+#else
+    (void)make_provider(64);
+    return true;
+#endif
 }
 
 bool test_file_backed_sample() {

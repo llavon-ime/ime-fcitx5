@@ -11,6 +11,7 @@ int run_symbol_menu_tests();
 int run_ascii_tokenizer_tests();
 int run_context_cache_tests();
 int run_caret_prefix_sampler_tests();
+int run_sample_adoption_tests();
 int run_accessibility_context_tests();
 int run_real_service_tests();
 int run_fallback_engine_tests();
@@ -28,6 +29,7 @@ int main() {
     if (run_ascii_tokenizer_tests() != EXIT_SUCCESS) return EXIT_FAILURE;
     if (run_context_cache_tests() != EXIT_SUCCESS) return EXIT_FAILURE;
     if (run_caret_prefix_sampler_tests() != EXIT_SUCCESS) return EXIT_FAILURE;
+    if (run_sample_adoption_tests() != EXIT_SUCCESS) return EXIT_FAILURE;
     if (run_accessibility_context_tests() != EXIT_SUCCESS) return EXIT_FAILURE;
     if (run_real_service_tests() != EXIT_SUCCESS) return EXIT_FAILURE;
     if (run_fallback_engine_tests() != EXIT_SUCCESS) return EXIT_FAILURE;

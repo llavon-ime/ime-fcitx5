@@ -16,11 +16,14 @@
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "context/accessibility_context.hpp"
+#include "context/sample_adoption.hpp"
 #include "bopomofo/keymap.hpp"
 #include "input/ascii_tokenizer.hpp"
 #include "input/keypad.hpp"
@@ -79,7 +82,6 @@ std::string accessibility_status_text(const AccessibilityContextState& state) {
         case AccessibilityAvailability::Available:
             if (state.detail == "sample-file") return "樣本檔案: 可取得";
             if (state.detail == "atspi") return "AT-SPI: 可取得";
-            if (state.detail == "ax") return "macOS 輔助使用: 可取得";
             return "無障礙: 可取得";
         case AccessibilityAvailability::Unavailable:
             if (state.detail == "libatspi-missing") return "AT-SPI: 不可用(未安裝 at-spi2-core)";
@@ -89,10 +91,6 @@ std::string accessibility_status_text(const AccessibilityContextState& state) {
             if (state.detail == "atspi-init-failed") return "AT-SPI: 不可用(初始化失敗)";
             if (state.detail == "atspi-listener-failed") return "AT-SPI: 不可用(無法註冊事件監聽)";
             if (state.detail == "atspi-loop-failed") return "AT-SPI: 不可用(事件迴圈建立失敗)";
-            if (state.detail == "ax-permission-required") {
-                return "macOS 輔助使用: 未授權(系統設定 → 隱私權與安全性 → 輔助使用)";
-            }
-            if (state.detail == "ax-sampling-not-implemented") return "macOS 輔助使用: 尚未支援取樣";
             return state.detail.empty() ? "無障礙: 不可用" : "無障礙: 不可用(" + state.detail + ")";
     }
     return "無障礙: 未知";
@@ -1029,6 +1027,17 @@ void ImeEngine::apply_context_cache_limits() {
 }
 
 void ImeEngine::apply_context_sources() {
+#ifdef IME_FCITX5_NATIVE_SURROUNDING
+    if (accessibility_context_) {
+        accessibility_context_->stop();
+        accessibility_context_.reset();
+    }
+    accessibility_max_code_units_ = 0;
+    accessibility_base_sequence_ = 0;
+    (void)fcitx_config_.accessibilityStatus.setValue("InputMethodKit: 可取得（不需輔助使用權限）");
+    return;
+#endif
+
     const size_t limit = static_cast<size_t>(std::max(1, config_.context_length));
     if (accessibility_context_ && accessibility_max_code_units_ != limit) {
         accessibility_context_->stop();
@@ -1068,13 +1077,9 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
     } else {
         if (input_state_ == InputState::Empty) (void)transition_to(InputState::Inputting);
 
-        auto rendered = buffer_.rendered_composition();
+        auto rendered = current_preedit();
         auto prefix = buffer_.rendered_prefix_before_caret();
-        if (!pending_token_.empty()) {
-            const auto pending = pending_rendered_text();
-            rendered += pending;
-            prefix += pending;
-        }
+        if (!pending_token_.empty()) prefix += pending_rendered_text();
         fcitx::Text preedit(to_utf8(rendered));
         preedit.setCursor(static_cast<int>(to_utf8(prefix).size()));
         const bool use_client_preedit = input_context->capabilityFlags().test(fcitx::CapabilityFlag::Preedit);
@@ -1524,6 +1529,33 @@ std::u16string ImeEngine::pending_rendered_text() const {
     return mixed_decision_.result.paths[mixed_decision_.preview_path].rendered;
 }
 
+// The exact text the composing buffer shows before the caret, including any
+// pending reading preview. Accessibility samples read the widget as-is, so
+// this is what must be stripped from their tail before the sample can become
+// prediction context.
+std::u16string ImeEngine::current_preedit() const {
+    auto rendered = buffer_.rendered_composition();
+    const auto pending = pending_rendered_text();
+    if (!pending.empty()) rendered += pending;
+    return rendered;
+}
+
+// Builds the current composition as a sequence of per-segment states and
+// removes it from the tail of an accessibility sample.
+std::optional<std::u16string> ImeEngine::strip_accessibility_preedit(const std::u16string& sample) const {
+    std::vector<std::pair<std::u16string, std::u16string>> storage;
+    for (const auto& segment : buffer_.segments()) {
+        if (segment.empty()) continue;
+        storage.emplace_back(segment.rendered_text(), segment.reading());
+    }
+    if (!pending_token_.empty()) storage.emplace_back(pending_rendered_text(), pending_token_.raw);
+
+    std::vector<PreeditSegmentState> states;
+    states.reserve(storage.size());
+    for (const auto& [rendered, reading] : storage) states.push_back({rendered, reading});
+    return strip_preedit_suffix(sample, states);
+}
+
 void ImeEngine::settle_pending_as_literals() {
     for (const char16_t ch : pending_token_.raw) (void)buffer_.add_literal(static_cast<char32_t>(ch));
     pending_token_.clear();
@@ -1756,6 +1788,15 @@ void ImeEngine::reset_candidate_view() {
 bool ImeEngine::transition_to(InputState state) {
     const auto previous = input_state_;
     if (!transition_input_state(input_state_, state)) return false;
+    if (accessibility_context_ != nullptr) {
+        if (previous == InputState::Empty && state == InputState::Inputting) {
+            // Samples published from here on may contain this composition's
+            // preedit; earlier ones cannot.
+            accessibility_composition_base_ = accessibility_context_->sequence();
+        } else if (state == InputState::Empty) {
+            accessibility_composition_base_ = 0;
+        }
+    }
     if (state == InputState::ChoosingCandidate) {
         if (previous != InputState::ChoosingCandidate) {
             reset_candidate_view();
@@ -1898,32 +1939,61 @@ void ImeEngine::resync_context_cache(const fcitx::InputContext* input_context) {
         return;
     }
 
+    // Some clients report an empty (but valid) document, notably Electron,
+    // Chromium and terminals. An empty client prefix must not shadow the
+    // accessibility sample, which may still hold the focused widget's text.
+    bool client_empty = false;
     const auto& surrounding = input_context->surroundingText();
-    if (!surrounding.isValid()) {
-        if (accessibility_context_) {
-            const auto sample = accessibility_context_->latest();
-            if (sample && sample->usable && sample->sequence > accessibility_base_sequence_) {
-                context_cache_.on_surrounding(sample->text, sample->text.size());
-                log_context("atspi", sample->text);
+    if (surrounding.isValid()) {
+        try {
+            const size_t cursor = std::min(surrounding.cursor(), surrounding.anchor());
+            const size_t limit = context_cache_.limit() > 0 ? context_cache_.limit()
+                                                           : context_cache_.surrounding_limit();
+            const auto text = utf8_prefix_tail(surrounding.text(), cursor, limit);
+            if (!text.empty()) {
+                context_cache_.on_surrounding(text, text.size());
+                log_context("client-surrounding", text);
                 return;
             }
-            log_context("atspi-unusable", {});
-        } else {
-            log_context("cache-fallback", {});
+            client_empty = true;
+        } catch (const std::runtime_error&) {
+            // Ignore malformed surrounding text supplied by a client.
         }
-        return;
     }
 
-    try {
-        const size_t cursor = std::min(surrounding.cursor(), surrounding.anchor());
-        const size_t limit = context_cache_.limit() > 0 ? context_cache_.limit()
-                                                       : context_cache_.surrounding_limit();
-        const auto text = utf8_prefix_tail(surrounding.text(), cursor, limit);
-        context_cache_.on_surrounding(text, text.size());
-        log_context("client-surrounding", text);
-    } catch (const std::runtime_error&) {
-        // Ignore malformed surrounding text supplied by a client.
+    if (accessibility_context_) {
+        const auto sample = accessibility_context_->latest();
+        if (sample && sample->usable && sample->sequence > accessibility_base_sequence_) {
+            // A sample published before this composition started cannot
+            // contain its preedit; anything newer may, so it is only adopted
+            // after the composing text is stripped from its tail.
+            const bool predates_composition =
+                accessibility_composition_base_ != 0 && sample->sequence <= accessibility_composition_base_;
+            std::optional<std::u16string> text;
+            if (composition_empty() || predates_composition) {
+                text = sample->text;
+            } else {
+                text = strip_accessibility_preedit(sample->text);
+            }
+            if (text) {
+                context_cache_.on_surrounding(*text, text->size());
+                log_context("accessibility", *text);
+                return;
+            }
+            log_context("accessibility-preedit-mismatch", sample->text);
+        } else {
+            log_context("accessibility-unusable", {});
+        }
     }
+
+    if (client_empty) {
+        // An authoritative empty prefix: drop the history instead of keeping
+        // text from a previous field.
+        context_cache_.on_surrounding(std::u16string_view(), 0);
+        log_context("client-surrounding-empty", {});
+        return;
+    }
+    log_context("cache-fallback", {});
 }
 
 protocol::PredictRequest ImeEngine::build_predict_request(const fcitx::InputContext* input_context) const {

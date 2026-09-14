@@ -38,8 +38,9 @@ struct AccessibilityContextState {
 //
 // The base class owns the sample store and the input-method-active gate so
 // every backend shares the same sequence/gating semantics. Backends implement
-// only the platform lifecycle: AT-SPI on Linux, Accessibility (AX) on macOS,
-// or the file-backed source used by tests and headless validation.
+// only the platform lifecycle: AT-SPI on Linux, or the file-backed source used
+// by tests and headless validation. macOS obtains surrounding text directly
+// from the InputMethodKit client instead of requesting Accessibility access.
 //
 // Every publish advances sequence(), even when the sample is not usable, so
 // callers can detect that the focused widget changed and must not reuse stale
