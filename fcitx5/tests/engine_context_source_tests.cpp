@@ -31,10 +31,10 @@ bool status_contains(const std::string& status, std::string_view needle) {
 
 }  // namespace
 
-// The engine prefers the AT-SPI caret sample over its own commit history when
-// the client never pushes surrounding text. The engine tests run with
-// IME_FCITX5_CONTEXT_SAMPLE_FILE, which backs the provider with a file instead of
-// the accessibility bus: writing the file publishes a sample.
+// The engine prefers the accessibility caret sample over its own commit
+// history when the client never pushes surrounding text. The engine tests run
+// with IME_FCITX5_CONTEXT_SAMPLE_FILE, which backs the provider with a file
+// instead of the accessibility bus: writing the file publishes a sample.
 void engine_test_context_source(fcitx::Instance* instance) {
     const char* sample_path = std::getenv("IME_FCITX5_CONTEXT_SAMPLE_FILE");
     FCITX_ASSERT(sample_path != nullptr && sample_path[0] != '\0');
@@ -92,6 +92,36 @@ void engine_test_context_source(fcitx::Instance* instance) {
         harness.type("su3");
         harness.expect_commit("你");
         FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"你");
+    });
+
+    // A valid but empty client surrounding text (Electron/Chromium/terminals)
+    // must not shadow the accessibility sample.
+    instance->eventDispatcher().schedule([instance, path]() {
+        {
+            std::ofstream output(path, std::ios::binary | std::ios::trunc);
+            output << "空字串不吃樣本";
+        }
+        EngineHarness harness(instance);
+        harness.set_configs({{"SmartEnglish", "False"}});
+        harness.set_surrounding("", 0, 0);
+        harness.type("su3");
+        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"空字串不吃樣本");
+        std::filesystem::remove(path);
+    });
+
+    // Non-empty client surrounding text stays authoritative and is not
+    // replaced by the accessibility sample.
+    instance->eventDispatcher().schedule([instance, path]() {
+        {
+            std::ofstream output(path, std::ios::binary | std::ios::trunc);
+            output << "樣本不應使用";
+        }
+        EngineHarness harness(instance);
+        harness.set_configs({{"SmartEnglish", "False"}});
+        harness.set_surrounding("客戶端文字", 5, 5);
+        harness.type("su3");
+        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"客戶端文字");
+        std::filesystem::remove(path);
     });
 
     // The accessibility source needs no user opt-in: once a usable sample is

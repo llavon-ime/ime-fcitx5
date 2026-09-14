@@ -90,12 +90,6 @@ if(ATSPI_FOUND AND ATSPI_GLIB_FOUND AND NOT WIN32 AND NOT APPLE)
     # systems without at-spi2-core; only glib/gio are hard dependencies.
     target_link_libraries(ime_fcitx5_shared PRIVATE PkgConfig::ATSPI_GLIB ${CMAKE_DL_LIBS})
 endif()
-if(APPLE)
-    find_library(APPLICATION_SERVICES_FRAMEWORK ApplicationServices REQUIRED)
-    target_sources(ime_fcitx5_shared PRIVATE shared/ax/ax_context_provider.cpp)
-    target_compile_definitions(ime_fcitx5_shared PRIVATE IME_FCITX5_HAVE_AX=1)
-    target_link_libraries(ime_fcitx5_shared PRIVATE ${APPLICATION_SERVICES_FRAMEWORK})
-endif()
 install(FILES "${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/llavon-ime/tables")
 install(DIRECTORY "${IME_FCITX5_TABLE_SOURCE_DIR}/tokens"
@@ -129,6 +123,9 @@ if(Fcitx5_FOUND AND NOT WIN32)
         IME_FCITX5_INSTALLED_TABLE_PATH="${IME_FCITX5_INSTALLED_TABLE_PATH}"
         IME_FCITX5_DISPLAY_VERSION="${IME_FCITX5_DISPLAY_VERSION}"
     )
+    if(APPLE)
+        target_compile_definitions(llavon-ime-addon PRIVATE IME_FCITX5_NATIVE_SURROUNDING=1)
+    endif()
     target_compile_options(llavon-ime-addon PRIVATE -Wall -Wextra -Wpedantic)
     set_target_properties(llavon-ime-addon PROPERTIES PREFIX "")
     configure_file(fcitx5/addon.conf.in "${CMAKE_BINARY_DIR}/fcitx5/addon/llavon-ime.conf" @ONLY)

@@ -68,6 +68,7 @@ private:
     bool handle_english_letter(fcitx::InputContext* input_context, char32_t letter, bool caps_on);
     void commit_composition_with(fcitx::InputContext* input_context, char32_t extra);
     std::u16string pending_rendered_text() const;
+    std::u16string current_preedit() const;
     void append_pending_char(char32_t key, BopomofoKeyboardLayout layout);
     void settle_pending_as_literals();
     bool settle_pending_preview(fcitx::InputContext* input_context);
@@ -99,6 +100,7 @@ private:
     bool composition_empty() const;
     void record_context_commit(const fcitx::InputContext* input_context, const std::u16string& text);
     void resync_context_cache(const fcitx::InputContext* input_context);
+    std::optional<std::u16string> strip_accessibility_preedit(const std::u16string& sample) const;
     void mark_prediction_dirty();
     void apply_fallback_candidates(size_t segment_index);
     void request_prediction_if_ready(fcitx::InputContext* input_context);
@@ -138,6 +140,7 @@ private:
     ContextCache context_cache_;
     std::unique_ptr<AccessibilityContextProvider> accessibility_context_;
     std::uint64_t accessibility_base_sequence_ = 0;
+    std::uint64_t accessibility_composition_base_ = 0;
     std::size_t accessibility_max_code_units_ = 0;
 
     protocol::SessionId session_id_{};

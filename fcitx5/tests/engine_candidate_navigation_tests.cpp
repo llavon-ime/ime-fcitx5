@@ -190,4 +190,26 @@ void engine_test_candidate_navigation_tests(fcitx::Instance* instance) {
         FCITX_ASSERT(esc_clear.preedit().empty());
         FCITX_ASSERT(!esc_clear.has_candidates());
     });
+
+    // Selecting a candidate changes the composition revision and the chosen
+    // padding the model sees, so it must request a fresh prediction even when
+    // no earlier request is in flight.
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        harness.set_config("SmartEnglish", "False");
+        harness.type("su3");
+        harness.key(fcitx::Key(FcitxKey_space));
+        FCITX_ASSERT(harness.has_candidates());
+
+        harness.settle_prediction();
+        FCITX_ASSERT(!harness.engine_state()->prediction_pending);
+        const size_t revision_before = harness.engine_state()->buffer.revision();
+
+        harness.key(fcitx::Key(FcitxKey_1));
+        const auto* state = harness.engine_state();
+        FCITX_ASSERT(state->prediction_pending);
+        FCITX_ASSERT(state->prediction_revision == state->buffer.revision());
+        FCITX_ASSERT(state->prediction_revision > revision_before);
+        FCITX_ASSERT(state->prediction_key == state->buffer.raw_composition());
+    });
 }

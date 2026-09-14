@@ -62,9 +62,24 @@ fcitx5。附加元件會在需要時啟動 `llavon-ime-unix-service`。
 
 ## macOS 編譯
 
-請安裝 fcitx5-macos，並複製其原始碼以取得標頭檔，接著編譯服務與附加
-元件。請將 `FCITX5_MACOS_SOURCE_DIR` 設為 fcitx5-macos 原始碼目錄；尋找
-模組會讀取此環境變數：
+最省事的做法是執行單一指令：
+
+```bash
+./scripts/build-macos.sh
+```
+
+腳本會檢查必要工具（`git`、`cmake`、`curl`、`pkg-config`、Xcode 命令列
+工具等），直接以目前的 checkout 編譯並測試服務與附加元件（包含尚未
+commit 的改動），最後安裝到 `~/Library/fcitx5`。編譯所需的 fcitx5-macos
+原始碼會自動 pull 到 `$TMPDIR/llavon-ime-fcitx5-macos`（只取 fcitx5 子模組
+的標頭，重複執行會更新）；若已有既有 checkout，可用
+`FCITX5_MACOS_SOURCE_DIR` 指定。模型使用發行套件的全域位置
+`/Library/Application Support/llavon-ime/models`，已有就直接沿用，沒有
+才下載並以 `sudo` 安裝到該位置。
+
+也可以依照下列步驟手動編譯。請安裝 fcitx5-macos，並複製其原始碼以取得
+標頭檔，接著編譯服務與附加元件。請將 `FCITX5_MACOS_SOURCE_DIR` 設為
+fcitx5-macos 原始碼目錄；尋找模組會讀取此環境變數：
 
 ```bash
 export FCITX5_MACOS_SOURCE_DIR=/path/to/fcitx5-macos
@@ -87,6 +102,12 @@ cmake --install build/macos
 `postinstall` 腳本也會將內容檔案複製到此目錄。`arm64-osx-llavon` vcpkg
 三元組會啟用 `GGML_NATIVE=ON`，而預設組態會透過 `llama-metal` 資訊清單
 功能選用 Metal 後端。
+
+### macOS 預測上下文
+
+macOS 版透過 Fcitx5.app 的 InputMethodKit client 直接取得游標附近文字，不使用
+Accessibility API，也不需要「輔助使用」權限。此功能需要 Fcitx5.app 0.3.4
+以上版本；舊版 host 不會將 surrounding text 傳給輸入法引擎。
 
 ## 模型
 
