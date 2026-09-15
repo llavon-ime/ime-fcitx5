@@ -10,6 +10,7 @@ include(GNUInstallDirs)
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 
 option(IME_FCITX5_BUILD_TESTS "Build fcitx5 tests" ON)
+option(IME_FCITX5_REQUIRE_ATSPI "Fail configuration when the AT-SPI backend is unavailable" OFF)
 set(IME_FCITX5_UNIX_SERVICE_NAME "llavon-ime-unix-service" CACHE STRING "Installed Unix service executable name")
 set(IME_FCITX5_DISPLAY_VERSION "${PROJECT_VERSION}" CACHE STRING "Version displayed in the fcitx5 configuration UI")
 set(IME_FCITX5_FCITX_PLUGIN_DIR "plugin" CACHE STRING "macOS fcitx5-macos plugin metadata install directory")
@@ -58,6 +59,10 @@ if(PkgConfig_FOUND AND NOT WIN32)
     pkg_check_modules(ATSPI QUIET atspi-2)
     pkg_check_modules(ATSPI_LINK QUIET IMPORTED_TARGET atspi-2)
     pkg_check_modules(ATSPI_GLIB QUIET IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
+endif()
+if(IME_FCITX5_REQUIRE_ATSPI AND NOT (ATSPI_FOUND AND ATSPI_GLIB_FOUND))
+    message(FATAL_ERROR
+        "IME_FCITX5_REQUIRE_ATSPI is ON, but atspi-2 and glib/gobject/gio development files were not found")
 endif()
 target_sources(ime_fcitx5_shared PRIVATE shared/config/config.cpp)
 target_sources(ime_fcitx5_shared PRIVATE
