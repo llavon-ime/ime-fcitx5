@@ -167,7 +167,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: linux-${{ matrix.format }}
-          path: dist/linux
+          path: .
 
       - name: Install package and declared dependencies
         run: |
@@ -214,7 +214,7 @@ jobs:
           PRIVATE_LIBDIR: ${{ matrix.private-libdir }}
         run: |
           set -euo pipefail
-          test_client="$(find dist/linux -name llavon_ime_tests -print -quit)"
+          test_client="$(find . -name llavon_ime_tests -print -quit)"
           test -n "${test_client}"
           chmod +x "${test_client}"
           runtime_dir="$(mktemp -d)"
@@ -254,7 +254,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: linux-*
-          path: dist/linux
+          path: .
           merge-multiple: true
 
       - name: Create or update GitHub release
