@@ -206,12 +206,14 @@ jobs:
             gh release create "${tag}" "${pkg}" \
               --verify-tag \
               --title "${tag}" \
-              --notes "macOS fcitx5 package."
+              --notes "macOS fcitx5 package." || \
+              gh release upload "${tag}" "${pkg}" --clobber
           else
             gh release create "${tag}" "${pkg}" \
               --target "${GITHUB_SHA}" \
               --title "${tag}" \
-              --notes "macOS fcitx5 package."
+              --notes "macOS fcitx5 package." || \
+              gh release upload "${tag}" "${pkg}" --clobber
           fi
 
       - name: Check Homebrew tap token

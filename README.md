@@ -60,6 +60,33 @@ sudo cmake --install build/fcitx5
 請在 fcitx5 設定工具中啟用 `llavon-ime`，再執行 `fcitx5 -r` 重新啟動
 fcitx5。附加元件會在需要時啟動 `llavon-ime-unix-service`。
 
+### Linux 預編譯套件
+
+在 `main` 最新 commit 建立 `v*` tag 時，GitHub Release 會自動加入兩種
+x86_64 原生套件：
+
+- Debian/Ubuntu：`llavon-ime-fcitx5_<版本>_amd64.deb`
+- Fedora：`llavon-ime-fcitx5-<版本>-1.<fedora>.x86_64.rpm`
+
+```bash
+# Debian / Ubuntu
+sudo apt install ./llavon-ime-fcitx5_<版本>_amd64.deb
+
+# Fedora
+sudo dnf install ./llavon-ime-fcitx5-<版本>-1.<fedora>.x86_64.rpm
+```
+
+套件包含 GGUF 模型、Vulkan backend 與可依 CPU 指令集動態選擇的 ggml CPU
+backends。Fcitx5、GLib、glibc、libstdc++、Vulkan loader、AT-SPI library 與
+`at-spi2-core` bus service 由套件管理器安裝；AT-SPI 是 release build 的
+必要功能，缺少其開發檔案時建置會直接失敗，不會產出功能不完整的套件。
+prebuilt build 使用 `GGML_NATIVE=OFF`、`GGML_BACKEND_DL=ON`、
+`GGML_CPU_ALL_VARIANTS=ON` 與 `BUILD_SHARED_LIBS=ON`；執行時由 ggml 在所有
+隨套件安裝的 `libggml-cpu-*.so` 中選出最快且相容的 backend，沒有 AVX512
+時會 fallback 到 AVX2 或更低階版本。Debian/Ubuntu 套件以 Debian 13
+建置，需求為 Fcitx5 5.1.12 與 glibc 2.41 以上（例如 Debian 13、Ubuntu
+26.04）；一般開發 preset 仍維持原本設定。
+
 ## macOS 編譯
 
 最省事的做法是執行單一指令：

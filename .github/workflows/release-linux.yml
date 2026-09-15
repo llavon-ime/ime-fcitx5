@@ -1,0 +1,266 @@
+name: Release Linux packages
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  MODEL_REPOSITORY: "tony65535/llavon-ime-llama-250m-GGUF"
+  MODEL_FILE_NAME: "llavon-ime-llama-250m-Q4_K_M.gguf"
+
+jobs:
+  build-linux:
+    name: Build ${{ matrix.format }} package
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - format: deb
+            image: debian:13
+          - format: rpm
+            image: fedora:43
+    container:
+      image: ${{ matrix.image }}
+
+    steps:
+      - name: Install Debian build dependencies
+        if: matrix.format == 'deb'
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            binutils build-essential ca-certificates cmake curl dpkg-dev file g++ gcc git \
+            libatspi2.0-dev libfcitx5core-dev libglib2.0-dev libvulkan1 ninja-build patchelf \
+            pkg-config python3 tar unzip zip
+
+      - name: Install Fedora build dependencies
+        if: matrix.format == 'rpm'
+        run: |
+          set -euo pipefail
+          dnf install -y \
+            at-spi2-core-devel binutils ca-certificates cmake curl file fcitx5-devel gcc-c++ \
+            git glib2-devel ninja-build patchelf pkgconf-pkg-config python3 \
+            rpm-build tar unzip vulkan-loader zip
+
+      - name: Checkout ime-fcitx5
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Verify tag points to main
+        run: |
+          set -euo pipefail
+          main_sha="$(git rev-parse refs/remotes/origin/main)"
+          tag_sha="$(git rev-parse HEAD)"
+          if [[ "${main_sha}" != "${tag_sha}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not point to main HEAD; refusing to publish." >&2
+            exit 1
+          fi
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [[ -z "${version}" || "${version}" == "${GITHUB_REF_NAME}" ]]; then
+            echo "Release tags must use v<version>, for example v0.6.0." >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Cache vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/vcpkg/archives
+          key: linux-${{ matrix.format }}-vcpkg-${{ hashFiles('vcpkg-configuration.json', 'ime-unix-service/vcpkg.json', 'ime-unix-service/vcpkg-configuration.json', 'ime-unix-service/ime-core/vcpkg.json', 'ime-unix-service/triplets/x64-linux-llavon-prebuilt.cmake') }}
+          restore-keys: |
+            linux-${{ matrix.format }}-vcpkg-
+
+      - name: Download bundled model
+        run: |
+          set -euo pipefail
+          mkdir -p models
+          curl --fail --location --retry 3 \
+            --output "models/${MODEL_FILE_NAME}" \
+            "https://huggingface.co/${MODEL_REPOSITORY}/resolve/main/${MODEL_FILE_NAME}"
+          test -s "models/${MODEL_FILE_NAME}"
+
+      - name: Build native package
+        env:
+          CC: gcc
+          CXX: g++
+          IME_FCITX5_VERSION: ${{ steps.version.outputs.version }}
+          IME_FCITX5_PACKAGE_MODEL_PATH: models/${{ env.MODEL_FILE_NAME }}
+          VCPKG_BINARY_SOURCES: clear;files,/root/.cache/vcpkg/archives,readwrite
+        run: bash scripts/package-linux.sh "${{ matrix.format }}"
+
+      - name: Inspect package dependencies
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.format }}" == "deb" ]]; then
+            package="$(find dist/linux -name '*.deb' -print -quit)"
+            dpkg-deb --info "${package}"
+            dpkg-deb --contents "${package}"
+            dependencies="$(dpkg-deb --field "${package}" Depends)"
+            grep -q 'fcitx5' <<< "${dependencies}"
+            grep -q 'at-spi2-core' <<< "${dependencies}"
+            grep -q 'libatspi2.0' <<< "${dependencies}"
+            grep -q 'libglib2.0' <<< "${dependencies}"
+            grep -q 'libvulkan1' <<< "${dependencies}"
+          else
+            package="$(find dist/linux -name '*.rpm' -print -quit)"
+            rpm -qip "${package}"
+            rpm -qlp "${package}"
+            dependencies="$(rpm -qpR "${package}")"
+            grep -q '^fcitx5' <<< "${dependencies}"
+            grep -q '^at-spi2-core' <<< "${dependencies}"
+            grep -q '^glib2' <<< "${dependencies}"
+            grep -q '^vulkan-loader' <<< "${dependencies}"
+          fi
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.format }}
+          path: |
+            dist/linux/*.deb
+            dist/linux/*.rpm
+            build/package-linux-${{ matrix.format }}/addon/tests/llavon_ime_tests
+          if-no-files-found: error
+          retention-days: 14
+
+  verify-clean-install:
+    name: Verify clean ${{ matrix.format }} install
+    needs: build-linux
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - format: deb
+            image: debian:13
+            private-libdir: /usr/lib/llavon-ime
+          - format: rpm
+            image: fedora:43
+            private-libdir: /usr/lib64/llavon-ime
+    container:
+      image: ${{ matrix.image }}
+
+    steps:
+      - name: Download package
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-${{ matrix.format }}
+          path: dist/linux
+
+      - name: Install package and declared dependencies
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.format }}" == "deb" ]]; then
+            apt-get update
+            apt-get install -y --no-install-recommends ./dist/linux/*.deb
+            dpkg-query -W llavon-ime-fcitx5 fcitx5 at-spi2-core libatspi2.0-0t64 libvulkan1
+          else
+            dnf install -y --setopt=install_weak_deps=False ./dist/linux/*.rpm
+            rpm -q llavon-ime-fcitx5 fcitx5 at-spi2-core glib2 vulkan-loader
+          fi
+
+      - name: Verify complete installed runtime
+        env:
+          PRIVATE_LIBDIR: ${{ matrix.private-libdir }}
+        run: |
+          set -euo pipefail
+          "${PRIVATE_LIBDIR}/llavon-ime-unix-service" --help
+          test -x "${PRIVATE_LIBDIR}/atspi_probe"
+          test -s /usr/share/llavon-ime/models/${MODEL_FILE_NAME}
+          test -f "${PRIVATE_LIBDIR}/libggml-cpu-x64.so"
+          test -f "${PRIVATE_LIBDIR}/libggml-cpu-skylakex.so"
+          test -f "${PRIVATE_LIBDIR}/libggml-vulkan.so"
+          addon="$(find /usr -path '*/fcitx5/llavon-ime-addon.so' -print -quit)"
+          test -n "${addon}"
+          ! ldd "${addon}" | grep -q 'not found'
+          while IFS= read -r -d '' binary; do
+            ! LD_LIBRARY_PATH="${PRIVATE_LIBDIR}" ldd "${binary}" | grep -q 'not found'
+          done < <(find "${PRIVATE_LIBDIR}" -type f -print0)
+          grep -a -q 'libatspi.so.0' "${addon}"
+          loader_cache="$(ldconfig -p)"
+          grep -q 'libatspi.so.0' <<< "${loader_cache}"
+          grep -q 'libvulkan.so.1' <<< "${loader_cache}"
+          if [[ "${{ matrix.format }}" == "deb" ]]; then
+            atspi_files="$(dpkg -L at-spi2-core)"
+          else
+            atspi_files="$(rpm -ql at-spi2-core)"
+          fi
+          grep -q 'at-spi-bus-launcher' <<< "${atspi_files}"
+
+      - name: Run installed service end to end
+        env:
+          PRIVATE_LIBDIR: ${{ matrix.private-libdir }}
+        run: |
+          set -euo pipefail
+          test_client="$(find dist/linux -name llavon_ime_tests -print -quit)"
+          test -n "${test_client}"
+          chmod +x "${test_client}"
+          runtime_dir="$(mktemp -d)"
+          "${PRIVATE_LIBDIR}/llavon-ime-unix-service" \
+            --socket "${runtime_dir}/ime.sock" \
+            --model "/usr/share/llavon-ime/models/${MODEL_FILE_NAME}" \
+            --tables /usr/share/llavon-ime/tables \
+            > "${runtime_dir}/service.log" 2>&1 &
+          service_pid=$!
+          trap 'kill "${service_pid}" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 120); do
+            [[ -S "${runtime_dir}/ime.sock" ]] && break
+            sleep 1
+          done
+          if [[ ! -S "${runtime_dir}/ime.sock" ]]; then
+            cat "${runtime_dir}/service.log" >&2
+            exit 1
+          fi
+          IME_FCITX5_REAL_SERVICE=1 \
+          LLAVON_IME_UNIX_SOCKET_PATH="${runtime_dir}/ime.sock" \
+            "${test_client}" || {
+              cat "${runtime_dir}/service.log" >&2
+              exit 1
+            }
+
+  publish-linux:
+    name: Attach Linux packages to release
+    needs: verify-clean-install
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: linux-*
+          path: dist/linux
+          merge-multiple: true
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if ! gh release view "${tag}" >/dev/null 2>&1; then
+            gh release create "${tag}" --verify-tag --title "${tag}" \
+              --notes "Llavon IME packages for macOS, Debian/Ubuntu, and Fedora." || \
+              gh release view "${tag}" >/dev/null
+          fi
+          gh release upload "${tag}" dist/linux/*.deb dist/linux/*.rpm --clobber
