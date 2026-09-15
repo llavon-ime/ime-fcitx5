@@ -58,6 +58,11 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Trust container checkout
+        run: |
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}/vcpkg"
+
       - name: Verify tag points to main
         run: |
           set -euo pipefail
