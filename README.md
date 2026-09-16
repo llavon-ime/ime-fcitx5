@@ -1,28 +1,67 @@
 # Llavon IME Fcitx5 前端
 
-Llavon IME 的 Linux 與 macOS Fcitx5 前端。推論功能由 `ime-unix-service`
-子模組以獨立的 `llavon-ime-unix-service` 處理程序執行，並透過以工作階段為基礎的
-Unix socket IPC 通訊。此服務使用其內嵌的 `ime-core` 子模組載入模型、進行
-詞元化，以及執行 llama.cpp 推論。
+Llavon IME 的 Linux 與 macOS Fcitx5 前端。推論由 `ime-unix-service` 子模組以
+獨立處理程序 `llavon-ime-unix-service` 執行，透過 Unix socket 與附加元件通訊。
 
-## Linux 編譯
+## 安裝
 
-請先安裝 CMake、pkg-config 與 fcitx5 開發檔案。
-
-執行以下單一指令即可初始化相依套件、編譯並測試 Unix 服務與 Fcitx5
-附加元件，然後完成安裝：
+### Linux
 
 ```bash
 ./scripts/build-linux.sh
 ```
 
-此腳本也會從 Hugging Face 下載預設的 GGUF 模型至 `models/`，再將其安裝至
-`/usr/share/llavon-ime/models/`。既有且非空的模型檔案會直接沿用。如果
-腳本不是以 root 身分執行，安裝指令會使用 `sudo`。可設定
-`IME_FCITX5_MODEL_URL` 使用映像站，或設定 `IME_FCITX5_MODEL_DIR` 變更下載
-目錄。
+腳本會初始化子模組與 vcpkg、編譯並測試服務與附加元件，再安裝（必要時使用
+`sudo`）。模型已有就沿用，否則從 Hugging Face 下載到 `models/` 並安裝至
+`/usr/share/llavon-ime/models/`；可用 `IME_FCITX5_MODEL_URL` 指定映像站、
+`IME_FCITX5_MODEL_DIR` 變更下載目錄。目前僅支援 x86_64。
 
-對應的手動操作步驟如下：
+需要 CMake、pkg-config 與 fcitx5 開發檔案。
+
+`v*` tag 會在 GitHub Release 產生 x86_64 套件，內含模型、Vulkan backend 與
+依 CPU 自動選擇的 ggml CPU backend：
+
+```bash
+# Debian / Ubuntu
+sudo apt install ./llavon-ime-fcitx5_<版本>_amd64.deb
+
+# Fedora
+sudo dnf install ./llavon-ime-fcitx5-<版本>-1.<fedora>.x86_64.rpm
+```
+
+deb 以 Debian 13 建置，需 Fcitx5 5.1.12 與 glibc 2.41 以上（如 Debian 13、
+Ubuntu 26.04）。
+
+### macOS
+
+```bash
+./scripts/build-macos.sh
+```
+
+需先安裝 fcitx5-macos（Fcitx5.app 0.3.4 以上）。腳本會以目前的 checkout 編譯、
+測試並安裝到 `~/Library/fcitx5`；fcitx5-macos 標頭會自動 pull 到
+`$TMPDIR/llavon-ime-fcitx5-macos`，也可用 `FCITX5_MACOS_SOURCE_DIR` 指定。
+模型位於 `/Library/Application Support/llavon-ime/models`，已存在就沿用，否則
+下載後以 `sudo` 安裝。目前僅支援 Apple Silicon，Release 另提供 arm64 `.pkg`。
+
+### 啟用
+
+在 fcitx5 設定工具啟用 `llavon-ime`，Linux 執行 `fcitx5 -r` 重新啟動；macOS 執行：
+
+```bash
+pkill -x Fcitx5; open -gj -b org.fcitx.inputmethod.Fcitx5
+```
+
+附加元件會在需要時啟動 `llavon-ime-unix-service`。
+
+<details>
+<summary>手動編譯</summary>
+
+兩組 preset 都使用此儲存庫的 vcpkg 工具鏈。Linux 安裝至 `/usr` 並啟用 Vulkan
+（`llama-vulkan`）；macOS 安裝至 `$HOME/Library/fcitx5` 並啟用 Metal
+（`llama-metal`）。
+
+Linux:
 
 ```bash
 git clone --recurse-submodules https://github.com/llavon-ime/ime-fcitx5.git
@@ -33,8 +72,8 @@ cd ime-unix-service
 cmake --preset linux -DIME_UNIX_SERVICE_BUILD_TESTS=ON
 cmake --build --preset linux
 ctest --test-dir build/linux --output-on-failure
+sudo cmake --install build/linux
 cd ..
-sudo cmake --install ime-unix-service/build/linux
 
 cd fcitx5
 cmake --preset linux
@@ -44,69 +83,7 @@ cd ..
 sudo cmake --install build/fcitx5
 ```
 
-每個專案各自定義 CMake 預設組態：
-
-- `ime-unix-service/CMakePresets.json`：服務會安裝至 `/usr`（Linux）或
-  `$HOME/Library/fcitx5`（macOS），透過 `llama-vulkan`（Linux）或
-  `llama-metal`（macOS）資訊清單功能啟用 GPU 卸載，並使用
-  `x64-linux-llavon` 或 `arm64-osx-llavon` vcpkg 三元組，為內附的
-  llama.cpp/ggml 啟用 `GGML_VULKAN=ON` 與 `GGML_NATIVE=ON`。
-- `fcitx5/CMakePresets.json`：附加元件與 AUR 套件相同，安裝至 `/usr`。
-
-兩組預設組態會使用此儲存庫的 vcpkg 工具鏈，且不固定產生器。CMake
-會選用預設值（例如 Ninja 或 Unix Makefiles），也可以明確傳入 `-G Ninja`
-或 `-G "Unix Makefiles"`。
-
-請在 fcitx5 設定工具中啟用 `llavon-ime`，再執行 `fcitx5 -r` 重新啟動
-fcitx5。附加元件會在需要時啟動 `llavon-ime-unix-service`。
-
-### Linux 預編譯套件
-
-在 `main` 最新 commit 建立 `v*` tag 時，GitHub Release 會自動加入兩種
-x86_64 原生套件：
-
-- Debian/Ubuntu：`llavon-ime-fcitx5_<版本>_amd64.deb`
-- Fedora：`llavon-ime-fcitx5-<版本>-1.<fedora>.x86_64.rpm`
-
-```bash
-# Debian / Ubuntu
-sudo apt install ./llavon-ime-fcitx5_<版本>_amd64.deb
-
-# Fedora
-sudo dnf install ./llavon-ime-fcitx5-<版本>-1.<fedora>.x86_64.rpm
-```
-
-套件包含 GGUF 模型、Vulkan backend 與可依 CPU 指令集動態選擇的 ggml CPU
-backends。Fcitx5、GLib、glibc、libstdc++、Vulkan loader、AT-SPI library 與
-`at-spi2-core` bus service 由套件管理器安裝；AT-SPI 是 release build 的
-必要功能，缺少其開發檔案時建置會直接失敗，不會產出功能不完整的套件。
-prebuilt build 使用 `GGML_NATIVE=OFF`、`GGML_BACKEND_DL=ON`、
-`GGML_CPU_ALL_VARIANTS=ON` 與 `BUILD_SHARED_LIBS=ON`；執行時由 ggml 在所有
-隨套件安裝的 `libggml-cpu-*.so` 中選出最快且相容的 backend，沒有 AVX512
-時會 fallback 到 AVX2 或更低階版本。Debian/Ubuntu 套件以 Debian 13
-建置，需求為 Fcitx5 5.1.12 與 glibc 2.41 以上（例如 Debian 13、Ubuntu
-26.04）；一般開發 preset 仍維持原本設定。
-
-## macOS 編譯
-
-最省事的做法是執行單一指令：
-
-```bash
-./scripts/build-macos.sh
-```
-
-腳本會檢查必要工具（`git`、`cmake`、`curl`、`pkg-config`、Xcode 命令列
-工具等），直接以目前的 checkout 編譯並測試服務與附加元件（包含尚未
-commit 的改動），最後安裝到 `~/Library/fcitx5`。編譯所需的 fcitx5-macos
-原始碼會自動 pull 到 `$TMPDIR/llavon-ime-fcitx5-macos`（只取 fcitx5 子模組
-的標頭，重複執行會更新）；若已有既有 checkout，可用
-`FCITX5_MACOS_SOURCE_DIR` 指定。模型使用發行套件的全域位置
-`/Library/Application Support/llavon-ime/models`，已有就直接沿用，沒有
-才下載並以 `sudo` 安裝到該位置。
-
-也可以依照下列步驟手動編譯。請安裝 fcitx5-macos，並複製其原始碼以取得
-標頭檔，接著編譯服務與附加元件。請將 `FCITX5_MACOS_SOURCE_DIR` 設為
-fcitx5-macos 原始碼目錄；尋找模組會讀取此環境變數：
+macOS（需 fcitx5-macos 原始碼以取得標頭）：
 
 ```bash
 export FCITX5_MACOS_SOURCE_DIR=/path/to/fcitx5-macos
@@ -125,21 +102,18 @@ cd ..
 cmake --install build/macos
 ```
 
-在 macOS 上，預設組態會安裝至 `$HOME/Library/fcitx5`，發行套件的
-`postinstall` 腳本也會將內容檔案複製到此目錄。`arm64-osx-llavon` vcpkg
-三元組會啟用 `GGML_NATIVE=ON`，而預設組態會透過 `llama-metal` 資訊清單
-功能選用 Metal 後端。
-
-### macOS 預測上下文
-
-macOS 版透過 Fcitx5.app 的 InputMethodKit client 直接取得游標附近文字，不使用
-Accessibility API，也不需要「輔助使用」權限。此功能需要 Fcitx5.app 0.3.4
-以上版本；舊版 host 不會將 surrounding text 傳給輸入法引擎。
+</details>
 
 ## 模型
 
-發行套件包含 Q4 GGUF 模型。開發版本需要本機模型，請透過 fcitx5 設定
-頁面或 `IME_FCITX5_MODEL_PATH` 指定。內附模型採用 CC BY-NC 4.0 授權，僅限
-非商業用途。發行套件中包含其署名聲明與軟體相依套件授權。
+發行套件內含 Q4 GGUF 模型（CC BY-NC 4.0，僅限非商業用途；署名與相依套件授權
+隨套件附上）。開發版本需自備模型，透過 fcitx5 設定頁面或
+`IME_FCITX5_MODEL_PATH` 指定：
 
 https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF
+
+## 預測上下文
+
+- Linux：透過 AT-SPI 取得游標前文字。
+- macOS：透過 Fcitx5.app 的 InputMethodKit client 取得游標附近文字，不使用
+  Accessibility API，也不需要「輔助使用」權限（需 Fcitx5.app 0.3.4 以上）。

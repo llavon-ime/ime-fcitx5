@@ -6,7 +6,9 @@
 namespace ime::unix_service {
 
 StderrLogger::StderrLogger(std::size_t max_queue) : max_queue_(max_queue) {
+#ifdef LLAVON_IME_DEBUG
     worker_ = std::jthread([this](std::stop_token stop) { worker_loop(std::move(stop)); });
+#endif
 }
 
 StderrLogger::~StderrLogger() {
@@ -18,6 +20,7 @@ StderrLogger::~StderrLogger() {
 }
 
 void StderrLogger::log(std::string message) noexcept {
+#ifdef LLAVON_IME_DEBUG
     try {
         {
             std::lock_guard lock(mutex_);
@@ -30,9 +33,13 @@ void StderrLogger::log(std::string message) noexcept {
     } catch (...) {
         // Never throw from the logger, even on allocation failure.
     }
+#else
+    (void)message;
+#endif
 }
 
 void StderrLogger::log(MessageFactory make_message) noexcept {
+#ifdef LLAVON_IME_DEBUG
     try {
         {
             std::lock_guard lock(mutex_);
@@ -45,8 +52,12 @@ void StderrLogger::log(MessageFactory make_message) noexcept {
     } catch (...) {
         // The factory is destroyed without being evaluated, which is allowed.
     }
+#else
+    (void)make_message;
+#endif
 }
 
+#ifdef LLAVON_IME_DEBUG
 void StderrLogger::worker_loop(std::stop_token stop) {
     while (true) {
         std::variant<std::string, MessageFactory> item;
@@ -81,5 +92,6 @@ void StderrLogger::worker_loop(std::stop_token stop) {
         }
     }
 }
+#endif
 
 }  // namespace ime::unix_service

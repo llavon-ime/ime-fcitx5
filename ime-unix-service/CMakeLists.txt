@@ -9,6 +9,7 @@ if(WIN32)
 endif()
 
 option(IME_UNIX_SERVICE_BUILD_TESTS "Build standalone service protocol/session tests" OFF)
+option(LLAVON_IME_DEBUG "Compile in debug logging (predict/timing messages)" OFF)
 
 set(IME_UNIX_SERVICE_TARGET llavon-ime-unix-service)
 
@@ -39,6 +40,9 @@ set_target_properties(${IME_UNIX_SERVICE_TARGET} PROPERTIES
 target_include_directories(${IME_UNIX_SERVICE_TARGET} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 target_compile_options(${IME_UNIX_SERVICE_TARGET} PRIVATE -Wall -Wextra -Wpedantic)
+if(LLAVON_IME_DEBUG)
+    target_compile_definitions(${IME_UNIX_SERVICE_TARGET} PRIVATE LLAVON_IME_DEBUG=1)
+endif()
 
 install(TARGETS ${IME_UNIX_SERVICE_TARGET} RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/ime-core/table/"

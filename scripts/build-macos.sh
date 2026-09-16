@@ -15,6 +15,7 @@ set -euo pipefail
 #   IME_FCITX5_FCITX5_MACOS_REPO_URL  fcitx5-macos repository to pull
 #   IME_FCITX5_MODEL_URL      model mirror
 #   IME_FCITX5_VERSION        display version override
+#   LLAVON_IME_DEBUG          any non-empty value compiles in debug logging
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODEL_FILE="llavon-ime-llama-250m-Q4_K_M.gguf"
@@ -128,10 +129,15 @@ else
     trap - EXIT
 fi
 
+LLAVON_DEBUG_FLAG=""
+if [[ -n "${LLAVON_IME_DEBUG:-}" ]]; then
+    LLAVON_DEBUG_FLAG="-DLLAVON_IME_DEBUG=ON"
+fi
+
 echo "Building and testing ime-unix-service (Metal; the first build can take a while)..."
 (
     cd "${ROOT_DIR}/ime-unix-service"
-    cmake --preset macos -DIME_UNIX_SERVICE_BUILD_TESTS=ON
+    cmake --preset macos -DIME_UNIX_SERVICE_BUILD_TESTS=ON ${LLAVON_DEBUG_FLAG}
     cmake --build --preset macos --parallel
     ctest --test-dir build/macos --output-on-failure
 )
@@ -142,7 +148,8 @@ echo "Building and testing fcitx5 addon..."
     cmake --preset macos \
         -DFCITX5_MACOS_SOURCE_DIR="${FCITX5_MACOS_SOURCE_DIR}" \
         -DIME_FCITX5_INSTALLED_MODEL_PATH="${MODEL_INSTALL_PATH}" \
-        -DIME_FCITX5_DISPLAY_VERSION="${DISPLAY_VERSION}"
+        -DIME_FCITX5_DISPLAY_VERSION="${DISPLAY_VERSION}" \
+        ${LLAVON_DEBUG_FLAG}
     cmake --build --preset macos --parallel
     ctest --preset macos
 )

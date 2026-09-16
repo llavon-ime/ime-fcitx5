@@ -15,6 +15,8 @@ namespace ime::unix_service {
 // Thread-safe logger that serializes ime-core log messages onto a dedicated
 // worker thread and writes them to std::clog.
 //
+// Messages are dropped unless the LLAVON_IME_DEBUG CMake option is enabled.
+//
 // Contract guarantees:
 //   - log() never blocks the caller and never throws.
 //   - A message factory is never evaluated on the calling thread.

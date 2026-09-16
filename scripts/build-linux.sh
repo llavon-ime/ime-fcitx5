@@ -80,10 +80,15 @@ else
     echo "Using existing model: ${MODEL_PATH}"
 fi
 
+LLAVON_DEBUG_FLAG=""
+if [[ -n "${LLAVON_IME_DEBUG:-}" ]]; then
+    LLAVON_DEBUG_FLAG="-DLLAVON_IME_DEBUG=ON"
+fi
+
 echo "Building and testing ime-unix-service..."
 (
     cd "${ROOT_DIR}/ime-unix-service"
-    cmake --preset linux -DIME_UNIX_SERVICE_BUILD_TESTS=ON
+    cmake --preset linux -DIME_UNIX_SERVICE_BUILD_TESTS=ON ${LLAVON_DEBUG_FLAG}
     cmake --build --preset linux --parallel
     ctest --test-dir build/linux --output-on-failure
 )
@@ -93,7 +98,8 @@ echo "Building and testing fcitx5 addon..."
     cd "${ROOT_DIR}/fcitx5"
     cmake --preset linux \
         -DIME_FCITX5_INSTALLED_MODEL_PATH="${MODEL_INSTALL_PATH}" \
-        -DIME_FCITX5_DISPLAY_VERSION="${DISPLAY_VERSION}"
+        -DIME_FCITX5_DISPLAY_VERSION="${DISPLAY_VERSION}" \
+        ${LLAVON_DEBUG_FLAG}
     cmake --build --preset linux --parallel
     ctest --preset linux
 )

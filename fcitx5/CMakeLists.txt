@@ -11,6 +11,7 @@ set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 
 option(IME_FCITX5_BUILD_TESTS "Build fcitx5 tests" ON)
 option(IME_FCITX5_REQUIRE_ATSPI "Fail configuration when the AT-SPI backend is unavailable" OFF)
+option(LLAVON_IME_DEBUG "Compile in debug logging (LLAVON_DEBUG_LOG)" OFF)
 set(IME_FCITX5_UNIX_SERVICE_NAME "llavon-ime-unix-service" CACHE STRING "Installed Unix service executable name")
 set(IME_FCITX5_DISPLAY_VERSION "${PROJECT_VERSION}" CACHE STRING "Version displayed in the fcitx5 configuration UI")
 set(IME_FCITX5_FCITX_PLUGIN_DIR "plugin" CACHE STRING "macOS fcitx5-macos plugin metadata install directory")
@@ -49,6 +50,9 @@ target_compile_definitions(ime_fcitx5_shared PRIVATE
     IME_FCITX5_INSTALLED_MODEL_PATH="${IME_FCITX5_INSTALLED_MODEL_PATH}"
 )
 target_compile_options(ime_fcitx5_shared PRIVATE -Wall -Wextra -Wpedantic)
+if(LLAVON_IME_DEBUG)
+    target_compile_definitions(ime_fcitx5_shared PRIVATE LLAVON_IME_DEBUG=1)
+endif()
 
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(Threads REQUIRED)
@@ -128,6 +132,9 @@ if(Fcitx5_FOUND AND NOT WIN32)
         IME_FCITX5_INSTALLED_TABLE_PATH="${IME_FCITX5_INSTALLED_TABLE_PATH}"
         IME_FCITX5_DISPLAY_VERSION="${IME_FCITX5_DISPLAY_VERSION}"
     )
+    if(LLAVON_IME_DEBUG)
+        target_compile_definitions(llavon-ime-addon PRIVATE LLAVON_IME_DEBUG=1)
+    endif()
     if(APPLE)
         target_compile_definitions(llavon-ime-addon PRIVATE IME_FCITX5_NATIVE_SURROUNDING=1)
     endif()

@@ -25,6 +25,7 @@
 #include "context/accessibility_context.hpp"
 #include "context/sample_adoption.hpp"
 #include "bopomofo/keymap.hpp"
+#include "debug/debug_log.hpp"
 #include "input/ascii_tokenizer.hpp"
 #include "input/keypad.hpp"
 #include "text/utf.hpp"
@@ -49,14 +50,7 @@ std::string to_utf8(const std::u32string& value) {
     return result;
 }
 
-bool context_debug_enabled() {
-    static const bool enabled = [] {
-        const char* value = std::getenv("IME_FCITX5_CONTEXT_DEBUG");
-        return value != nullptr && value[0] != '\0';
-    }();
-    return enabled;
-}
-
+#ifdef LLAVON_IME_DEBUG
 std::string context_preview(std::u16string_view text, size_t max_units = 40) {
     std::u16string preview(text.substr(0, std::min(text.size(), max_units)));
     if (!preview.empty() && preview.back() >= 0xD800 && preview.back() <= 0xDBFF) preview.pop_back();
@@ -68,10 +62,12 @@ std::string context_preview(std::u16string_view text, size_t max_units = 40) {
 }
 
 void log_context(const char* source, std::u16string_view text) {
-    if (!context_debug_enabled()) return;
-    std::fprintf(stderr, "[CTX] source=%s units=%zu text=\"%s\"\n", source, text.size(),
-                 context_preview(text).c_str());
+    LLAVON_DEBUG_LOG("CTX", "source=%s units=%zu text=\"%s\"", source, text.size(),
+                     context_preview(text).c_str());
 }
+#else
+void log_context(const char*, std::u16string_view) {}
+#endif
 
 std::string accessibility_status_text(const AccessibilityContextState& state) {
     switch (state.availability) {
