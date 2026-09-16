@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -64,6 +65,7 @@ jobs:
           git config --global --add safe.directory "${GITHUB_WORKSPACE}/vcpkg"
 
       - name: Verify tag points to main
+        if: github.event_name == 'push'
         run: |
           set -euo pipefail
           main_sha="$(git rev-parse refs/remotes/origin/main)"
@@ -77,10 +79,14 @@ jobs:
         id: version
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          if [[ -z "${version}" || "${version}" == "${GITHUB_REF_NAME}" ]]; then
-            echo "Release tags must use v<version>, for example v0.6.0." >&2
-            exit 1
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            if [[ -z "${version}" || "${version}" == "${GITHUB_REF_NAME}" ]]; then
+              echo "Release tags must use v<version>, for example v0.6.0." >&2
+              exit 1
+            fi
+          else
+            version="0.0.0"
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
@@ -234,6 +240,7 @@ jobs:
             exit 1
           fi
           IME_FCITX5_REAL_SERVICE=1 \
+          IME_FCITX5_REAL_SERVICE_ONLY=1 \
           LLAVON_IME_UNIX_SOCKET_PATH="${runtime_dir}/ime.sock" \
             "${test_client}" || {
               cat "${runtime_dir}/service.log" >&2
@@ -242,6 +249,7 @@ jobs:
 
   publish-linux:
     name: Attach Linux packages to release
+    if: github.event_name == 'push'
     needs: verify-clean-install
     runs-on: ubuntu-24.04
     steps:
