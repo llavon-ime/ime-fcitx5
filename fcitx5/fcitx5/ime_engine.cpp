@@ -366,6 +366,7 @@ ImeEngine::ImeEngine(fcitx::Instance* instance)
     : fallback_(default_table_path()),
       decoder_([this](std::u16string_view reading) { return fallback_.lookup(reading); },
                [this](std::u16string_view word) { return fallback_.latin_frequency(word); }),
+      phrase_overrides_(phrase_overrides_path()),
       service_transport_(default_transport_options()),
       config_(default_config()),
       instance_(instance),
@@ -421,6 +422,21 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
             if (config_.context_edit_tracking) context_cache_.clear();
             return;
         }
+    }
+
+    // Shift+Left/Right (McBopomofo also accepts Ctrl+Shift) marks a range
+    // inside the composition; Enter then stores the marked text as a phrase
+    // override. Plain arrows keep moving the caret and clear the mark.
+    const auto selection_states = effective_key.states();
+    const bool arrow_key = key == FcitxKey_Left || key == FcitxKey_Right;
+    if (arrow_key && static_cast<bool>(selection_states & fcitx::KeyState::Shift) &&
+        !selection_states.testAny(
+            fcitx::KeyStates{fcitx::KeyState::Alt, fcitx::KeyState::Super, fcitx::KeyState::Meta}) &&
+        !symbol_menu_.active() && !candidate_list_active() && !buffer_.empty() &&
+        buffer_.extend_selection(key == FcitxKey_Left ? -1 : 1)) {
+        update_ui(input_context);
+        event.filterAndAccept();
+        return;
     }
 
     // Shift+space commits the composition followed by a space; with an empty
@@ -588,6 +604,7 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
         const auto smart_layout = pending_token_.empty() ? layout : pending_token_.layout;
         if (!pending_token_.empty()) {
             if (key == FcitxKey_Escape) {
+                (void)buffer_.clear_selection();
                 if (mixed_decision_.active() && input_state_ == InputState::ChoosingCandidate) {
                     (void)transition_to(InputState::Inputting);
                 } else if (mixed_decision_.active() && mixed_decision_.preview_path != 0) {
@@ -791,6 +808,15 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
     }
 
     if (is_return_keysym(static_cast<std::uint32_t>(key)) && !composition_empty()) {
+        if (buffer_.marked_range()) {
+            // Enter in the marking state stores the phrase and keeps composing.
+            if (save_marked_phrase_override()) {
+                (void)buffer_.clear_selection();
+                update_ui(input_context);
+            }
+            event.filterAndAccept();
+            return;
+        }
         commit_current(input_context);
         event.filterAndAccept();
         return;
@@ -960,6 +986,46 @@ const fcitx::Configuration* ImeEngine::getConfig() const {
     return &fcitx_config_;
 }
 
+void ImeEngine::refresh_phrase_override_editor() const {
+    auto* entries = phrase_override_editor_.entries.mutableValue();
+    entries->clear();
+    for (const auto& record : phrase_overrides_.entries()) {
+        PunctuationMapEntryConfig entry;
+        (void)entry.phrase.setValue(u16_to_utf8(record.phrase));
+        (void)entry.readings.setValue(PhraseOverrideStore::format_readings(record.readings));
+        entries->emplace_back(std::move(entry));
+    }
+}
+
+const fcitx::Configuration* ImeEngine::getSubConfig(const std::string& path) const {
+    if (path != "phraseoverrides") return nullptr;
+
+    refresh_phrase_override_editor();
+    return &phrase_override_editor_;
+}
+
+void ImeEngine::setSubConfig(const std::string& path, const fcitx::RawConfig& config) {
+    if (path != "phraseoverrides") return;
+    // An absent Entries list is not authoritative: frontends also send empty
+    // configs as action triggers, and silently wiping every saved phrase would
+    // be unrecoverable. Removing all entries is done by editing the file.
+    if (!config.get("Entries")) return;
+
+    PhraseOverrideEditorConfig editor;
+    editor.load(config, true);
+    std::vector<PhraseOverrideRecord> records;
+    records.reserve(editor.entries->size());
+    for (const auto& entry : *editor.entries) {
+        // The dialog has no error channel, so one malformed row must not
+        // discard the edits the user made to every other row. Reusing the file
+        // parser keeps the accepted readings identical to the on-disk format.
+        const auto record = PhraseOverrideStore::parse_line(*entry.phrase + " " + *entry.readings);
+        if (!record || !PhraseOverrideStore::valid_entry(record->phrase, record->readings.size())) continue;
+        records.push_back(*record);
+    }
+    (void)phrase_overrides_.replace(records);
+}
+
 void ImeEngine::setConfig(const fcitx::RawConfig& config) {
     fcitx_config_.load(config, true);
     (void)fcitx_config_.version.setValue(DisplayVersion::Current);
@@ -1004,6 +1070,7 @@ void ImeEngine::reload_config() {
     apply_shared_config(fcitx_config_, load_config());
     if (!has_fcitx_config) save();
     config_ = to_shared_config(fcitx_config_);
+    (void)phrase_overrides_.load();
     apply_context_cache_limits();
     apply_context_sources();
 }
@@ -1078,12 +1145,28 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
         auto rendered = current_preedit();
         auto prefix = buffer_.rendered_prefix_before_caret();
         if (!pending_token_.empty()) prefix += pending_rendered_text();
-        fcitx::Text preedit(to_utf8(rendered));
+        // Frontends that render preedit formatting underline the marked range;
+        // the rest still show the caret at the marking edge.
+        fcitx::Text preedit;
+        if (const auto marked = buffer_.marked_range()) {
+            for (size_t i = 0; i < buffer_.segments().size(); ++i) {
+                preedit.append(to_utf8(buffer_.segments()[i].rendered_text()),
+                               i >= marked->first && i < marked->second ? fcitx::TextFormatFlag::Underline
+                                                                        : fcitx::TextFormatFlag::NoFlag);
+            }
+            if (!pending_token_.empty()) preedit.append(to_utf8(pending_rendered_text()));
+        } else {
+            preedit = fcitx::Text(to_utf8(rendered));
+        }
         preedit.setCursor(static_cast<int>(to_utf8(prefix).size()));
         const bool use_client_preedit = input_context->capabilityFlags().test(fcitx::CapabilityFlag::Preedit);
         input_context->inputPanel().setClientPreedit(use_client_preedit ? preedit : fcitx::Text());
         input_context->inputPanel().setPreedit(use_client_preedit ? fcitx::Text() : preedit);
-        input_context->inputPanel().setAuxUp(fcitx::Text());
+        if (buffer_.marked_range()) {
+            input_context->inputPanel().setAuxUp(fcitx::Text(to_utf8(marking_hint_text())));
+        } else {
+            input_context->inputPanel().setAuxUp(fcitx::Text());
+        }
         input_context->inputPanel().setAuxDown(fcitx::Text());
         input_context->updatePreedit();
     }
@@ -1098,6 +1181,11 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
         // Candidates are rendered from symbol_menu_ items below; the placeholder
         // entries keep page and cursor bookkeeping sized identically.
         displayed_candidates_.assign(symbol_menu_.menu().size(), u"?");
+    } else if (buffer_.marked_range() && input_state_ != InputState::ChoosingCandidate) {
+        // The marking hint doubles as the tooltip McBopomofo shows next to the
+        // composing buffer, because the macOS frontend can only render it as a
+        // candidate list.
+        displayed_candidates_.assign(1, marking_hint_text());
     } else {
         displayed_candidates_.clear();
         if (input_state_ == InputState::ChoosingCandidate) {
@@ -1133,6 +1221,11 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
                 });
             ++index;
         }
+    } else if (buffer_.marked_range() && input_state_ != InputState::ChoosingCandidate) {
+        // The marking hint is informational: clicking it must not pick a
+        // candidate behind the user's back.
+        candidates->append<SelectableCandidateWord>(fcitx::Text(to_utf8(displayed_candidates_.front())),
+                                                    [](fcitx::InputContext*) {});
     } else {
         for (const auto& candidate : displayed_candidates_) {
             candidates->append<SelectableCandidateWord>(
@@ -1158,6 +1251,64 @@ void ImeEngine::record_context_commit(const fcitx::InputContext* input_context, 
     if (config_.context_history_limit > 0 && !text.empty()) {
         context_cache_.on_commit(text);
     }
+}
+
+std::vector<std::u16string> ImeEngine::current_phrase_override_readings() const {
+    if (!pending_token_.empty()) return {};
+
+    std::vector<std::u16string> readings;
+    readings.reserve(buffer_.segments().size());
+    for (const auto& segment : buffer_.segments()) {
+        if (!segment.complete() || segment.literal != 0 || !segment.visible_candidate()) return {};
+        readings.push_back(segment.reading());
+    }
+    return readings;
+}
+
+std::optional<std::u16string> ImeEngine::matching_phrase_override() const {
+    const auto readings = current_phrase_override_readings();
+    if (readings.empty()) return std::nullopt;
+    for (const auto& segment : buffer_.segments()) {
+        if (segment.manually_chosen && !segment.phrase_override_chosen) return std::nullopt;
+    }
+    return phrase_overrides_.lookup(readings);
+}
+
+void ImeEngine::apply_phrase_override() {
+    const auto phrase = matching_phrase_override();
+    if (!phrase) {
+        (void)buffer_.clear_phrase_override_choices();
+        return;
+    }
+
+    try {
+        const auto codepoints = utf8_to_u32(u16_to_utf8(*phrase));
+        if (!buffer_.apply_phrase_override(codepoints)) (void)buffer_.clear_phrase_override_choices();
+    } catch (...) {
+        (void)buffer_.clear_phrase_override_choices();
+    }
+}
+
+// McBopomofo shows a tooltip while marking. fcitx5-macos renders neither
+// preedit formatting nor aux text, so the same message is also shown as the
+// single candidate of the marking panel, which every frontend displays.
+std::u16string ImeEngine::marking_hint_text() const {
+    const auto readings = buffer_.marked_readings();
+    std::u16string hint = u"強制替代詞彙：「" + buffer_.marked_text() + u"」";
+    if (readings.empty()) {
+        hint += u"（含未完成的字）— Esc 取消";
+    } else if (PhraseOverrideStore::valid_entry(buffer_.marked_text(), readings.size())) {
+        hint += u" — 按 Enter 加入、Esc 取消";
+    } else {
+        hint += u"（需選取 2 至 8 個字）— Esc 取消";
+    }
+    return hint;
+}
+
+bool ImeEngine::save_marked_phrase_override() {
+    const auto readings = buffer_.marked_readings();
+    if (!PhraseOverrideStore::valid_entry(buffer_.marked_text(), readings.size())) return false;
+    return phrase_overrides_.add(buffer_.marked_text(), readings);
 }
 
 void ImeEngine::commit_current(fcitx::InputContext* input_context) {
@@ -1713,6 +1864,12 @@ bool ImeEngine::select_symbol(fcitx::InputContext* input_context, int index, std
 
 bool ImeEngine::handle_escape(fcitx::InputContext* input_context) {
     StateScope state_scope(*this, input_context);
+    // Marking only changes the selection, so Escape drops it first without
+    // touching the composition itself.
+    if (buffer_.clear_selection()) {
+        update_ui(input_context);
+        return true;
+    }
     const auto manual_target = buffer_.manually_chosen_segment_at_caret();
     const auto action = escape_action(config_.esc_clears_entire_buffer, input_state_,
                                       !available_candidates().empty(),
@@ -1877,11 +2034,12 @@ void ImeEngine::apply_fallback_candidates(size_t segment_index) {
 }
 
 void ImeEngine::request_prediction_if_ready(fcitx::InputContext* input_context) {
+    apply_phrase_override();
+    resync_context_cache(input_context);
     if (prediction_pending_) {
         prediction_dirty_ = true;
         return;
     }
-    resync_context_cache(input_context);
     auto completed = buffer_.completed_segment_indices();
     if (completed.empty()) return;
     prediction_segment_indices_ = std::move(completed);
@@ -1918,6 +2076,7 @@ void ImeEngine::request_prediction_if_ready(fcitx::InputContext* input_context) 
                     prediction_pending_ = false;
                     inflight_request_id_.reset();
                     for (const auto index : prediction_segment_indices_) apply_fallback_candidates(index);
+                    apply_phrase_override();
                     prediction_segment_indices_.clear();
                     prediction_dirty_ = false;
                     if (dirty) request_prediction_if_ready(input_context);
@@ -2075,7 +2234,8 @@ void ImeEngine::schedule_response(fcitx::InputContext* input_context, std::uint6
                 if (index < buffer_.segments().size()) {
                     const auto& segment = buffer_.segments()[index];
                     (void)buffer_.set_segment_candidates(
-                        index, fallback_.append_alternative_candidates(segment, prediction->candidates[i]));
+                        index, fallback_.append_alternative_candidates(segment, prediction->candidates[i]),
+                        !segment.phrase_override_chosen);
                 }
             }
         } else if (accepted) {
@@ -2089,6 +2249,8 @@ void ImeEngine::schedule_response(fcitx::InputContext* input_context, std::uint6
         }
     }
     if (!accepted) return;
+
+    apply_phrase_override();
 
     const bool dirty = prediction_dirty_;
     prediction_pending_ = false;

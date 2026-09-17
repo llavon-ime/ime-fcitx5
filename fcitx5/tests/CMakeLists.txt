@@ -16,6 +16,7 @@ set(IME_FCITX5_TEST_SOURCES
     real_service_tests.cpp
     fallback_engine_tests.cpp
     mixed_input_decoder_tests.cpp
+    phrase_override_store_tests.cpp
 )
 
 add_executable(llavon_ime_tests ${IME_FCITX5_TEST_SOURCES})
@@ -62,6 +63,7 @@ if(Fcitx5_FOUND AND NOT WIN32)
             engine_smart_standard_tests.cpp
             engine_smart_usability_tests.cpp
             engine_smart_work_tests.cpp
+            engine_phrase_override_tests.cpp
         )
 
         add_executable(llavon_ime_engine_tests ${IME_FCITX5_ENGINE_TEST_SOURCES})

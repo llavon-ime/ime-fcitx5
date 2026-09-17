@@ -82,6 +82,7 @@ target_sources(ime_fcitx5_shared PRIVATE
     shared/input/mixed_input_decoder.cpp
     shared/protocol/protocol.cpp
     shared/symbol/symbol_menu.cpp
+    shared/phrase_override/phrase_override_store.cpp
     shared/context/accessibility_context.cpp
 )
 if(NOT WIN32)

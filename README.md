@@ -54,6 +54,27 @@ pkill -x Fcitx5; open -gj -b org.fcitx.inputmethod.Fcitx5
 
 附加元件會在需要時啟動 `llavon-ime-unix-service`。
 
+## 強制替代詞彙
+
+組字完成後，用 `Shift`＋左右方向鍵選取要儲存的範圍（`Ctrl+Shift`＋方向鍵亦可），
+再按 `Enter` 加入強制替代詞彙。加入後會繼續組字、不會送出，按 `Esc` 只會取消選取。
+選取範圍需為 2 至 8 個字，且每個字都要有對應的注音。選取時候選視窗會顯示目前
+選到的文字與可用的操作（macOS 前端只能以候選視窗顯示提示；Linux 前端另外會標示底線）。
+
+之後只要注音序列完全相同，就直接輸出指定的文字，覆蓋模型與候選字排序。
+這是強制覆寫而非詞庫：手動選擇其他候選字仍會優先，該次輸入不會被取代。
+
+詞彙以 UTF-8 純文字儲存在 `~/.config/llavon-ime/phrase_overrides.txt`，每行格式與
+McBopomofo 的使用者詞彙檔相容，例如：
+
+```text
+歐陽芷珩 ㄡ-ㄧㄤˊ-ㄓˇ-ㄏㄥˊ
+```
+
+若有設定 `XDG_CONFIG_HOME`，檔案會改放在 `$XDG_CONFIG_HOME/llavon-ime/`。
+也可在 Fcitx5 的 Llavon IME 設定中按「管理強制替代詞彙」增刪；替代文字與注音分欄編輯，
+注音的音節之間用空白或 `-` 分隔即可（一聲就是不打任何調號），存檔後格式與檔案相同。
+
 <details>
 <summary>手動編譯</summary>
 

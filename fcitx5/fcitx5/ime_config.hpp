@@ -4,6 +4,7 @@
 
 #include <fcitx-config/configuration.h>
 #include <fcitx-config/enum.h>
+#include <fcitx-config/option.h>
 
 #include "bopomofo/keymap.hpp"
 
@@ -31,6 +32,27 @@ FCITX_CONFIG_ENUM_NAME(SelectPhrase, "游標前", "游標後");
 
 enum class ShiftLetterKeys { DirectlyOutputUppercase, DirectlyPutToBuffer };
 FCITX_CONFIG_ENUM_NAME(ShiftLetterKeys, "直接輸出大寫", "直接放入組字區");
+
+// The text and its readings are separate columns so either half can be edited
+// without retyping the other; the file keeps the combined "text readings" form.
+FCITX_CONFIGURATION(PhraseOverrideEntryConfig,
+    fcitx::Option<std::string> phrase{this, "Phrase", "替代文字"};
+    fcitx::Option<std::string> readings{this, "Readings", "注音"};);
+
+// The macOS config window reserves a fixed 200pt label column for every list
+// except its own punctuation map ("List|Entries$PunctuationMapEntryConfig"),
+// which is the only one it lays out across the full width. Naming this alias
+// after that type reuses the full-width layout; frontends that do not know the
+// type just render a normal sub config list.
+class PunctuationMapEntryConfig final : public PhraseOverrideEntryConfig {
+public:
+    const char* typeName() const override { return "PunctuationMapEntryConfig"; }
+};
+FCITX_SPECIALIZE_TYPENAME(PunctuationMapEntryConfig, "PunctuationMapEntryConfig")
+
+FCITX_CONFIGURATION(PhraseOverrideEditorConfig,
+    fcitx::OptionWithAnnotation<std::vector<PunctuationMapEntryConfig>, fcitx::ListDisplayOptionAnnotation>
+        entries{this, "Entries", "強制替代詞彙", {}, {}, {}, fcitx::ListDisplayOptionAnnotation("Phrase")};);
 
 FCITX_CONFIGURATION(ImeFcitxConfig,
     fcitx::Option<DisplayVersion> version{this, "Version", "版本", DisplayVersion::Current};
@@ -71,6 +93,8 @@ FCITX_CONFIGURATION(ImeFcitxConfig,
     fcitx::Option<ShiftLetterKeys> shiftLetterKeys{this, "ShiftLetterKeys", "Shift 鍵輸入英文",
                                                     ShiftLetterKeys::DirectlyOutputUppercase};
     fcitx::Option<bool> smartEnglish{this, "SmartEnglish", "智慧型中英文", default_config().smart_english};
+    fcitx::SubConfigOption phraseOverrides{this, "PhraseOverrides", "管理強制替代詞彙",
+                                           "fcitx://config/addon/llavon-ime/phraseoverrides"};
     fcitx::Option<int, fcitx::IntConstrain> contextHistoryLimit{this, "ContextHistoryLimit", "上下文歷史長度",
                                                                  default_config().context_history_limit,
                                                                  fcitx::IntConstrain(0, 1048576)};

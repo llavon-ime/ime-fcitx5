@@ -2,8 +2,10 @@
 
 #include <cstddef>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "bopomofo/keymap.hpp"
@@ -22,6 +24,7 @@ struct Segment {
     std::vector<char32_t> candidates;
     size_t selected_index = 0;
     bool manually_chosen = false;
+    bool phrase_override_chosen = false;
     // Parser completion is distinct from a structurally complete syllable.
     bool reading_finalized = false;
     std::vector<std::u16string> alternative_readings;
@@ -57,6 +60,14 @@ public:
     bool delete_forward();
     bool move_cursor_left();
     bool move_cursor_right();
+    // McBopomofo-style marking: the caret moves as usual, but the anchor stays
+    // where the marking started, so the range between them can be stored as a
+    // phrase override. Any text edit or plain cursor move cancels the mark.
+    bool extend_selection(int delta);
+    bool clear_selection();
+    std::optional<std::pair<size_t, size_t>> marked_range() const;
+    std::u16string marked_text() const;
+    std::vector<std::u16string> marked_readings() const;
     void clear();
 
     bool empty() const noexcept;
@@ -82,6 +93,8 @@ public:
     std::optional<size_t> segment_selected_index(size_t index) const;
     std::optional<size_t> manually_chosen_segment_at_caret() const noexcept;
     bool set_segment_candidates(size_t index, std::vector<char32_t> candidates, bool preserve_manual_choice = true);
+    bool apply_phrase_override(std::span<const char32_t> phrase);
+    bool clear_phrase_override_choices();
     bool select_candidate(size_t segment_index, size_t candidate_index, bool move_cursor_after_selection);
     bool cancel_candidate_selection(size_t segment_index);
     bool remove_segment(size_t index);
@@ -93,6 +106,7 @@ private:
     size_t caret_ = 0;
     size_t revision_ = 0;
     std::optional<size_t> last_edited_segment_;
+    std::optional<size_t> selection_anchor_;
 };
 
 }  // namespace ime::fcitx5

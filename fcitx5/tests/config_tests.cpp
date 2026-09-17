@@ -78,12 +78,15 @@ int run_config_tests() {
     ScopedEnv xdg_runtime("XDG_RUNTIME_DIR");
     ScopedEnv home("HOME");
     ScopedEnv config_override("IME_FCITX5_CONFIG_PATH");
+    ScopedEnv phrase_overrides_override("IME_FCITX5_PHRASE_OVERRIDES_PATH");
     setenv("XDG_CONFIG_HOME", "", 1);
     setenv("XDG_RUNTIME_DIR", "", 1);
     setenv("HOME", "/tmp/ime-home", 1);
     unsetenv("IME_FCITX5_CONFIG_PATH");
+    unsetenv("IME_FCITX5_PHRASE_OVERRIDES_PATH");
     ok = ok && ime::fcitx5::config_path() == "/tmp/ime-home/.config/fcitx5/conf/llavon-ime.conf";
     ok = ok && ime::fcitx5::legacy_config_path() == "/tmp/ime-home/.config/llavon-ime/config.json";
+    ok = ok && ime::fcitx5::phrase_overrides_path() == "/tmp/ime-home/.config/llavon-ime/phrase_overrides.txt";
     ok = ok && ime::fcitx5::runtime_dir() == std::filesystem::temp_directory_path() / "llavon-ime";
 
     const auto config_root = std::filesystem::temp_directory_path() / "llavon-ime-config-test";

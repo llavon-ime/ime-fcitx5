@@ -47,6 +47,7 @@ nlohmann::json to_json(const Config& cfg);
 Config config_from_json(const nlohmann::json& json);
 std::filesystem::path config_path();
 std::filesystem::path legacy_config_path();
+std::filesystem::path phrase_overrides_path();
 std::filesystem::path runtime_dir();
 std::filesystem::path socket_path();
 std::filesystem::path pid_path();

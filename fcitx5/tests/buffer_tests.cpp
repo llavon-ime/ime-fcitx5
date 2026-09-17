@@ -71,7 +71,53 @@ int run_buffer_tests() {
     ok = ok && buffer.commit_text() == std::u16string(u"你好");
     ok = ok && buffer.completed_segment_indices().size() == 2;
 
+    // Phrase overrides pin each character for prediction without masquerading as
+    // an explicit candidate choice. An explicit choice still wins afterward.
+    ok = ok && buffer.apply_phrase_override(std::u32string_view(U"歐陽"));
+    ok = ok && buffer.rendered_composition() == std::u16string(u"歐陽");
+    ok = ok && buffer.segments()[0].manually_chosen && buffer.segments()[0].phrase_override_chosen;
+    ok = ok && !buffer.manually_chosen_segment_at_caret().has_value();
+    ok = ok && !buffer.set_segment_candidates(0, {U'你'}, true);
+    ok = ok && buffer.clear_phrase_override_choices();
+    ok = ok && !buffer.segments()[0].manually_chosen && !buffer.segments()[0].phrase_override_chosen;
+    ok = ok && buffer.select_candidate(0, 0, false);
+    ok = ok && !buffer.apply_phrase_override(std::u32string_view(U"宇文"));
+    ok = ok && buffer.rendered_composition() == std::u16string(u"歐陽");
+
+    // Marking selects a range of segments for phrase override storage: the caret
+    // moves while the anchor stays, plain cursor moves and edits cancel it.
+    buffer.clear();
+    ok = ok && type_keys(buffer, fallback, U"su3cl3");
+    ok = ok && !buffer.marked_range().has_value();
+    ok = ok && buffer.extend_selection(-1);
+    ok = ok && buffer.marked_range() == std::make_pair<size_t, size_t>(1, 2);
+    ok = ok && buffer.marked_text() == std::u16string(u"好");
+    ok = ok && buffer.marked_readings().size() == 1;
+    ok = ok && buffer.extend_selection(-1);
+    ok = ok && buffer.marked_range() == std::make_pair<size_t, size_t>(0, 2);
+    ok = ok && buffer.marked_text() == std::u16string(u"你好");
+    const auto marked = buffer.marked_readings();
+    ok = ok && marked.size() == 2 && marked[0] == std::u16string(u"ㄋㄧˇ") && marked[1] == std::u16string(u"ㄏㄠˇ");
+    ok = ok && buffer.extend_selection(1);
+    ok = ok && buffer.marked_range() == std::make_pair<size_t, size_t>(1, 2);
+    ok = ok && buffer.clear_selection();
+    ok = ok && !buffer.marked_range().has_value();
+    ok = ok && buffer.caret() == 2;
+    ok = ok && !buffer.clear_selection();
+
+    // Cancelling a mark restores its original caret. Plain cursor movement and
+    // text edits still cancel it.
+    ok = ok && buffer.extend_selection(-1);
+    ok = ok && buffer.move_cursor_right();
+    ok = ok && !buffer.marked_range().has_value();
+    ok = ok && buffer.extend_selection(-1);
+    ok = ok && buffer.backspace();
+    ok = ok && !buffer.marked_range().has_value();
+    ok = ok && buffer.raw_composition() == std::u16string(u"ㄏㄠˇ");
+
     // Chewing inserts Hsu's unmapped top-row digits into completed composition.
+    buffer.clear();
+    ok = ok && type_keys(buffer, fallback, U"su3cl3");
     ok = ok && buffer.add_literal(U'0');
     ok = ok && buffer.add_literal(U'！');
     ok = ok && buffer.rendered_composition() == std::u16string(u"你好0！");

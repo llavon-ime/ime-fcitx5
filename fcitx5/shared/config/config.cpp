@@ -420,6 +420,11 @@ std::filesystem::path legacy_config_path() {
     return legacy_json_config_path_for("llavon-ime");
 }
 
+std::filesystem::path phrase_overrides_path() {
+    if (const char* override = non_empty_env("IME_FCITX5_PHRASE_OVERRIDES_PATH")) return override;
+    return legacy_config_path().parent_path() / "phrase_overrides.txt";
+}
+
 std::filesystem::path runtime_dir() {
     if (const char* xdg = non_empty_env("XDG_RUNTIME_DIR")) {
         return std::filesystem::path(xdg) / "llavon-ime";

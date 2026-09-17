@@ -55,6 +55,7 @@ std::u16string Segment::rendered_text() const {
 }
 
 bool CompositionBuffer::add_bopomofo(char32_t symbol) {
+    selection_anchor_.reset();
     if (caret_ > 0 && !segments_[caret_ - 1].visible_candidate() &&
         !segments_[caret_ - 1].reading_finalized) {
         auto& segment = segments_[caret_ - 1];
@@ -62,6 +63,7 @@ bool CompositionBuffer::add_bopomofo(char32_t symbol) {
             segment.candidates.clear();
             segment.selected_index = 0;
             segment.manually_chosen = false;
+            segment.phrase_override_chosen = false;
             segment.reading_finalized = is_bopomofo_tone(symbol) && segment.syllable.complete();
             segment.alternative_readings.clear();
             last_edited_segment_ = caret_ - 1;
@@ -84,6 +86,7 @@ bool CompositionBuffer::add_bopomofo(char32_t symbol) {
 std::optional<BopomofoInputResult> CompositionBuffer::add_bopomofo_key(char32_t key,
                                                                        BopomofoKeyboardLayout layout,
                                                                        bool accept_uppercase) {
+    selection_anchor_.reset();
     size_t active_index = segments_.size();
     if (caret_ > 0 && !segments_[caret_ - 1].visible_candidate() &&
         !segments_[caret_ - 1].reading_finalized && !segments_[caret_ - 1].empty()) {
@@ -111,6 +114,7 @@ std::optional<BopomofoInputResult> CompositionBuffer::add_bopomofo_key(char32_t 
         segment.candidates.clear();
         segment.selected_index = 0;
         segment.manually_chosen = false;
+        segment.phrase_override_chosen = false;
         segment.reading_finalized = result.status == BopomofoKeyStatus::Completed;
         segment.alternative_readings.clear();
         if (result.status == BopomofoKeyStatus::Completed) {
@@ -168,6 +172,7 @@ std::optional<BopomofoInputResult> CompositionBuffer::add_bopomofo_keys(
 }
 
 bool CompositionBuffer::add_literal(char32_t symbol) {
+    selection_anchor_.reset();
     if (symbol == 0) return false;
 
     Segment next;
@@ -180,6 +185,7 @@ bool CompositionBuffer::add_literal(char32_t symbol) {
 }
 
 bool CompositionBuffer::backspace() {
+    selection_anchor_.reset();
     if (segments_.empty() || caret_ == 0) return false;
 
     auto& segment = segments_[caret_ - 1];
@@ -202,6 +208,7 @@ bool CompositionBuffer::backspace() {
         segment.candidates.clear();
         segment.selected_index = 0;
         segment.manually_chosen = false;
+        segment.phrase_override_chosen = false;
         segment.reading_finalized = false;
         segment.alternative_readings.clear();
     }
@@ -215,6 +222,7 @@ bool CompositionBuffer::delete_forward() {
 }
 
 bool CompositionBuffer::move_cursor_left() {
+    selection_anchor_.reset();
     if (caret_ == 0) return false;
     --caret_;
     last_edited_segment_.reset();
@@ -223,6 +231,7 @@ bool CompositionBuffer::move_cursor_left() {
 }
 
 bool CompositionBuffer::move_cursor_right() {
+    selection_anchor_.reset();
     if (caret_ >= segments_.size()) return false;
     ++caret_;
     last_edited_segment_.reset();
@@ -230,7 +239,66 @@ bool CompositionBuffer::move_cursor_right() {
     return true;
 }
 
+bool CompositionBuffer::extend_selection(int delta) {
+    if (segments_.empty() || delta == 0) return false;
+    if (caret_ == 0 && delta < 0) return false;
+    if (caret_ >= segments_.size() && delta > 0) return false;
+    if (!selection_anchor_) selection_anchor_ = std::min(caret_, segments_.size());
+
+    if (delta < 0) {
+        --caret_;
+    } else {
+        ++caret_;
+    }
+    last_edited_segment_.reset();
+    touch();
+    return true;
+}
+
+bool CompositionBuffer::clear_selection() {
+    if (!selection_anchor_) return false;
+    caret_ = *selection_anchor_;
+    selection_anchor_.reset();
+    touch();
+    return true;
+}
+
+std::optional<std::pair<size_t, size_t>> CompositionBuffer::marked_range() const {
+    if (!selection_anchor_) return std::nullopt;
+
+    const size_t begin = std::min(*selection_anchor_, caret_);
+    const size_t end = std::max(*selection_anchor_, caret_);
+    if (begin == end || end > segments_.size()) return std::nullopt;
+    return std::make_pair(begin, end);
+}
+
+std::u16string CompositionBuffer::marked_text() const {
+    const auto range = marked_range();
+    if (!range) return {};
+
+    std::u16string result;
+    for (size_t i = range->first; i < range->second; ++i) result += segments_[i].rendered_text();
+    return result;
+}
+
+std::vector<std::u16string> CompositionBuffer::marked_readings() const {
+    const auto range = marked_range();
+    if (!range) return {};
+
+    std::vector<std::u16string> readings;
+    readings.reserve(range->second - range->first);
+    for (size_t i = range->first; i < range->second; ++i) {
+        const auto& segment = segments_[i];
+        if (!segment.complete() || !segment.visible_candidate()) return {};
+        auto reading = segment.reading();
+        if (reading.empty()) return {};
+        readings.push_back(std::move(reading));
+    }
+    return readings;
+}
+
 void CompositionBuffer::clear() {
+    selection_anchor_.reset();
     if (segments_.empty() && caret_ == 0) return;
     segments_.clear();
     caret_ = 0;
@@ -360,8 +428,11 @@ std::optional<size_t> CompositionBuffer::segment_selected_index(size_t index) co
 }
 
 std::optional<size_t> CompositionBuffer::manually_chosen_segment_at_caret() const noexcept {
-    if (caret_ > 0 && segments_[caret_ - 1].manually_chosen) return caret_ - 1;
-    if (caret_ < segments_.size() && segments_[caret_].manually_chosen) return caret_;
+    const auto explicitly_chosen = [this](size_t index) {
+        return segments_[index].manually_chosen && !segments_[index].phrase_override_chosen;
+    };
+    if (caret_ > 0 && explicitly_chosen(caret_ - 1)) return caret_ - 1;
+    if (caret_ < segments_.size() && explicitly_chosen(caret_)) return caret_;
     return std::nullopt;
 }
 
@@ -375,8 +446,49 @@ bool CompositionBuffer::set_segment_candidates(size_t index, std::vector<char32_
     segment.candidates = std::move(candidates);
     segment.selected_index = 0;
     segment.manually_chosen = false;
+    segment.phrase_override_chosen = false;
     touch();
     return true;
+}
+
+bool CompositionBuffer::apply_phrase_override(std::span<const char32_t> phrase) {
+    if (phrase.size() != segments_.size()) return false;
+    for (const auto& segment : segments_) {
+        if (!segment.complete() || segment.literal != 0 ||
+            (segment.manually_chosen && !segment.phrase_override_chosen)) {
+            return false;
+        }
+    }
+
+    bool changed = false;
+    for (size_t i = 0; i < phrase.size(); ++i) {
+        auto& segment = segments_[i];
+        if (segment.candidates.empty() || segment.candidates.front() != phrase[i]) {
+            segment.candidates.erase(
+                std::remove(segment.candidates.begin(), segment.candidates.end(), phrase[i]),
+                segment.candidates.end());
+            segment.candidates.insert(segment.candidates.begin(), phrase[i]);
+            changed = true;
+        }
+        if (segment.selected_index != 0 || !segment.manually_chosen || !segment.phrase_override_chosen) changed = true;
+        segment.selected_index = 0;
+        segment.manually_chosen = true;
+        segment.phrase_override_chosen = true;
+    }
+    if (changed) touch();
+    return true;
+}
+
+bool CompositionBuffer::clear_phrase_override_choices() {
+    bool changed = false;
+    for (auto& segment : segments_) {
+        if (!segment.phrase_override_chosen) continue;
+        segment.manually_chosen = false;
+        segment.phrase_override_chosen = false;
+        changed = true;
+    }
+    if (changed) touch();
+    return changed;
 }
 
 bool CompositionBuffer::select_candidate(size_t segment_index, size_t candidate_index,
@@ -385,9 +497,11 @@ bool CompositionBuffer::select_candidate(size_t segment_index, size_t candidate_
 
     auto& segment = segments_[segment_index];
     if (candidate_index >= segment.candidates.size()) return false;
+    selection_anchor_.reset();
 
     segment.selected_index = candidate_index;
     segment.manually_chosen = true;
+    segment.phrase_override_chosen = false;
     if (move_cursor_after_selection) caret_ = segment_index + 1;
     last_edited_segment_ = segment_index;
     touch();
@@ -396,18 +510,21 @@ bool CompositionBuffer::select_candidate(size_t segment_index, size_t candidate_
 
 bool CompositionBuffer::cancel_candidate_selection(size_t segment_index) {
     if (segment_index >= segments_.size()) return false;
+    selection_anchor_.reset();
 
     auto& segment = segments_[segment_index];
     if (!segment.manually_chosen && segment.selected_index == 0) return false;
 
     segment.selected_index = 0;
     segment.manually_chosen = false;
+    segment.phrase_override_chosen = false;
     last_edited_segment_ = segment_index;
     touch();
     return true;
 }
 
 bool CompositionBuffer::remove_segment(size_t index) {
+    selection_anchor_.reset();
     if (index >= segments_.size()) return false;
 
     segments_.erase(segments_.begin() + static_cast<std::ptrdiff_t>(index));

@@ -32,6 +32,7 @@ void engine_test_smart_space(fcitx::Instance* instance);
 void engine_test_smart_standard(fcitx::Instance* instance);
 void engine_test_smart_usability(fcitx::Instance* instance);
 void engine_test_smart_work(fcitx::Instance* instance);
+void engine_test_phrase_overrides(fcitx::Instance* instance);
 
 int main() {
     // Isolate fcitx and shared config into the build directory so the tests
@@ -56,6 +57,9 @@ int main() {
     setenv("LLAVON_IME_UNIX_SOCKET_PATH", (config_home / "no-service.sock").c_str(), 1);
     setenv("LLAVON_IME_UNIX_SERVICE_PATH", (config_home / "no-service").c_str(), 1);
     setenv("IME_FCITX5_DISABLE_SERVICE", "1", 1);
+    const auto phrase_overrides_path = config_home / "phrase_overrides.txt";
+    std::filesystem::remove(phrase_overrides_path);
+    setenv("IME_FCITX5_PHRASE_OVERRIDES_PATH", phrase_overrides_path.c_str(), 1);
 
     fcitx::setupTestingEnvironment(TESTING_BINARY_DIR, {TESTING_BINARY_DIR},
                                    {TESTING_BINARY_DIR "/tests/test"});
@@ -90,6 +94,7 @@ int main() {
     engine_test_smart_standard(&instance);
     engine_test_smart_usability(&instance);
     engine_test_smart_work(&instance);
+    engine_test_phrase_overrides(&instance);
 
     instance.eventDispatcher().schedule([&instance]() { instance.exit(); });
     instance.exec();

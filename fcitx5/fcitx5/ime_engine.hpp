@@ -20,6 +20,7 @@
 #include "input/mixed_input_decoder.hpp"
 #include "input/pending_token.hpp"
 #include "symbol/symbol_menu.hpp"
+#include "phrase_override/phrase_override_store.hpp"
 
 namespace fcitx {
 class EventDispatcher;
@@ -42,6 +43,8 @@ public:
     void save() override;
     const fcitx::Configuration* getConfig() const override;
     void setConfig(const fcitx::RawConfig& config) override;
+    const fcitx::Configuration* getSubConfig(const std::string& path) const override;
+    void setSubConfig(const std::string& path, const fcitx::RawConfig& config) override;
 
 private:
     class StateScope {
@@ -99,6 +102,12 @@ private:
     bool candidate_list_active() const;
     bool composition_empty() const;
     void record_context_commit(const fcitx::InputContext* input_context, const std::u16string& text);
+    std::vector<std::u16string> current_phrase_override_readings() const;
+    std::optional<std::u16string> matching_phrase_override() const;
+    std::u16string marking_hint_text() const;
+    void apply_phrase_override();
+    bool save_marked_phrase_override();
+    void refresh_phrase_override_editor() const;
     void resync_context_cache(const fcitx::InputContext* input_context);
     std::optional<std::u16string> strip_accessibility_preedit(const std::u16string& sample) const;
     void mark_prediction_dirty();
@@ -118,8 +127,11 @@ private:
     CompositionBuffer buffer_;
     FallbackEngine fallback_;
     MixedInputDecoder decoder_;
+    PhraseOverrideStore phrase_overrides_;
     ServiceTransport service_transport_;
     ImeFcitxConfig fcitx_config_;
+    // Refreshed in place so a pointer handed to a config frontend stays valid.
+    mutable PhraseOverrideEditorConfig phrase_override_editor_;
     Config config_;
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     fcitx::Instance* instance_ = nullptr;

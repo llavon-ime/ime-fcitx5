@@ -16,6 +16,7 @@ int run_accessibility_context_tests();
 int run_real_service_tests();
 int run_fallback_engine_tests();
 int run_mixed_input_decoder_tests();
+int run_phrase_override_store_tests();
 
 int main() {
     const char* real_service_only = std::getenv("IME_FCITX5_REAL_SERVICE_ONLY");
@@ -37,5 +38,6 @@ int main() {
     if (run_real_service_tests() != EXIT_SUCCESS) return EXIT_FAILURE;
     if (run_fallback_engine_tests() != EXIT_SUCCESS) return EXIT_FAILURE;
     if (run_mixed_input_decoder_tests() != EXIT_SUCCESS) return EXIT_FAILURE;
+    if (run_phrase_override_store_tests() != EXIT_SUCCESS) return EXIT_FAILURE;
     return EXIT_SUCCESS;
 }
