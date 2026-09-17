@@ -74,6 +74,17 @@ int main() {
     char* argv[] = {arg0, arg1, arg2};
     fcitx::Instance instance(FCITX_ARRAY_SIZE(argv), argv);
     instance.addonManager().registerDefaultLoader(nullptr);
+    // The test bodies run inside exec(), which is what normally triggers
+    // addon loading. Initialize eagerly so a missing testfrontend addon is
+    // detected before any test schedules its harness.
+    instance.initialize();
+
+    if (!ime::fcitx5::test::testfrontend_available(&instance)) {
+        std::fprintf(stderr,
+                     "SKIP: fcitx5 testfrontend addon is not available; engine "
+                     "tests require the testing addon.\n");
+        return 77;
+    }
 
     engine_test_basic_input(&instance);
     engine_test_hsu_layout_tests(&instance);

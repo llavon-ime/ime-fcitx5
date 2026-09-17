@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -103,6 +104,23 @@ int main() {
         char* argv[] = {arg0, arg1, arg2};
         fcitx::Instance instance(FCITX_ARRAY_SIZE(argv), argv);
         instance.addonManager().registerDefaultLoader(nullptr);
+        // exec() is what normally loads addons; initialize eagerly so a
+        // missing testfrontend addon is detected before the harness is built.
+        instance.initialize();
+
+        if (!testfrontend_available(&instance)) {
+            std::fprintf(stderr,
+                         "SKIP: fcitx5 testfrontend addon is not available; "
+                         "this integration test requires the testing addon.\n");
+            // Unblock the accept() in the fake service thread before joining.
+            try {
+                UnixSocketClient client;
+                (void)client.connect(socket_path);
+            } catch (...) {
+            }
+            server_thread.join();
+            return 77;
+        }
 
         std::shared_ptr<EngineHarness> harness;
         std::atomic<bool> done = false;

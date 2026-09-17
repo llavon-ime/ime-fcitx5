@@ -106,9 +106,9 @@ cmake \
     -DIME_FCITX5_DISPLAY_VERSION="${VERSION}"
 cmake --build "${ADDON_BUILD_DIR}"
 # Some distro devel packages expose TestFrontend headers/CMake metadata but
-# omit the runtime test addon. Keep building the integration test, but leave
-# its execution to the existing development CI where TestFrontend is present.
-ctest --test-dir "${ADDON_BUILD_DIR}" -E '^llavon_ime_engine_tests$' --output-on-failure
+# omit the runtime test addon. The engine tests detect that and report
+# themselves as skipped, so run the full suite.
+ctest --test-dir "${ADDON_BUILD_DIR}" --output-on-failure
 DESTDIR="${PKGROOT}" cmake --install "${ADDON_BUILD_DIR}"
 
 # ime-core's development install rules are not part of the end-user package.

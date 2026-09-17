@@ -23,6 +23,13 @@
 
 namespace ime::fcitx5::test {
 
+// fcitx5's testfrontend is a testing-only addon that some distro packages
+// expose headers/CMake metadata for but omit at runtime. Engine tests must
+// detect that and skip instead of dereferencing a null addon.
+inline bool testfrontend_available(fcitx::Instance* instance) {
+    return instance->addonManager().addon("testfrontend", true) != nullptr;
+}
+
 // Test harness driving the llavon-ime addon through fcitx5's TestFrontend.
 // Construct inside the event loop (i.e. from a scheduled lambda).
 class EngineHarness {
