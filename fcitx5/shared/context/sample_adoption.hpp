@@ -21,9 +21,10 @@ struct PreeditSegmentState {
 // the composing preedit into that widget, so the end of the sample is the
 // composition as it looked when the sample was taken. The client is updated
 // after a key is handled, so a sampled segment is either a
-// candidate rendering exactly as displayed, or a prefix of the reading (the
-// widget may lag several keystrokes behind, and a sample window may cut the
-// newest text).
+// candidate rendering exactly as displayed, or a non-empty prefix of the
+// reading (the widget may lag several keystrokes behind, and a sample window
+// may cut the newest text). Every segment must contribute text; treating a
+// missing segment as an empty suffix could erase identical committed text.
 //
 // This locates the longest suffix of the sample that can be explained as the
 // sequence of current composing segments and strips it, keeping the committed
@@ -42,7 +43,8 @@ inline std::optional<std::u16string> strip_preedit_suffix(std::u16string_view sa
 
     // can[pos * stride + segment] is true when sample[pos..] can be explained
     // by segments[segment..]. The final segment consumes to the sample end or
-    // ends in the middle of the reading currently being typed.
+    // ends in the middle of the reading currently being typed, but it cannot
+    // consume an empty suffix.
     std::vector<bool> can((sample_size + 1) * stride, false);
     for (size_t pos = 0; pos <= sample_size; ++pos) {
         can[pos * stride + segment_count] = (pos == sample_size);
@@ -59,7 +61,8 @@ inline std::optional<std::u16string> strip_preedit_suffix(std::u16string_view sa
                     if (rest.substr(0, candidate.size()) == candidate) {
                         value = can[(pos + candidate.size()) * stride + segment + 1];
                     }
-                } else if (candidate == state.reading && candidate.substr(0, rest.size()) == rest) {
+                } else if (!rest.empty() && candidate == state.reading &&
+                           candidate.substr(0, rest.size()) == rest) {
                     // The sample ends in the middle of the reading being typed.
                     value = true;
                 }

@@ -317,6 +317,7 @@ void ImeEngine::enter_context(fcitx::InputContext* input_context) {
     pending_token_ = state->pending_token;
     mixed_decision_ = state->mixed_decision;
     context_cache_ = state->context_cache;
+    client_surrounding_authoritative_ = state->client_surrounding_authoritative;
     context_cache_.set_limit(static_cast<size_t>(config_.context_history_limit));
     context_cache_.set_surrounding_limit(static_cast<size_t>(config_.context_length));
     session_id_ = state->session_id;
@@ -346,6 +347,7 @@ void ImeEngine::leave_context() {
         state->pending_token = pending_token_;
         state->mixed_decision = mixed_decision_;
         state->context_cache = context_cache_;
+        state->client_surrounding_authoritative = client_surrounding_authoritative_;
         state->session_id = session_id_;
         state->next_request_id = next_request_id_;
         state->generation = generation_;
@@ -1947,6 +1949,7 @@ void ImeEngine::resync_context_cache(const fcitx::InputContext* input_context) {
                                                            : context_cache_.surrounding_limit();
             const auto text = utf8_prefix_tail(surrounding.text(), cursor, limit);
             if (!text.empty()) {
+                client_surrounding_authoritative_ = true;
                 context_cache_.on_surrounding(text, text.size());
                 log_context("client-surrounding", text);
                 return;
@@ -1965,28 +1968,37 @@ void ImeEngine::resync_context_cache(const fcitx::InputContext* input_context) {
             // after the composing text is stripped from its tail.
             const bool predates_composition =
                 accessibility_composition_base_ != 0 && sample->sequence <= accessibility_composition_base_;
+            const bool may_contain_preedit = !composition_empty() && !predates_composition;
             std::optional<std::u16string> text;
-            if (composition_empty() || predates_composition) {
+            if (!may_contain_preedit) {
                 text = sample->text;
             } else {
                 text = strip_accessibility_preedit(sample->text);
             }
-            if (text) {
+            if (text && (!text->empty() || !may_contain_preedit || !context_cache_.valid())) {
                 context_cache_.on_surrounding(*text, text->size());
                 log_context("accessibility", *text);
                 return;
             }
-            log_context("accessibility-preedit-mismatch", sample->text);
+            log_context(text ? "accessibility-empty-cache-fallback" :
+                               "accessibility-preedit-mismatch",
+                        sample->text);
         } else {
             log_context("accessibility-unusable", {});
         }
     }
 
     if (client_empty) {
-        // An authoritative empty prefix: drop the history instead of keeping
-        // text from a previous field.
-        context_cache_.on_surrounding(std::u16string_view(), 0);
-        log_context("client-surrounding-empty", {});
+        if (client_surrounding_authoritative_) {
+            context_cache_.on_surrounding(std::u16string_view(), 0);
+            log_context("client-surrounding-empty", {});
+        } else {
+            // Some clients always expose a valid but empty document. Preserve
+            // commits until that client demonstrates usable surrounding text.
+            log_context(context_cache_.valid() ? "client-empty-cache-fallback" :
+                                                 "client-surrounding-empty",
+                        {});
+        }
         return;
     }
     log_context("cache-fallback", {});

@@ -22,10 +22,15 @@ AccessibilityContextProvider::~AccessibilityContextProvider() = default;
 
 void AccessibilityContextProvider::set_active(bool active) {
     if (active_.exchange(active) == active) return;
+    activation_generation_.fetch_add(1);
     if (!active) publish(std::u16string(), false);
 }
 
 bool AccessibilityContextProvider::active() const noexcept { return active_.load(); }
+
+std::uint64_t AccessibilityContextProvider::activation_generation() const noexcept {
+    return activation_generation_.load();
+}
 
 void AccessibilityContextProvider::publish(std::u16string text, bool usable) {
     std::lock_guard lock(mutex_);

@@ -138,6 +138,7 @@ private:
     PendingInput pending_token_;
     MixedDecisionState mixed_decision_;
     ContextCache context_cache_;
+    bool client_surrounding_authoritative_ = false;
     std::unique_ptr<AccessibilityContextProvider> accessibility_context_;
     std::uint64_t accessibility_base_sequence_ = 0;
     std::uint64_t accessibility_composition_base_ = 0;

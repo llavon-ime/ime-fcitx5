@@ -53,6 +53,19 @@ void engine_test_context_source(fcitx::Instance* instance) {
         std::filesystem::remove(path);
     });
 
+    // Once a client has supplied usable surrounding text, a later empty value
+    // is authoritative and clears the previous document prefix.
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        harness.set_configs({{"SmartEnglish", "False"}});
+        harness.set_surrounding("客戶端文字", 5, 5);
+        harness.type("su3");
+        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"客戶端文字");
+        harness.set_surrounding("", 0, 0);
+        harness.type("cl3");
+        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+    });
+
     // The config UI shows whether accessibility context can be obtained, and
     // opening the configuration (which reloads it) must not clear that status.
     instance->eventDispatcher().schedule([instance]() {
@@ -91,6 +104,18 @@ void engine_test_context_source(fcitx::Instance* instance) {
         harness.set_configs({{"SmartEnglish", "False"}});
         harness.type("su3");
         harness.expect_commit("你");
+        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"你");
+    });
+
+    // Clients that claim valid but empty surrounding text must not erase the
+    // commits recorded by this input context when accessibility is unavailable.
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        harness.set_configs({{"SmartEnglish", "False"}});
+        harness.type("su3");
+        harness.expect_commit("你");
+        harness.set_surrounding("", 0, 0);
+        harness.type("cl3");
         FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"你");
     });
 

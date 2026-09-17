@@ -66,6 +66,7 @@ public:
     // focused widget's text is not retained behind the user's back.
     void set_active(bool active);
     bool active() const noexcept;
+    std::uint64_t activation_generation() const noexcept;
 
     void publish(std::u16string text, bool usable);
 
@@ -89,6 +90,7 @@ private:
     bool has_sample_ = false;
     std::uint64_t next_sequence_ = 0;
     std::atomic<bool> active_{false};
+    std::atomic<std::uint64_t> activation_generation_{0};
 };
 
 // Creates the best available backend for the current platform. The

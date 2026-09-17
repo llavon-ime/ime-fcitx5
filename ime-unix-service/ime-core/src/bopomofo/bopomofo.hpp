@@ -15,24 +15,9 @@ namespace llavon::ime::core::internal {
 class HanziMapEngine {
     std::unordered_map<std::u16string, std::vector<char32_t>> mapping;
 
-    static std::filesystem::path resolve_table_path() {
-        return CorePaths::bopomofo_table_path();
-    }
-
 public:
-    static HanziMapEngine& instance() {
-        static HanziMapEngine engine;
-        return engine;
-    }
-
-    std::vector<char32_t> lookup_all(const std::u16string& bopomofo) {
-        if (mapping.contains(bopomofo)) return mapping[bopomofo];
-        return {};
-    }
-
-private:
-    HanziMapEngine() {
-        auto path = resolve_table_path().string();
+    explicit HanziMapEngine(const CorePaths& paths) {
+        auto path = paths.bopomofo_table_path().string();
         auto result = rfl::json::load<std::unordered_map<std::string, std::vector<std::string>>>(path);
         auto temp = result.value();
         for (auto& [k, v] : temp) {
@@ -43,6 +28,11 @@ private:
             }
             mapping[key] = std::move(wvec);
         }
+    }
+
+    std::vector<char32_t> lookup_all(const std::u16string& bopomofo) const {
+        if (mapping.contains(bopomofo)) return mapping.at(bopomofo);
+        return {};
     }
 };
 

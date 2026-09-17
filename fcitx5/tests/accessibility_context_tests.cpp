@@ -216,11 +216,13 @@ bool test_active_gating() {
     bool ok = check(provider->start(), "the provider starts for the active-gating test");
     ok &= check(!provider->active(), "providers start inactive");
     ok &= check(provider->sequence() == 1, "the initial file read publishes once");
+    ok &= check(provider->activation_generation() == 0, "providers start at activation generation zero");
 
     provider->set_active(false);
     ok &= check(provider->sequence() == 1, "deactivating while already inactive publishes nothing");
     provider->set_active(true);
     ok &= check(provider->active(), "set_active(true) marks the provider active");
+    ok &= check(provider->activation_generation() == 1, "activation advances the generation");
     ok &= check(provider->sequence() == 1, "activating alone does not publish");
     provider->refresh();
     ok &= check(provider->sequence() == 2, "refresh publishes while active");
@@ -229,6 +231,7 @@ bool test_active_gating() {
     const auto inactive = provider->latest();
     ok &= check(inactive.has_value() && !inactive->usable, "deactivating invalidates the sample");
     ok &= check(inactive->sequence == 3, "deactivation advances the sequence");
+    ok &= check(provider->activation_generation() == 2, "deactivation advances the generation");
     provider->refresh();
     ok &= check(provider->sequence() == 3, "refresh does nothing while inactive");
 

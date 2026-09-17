@@ -76,11 +76,19 @@ bool test_unrelated_text_is_rejected_while_composing() {
     return check(!text.has_value(), "unrelated text is rejected while composing");
 }
 
-bool test_ambiguous_committed_tail_is_stripped_only_from_the_composition() {
-    // "早安" is committed text and the user composes the same word again; the
-    // whole sample must be consumed by the composition before it is stripped.
+bool test_ambiguous_committed_tail_with_missing_segment_is_rejected() {
+    // "早安" is committed text and the user composes the same word again, but
+    // the client has not exposed the second segment. Stripping "早" would be
+    // indistinguishable from deleting committed text.
     const auto text = strip(u"早安早", {{u"早", u"ㄗㄠˇ"}, {u"安", u"ㄢ"}});
-    return check(text.has_value() && *text == u"早安", "only the composition tail is stripped");
+    return check(!text.has_value(), "an ambiguous tail with a missing segment is rejected");
+}
+
+bool test_missing_trailing_segment_is_rejected() {
+    // A client that renders preedit out-of-line may expose only committed text.
+    // A later segment must not match an empty suffix and erase that text.
+    const auto text = strip(u"你", {{u"你", u"ㄋㄧˇ"}, {u"好", u"ㄏㄠˇ"}});
+    return check(!text.has_value(), "a missing trailing segment cannot consume committed text");
 }
 
 bool test_empty_sample_yields_empty_prefix() {
@@ -113,7 +121,8 @@ int run_sample_adoption_tests() {
     ok &= test_sample_equal_to_preedit_is_empty_prefix();
     ok &= test_window_truncated_inside_preedit_is_rejected();
     ok &= test_unrelated_text_is_rejected_while_composing();
-    ok &= test_ambiguous_committed_tail_is_stripped_only_from_the_composition();
+    ok &= test_ambiguous_committed_tail_with_missing_segment_is_rejected();
+    ok &= test_missing_trailing_segment_is_rejected();
     ok &= test_empty_sample_yields_empty_prefix();
     ok &= test_surrogate_pair_preedit();
     if (ok) std::printf("sample adoption tests passed\n");

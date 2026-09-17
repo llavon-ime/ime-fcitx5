@@ -7,6 +7,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -252,6 +253,14 @@ private:
         return true;
     }
 
+    static bool is_focused(AtspiLibrary& api, AtspiAccessible* object) {
+        if (object == nullptr) return false;
+        AtspiStateSet* states = api.get_state_set(object);
+        const bool focused = states != nullptr && api.state_set_contains(states, ATSPI_STATE_FOCUSED);
+        if (states != nullptr) g_object_unref(states);
+        return focused;
+    }
+
     AtspiAccessible* find_focused_text(AtspiAccessible* root, int depth, int* visits) {
         if (root == nullptr || depth > kMaxTreeDepth || *visits >= kMaxTreeVisits) return nullptr;
         ++*visits;
@@ -328,6 +337,7 @@ private:
     void queue_idle() {
         GMainContext* context = context_;
         if (context == nullptr || idle_source_.load() != 0) return;
+        idle_generation_.store(owner_.activation_generation());
         GSource* source = g_idle_source_new();
         g_source_set_callback(source, &Impl::on_idle, this, nullptr);
         idle_source_.store(g_source_attach(source, context));
@@ -344,10 +354,32 @@ private:
             }
             return G_SOURCE_REMOVE;
         }
+        if (self->idle_generation_.load() != self->owner_.activation_generation()) {
+            if (self->pending_source_ != nullptr) {
+                g_object_unref(self->pending_source_);
+                self->pending_source_ = nullptr;
+            }
+            self->queue_idle();
+            return G_SOURCE_REMOVE;
+        }
         if (self->pending_source_ != nullptr) {
             AtspiAccessible* source = self->pending_source_;
             self->pending_source_ = nullptr;
-            self->publish_from_object(source);
+            if (is_focused(self->api_, source)) {
+                self->publish_from_object(source);
+            } else {
+                AtspiAccessible* focused = self->focused_text_object();
+                if (focused != nullptr) {
+                    self->publish_from_object(focused);
+                    g_object_unref(focused);
+                } else {
+                    // Some toolkits focus a non-text ancestor while emitting
+                    // caret events from its text child. The activation check
+                    // above still protects against samples queued before an
+                    // input-context switch.
+                    self->publish_from_object(source);
+                }
+            }
             g_object_unref(source);
         } else {
             AtspiAccessible* focused = self->focused_text_object();
@@ -489,6 +521,7 @@ private:
     GMainLoop* loop_ = nullptr;
     std::thread backend_thread_;
     std::atomic<guint> idle_source_{0};
+    std::atomic<std::uint64_t> idle_generation_{0};
     AtspiAccessible* pending_source_ = nullptr;
     std::mutex ready_mutex_;
     std::condition_variable ready_cv_;

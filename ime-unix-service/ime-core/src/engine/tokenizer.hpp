@@ -27,20 +27,17 @@ class Tokenizer {
     std::unordered_map<std::string, int> special_table;
     std::unordered_map<std::string, int> bpmf_table;
 
-    static std::filesystem::path resolve_table_path(const char* filename) {
-        return CorePaths::token_table_path(filename);
-    }
-
-    Tokenizer() {
+public:
+    explicit Tokenizer(const CorePaths& paths) {
         char_table =
-            rfl::json::load<std::unordered_map<std::string, int>>(resolve_table_path("chars.json").string()).value();
+            rfl::json::load<std::unordered_map<std::string, int>>(paths.token_table_path("chars.json").string()).value();
         latin_table =
-            rfl::json::load<std::unordered_map<std::string, int>>(resolve_table_path("latin.json").string()).value();
+            rfl::json::load<std::unordered_map<std::string, int>>(paths.token_table_path("latin.json").string()).value();
         special_table =
-            rfl::json::load<std::unordered_map<std::string, int>>(resolve_table_path("special_tokens.json").string())
+            rfl::json::load<std::unordered_map<std::string, int>>(paths.token_table_path("special_tokens.json").string())
                 .value();
         bpmf_table =
-            rfl::json::load<std::unordered_map<std::string, int>>(resolve_table_path("bpmf.json").string()).value();
+            rfl::json::load<std::unordered_map<std::string, int>>(paths.token_table_path("bpmf.json").string()).value();
     }
 
     static bool is_alpha(int c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
@@ -56,20 +53,15 @@ class Tokenizer {
         context_tokens.erase(context_tokens.begin(), context_tokens.begin() + static_cast<std::ptrdiff_t>(first_kept));
     }
 
-public:
-    static Tokenizer& instance() {
-        static Tokenizer tokenizer;
-        return tokenizer;
-    }
-
-    int map_char(char32_t c) {
+    int map_char(char32_t c) const {
         std::string s;
         utf8::append(c, s);
         if (char_table.contains(s)) return char_table.at(s);
         return -1;
     }
 
-    std::vector<int> tokenize(const std::u16string& context16, const std::vector<PaddingEntry>& padding) {
+    std::vector<int> tokenize(const std::u16string& context16,
+                              const std::vector<PaddingEntry>& padding) const {
         std::vector<int> res;
         res.push_back(special_table.at("<BOS>"));
         std::vector<int> context_tokens;

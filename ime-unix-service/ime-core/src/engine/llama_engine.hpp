@@ -242,22 +242,27 @@ private:
         return {};
     }
 
+    std::shared_ptr<const CorePaths> paths_;
     llama_model_ptr _model;
-    const llama_vocab* _vocab;
+    const llama_vocab* _vocab = nullptr;
     InferenceRuntimeInfo runtime_info_;
 
-    ModelManager() {
+public:
+    explicit ModelManager(std::shared_ptr<const CorePaths> paths) : paths_(std::move(paths)) {
+        if (!paths_) {
+            throw std::invalid_argument("llama model paths are required");
+        }
         ensure_backend_initialized();
-        auto path = CorePaths::model_path().string();
+        auto path = paths_->model_path().string();
         auto model_params = llama_model_default_params();
         std::array<ggml_backend_dev_t, 2> offload_devices{};
-        const auto& requested_device = CorePaths::inference_device();
+        const auto& requested_device = paths_->inference_device();
         LlamaOffloadDevice offload_device =
             requested_device.backend == InferenceBackend::cpu
                 ? LlamaOffloadDevice{}
                 : select_gpu_device(requested_device);
         const bool supports_gpu_offload = llama_supports_gpu_offload();
-        const int requested_gpu_layers = CorePaths::gpu_layers();
+        const int requested_gpu_layers = paths_->gpu_layers();
         const bool wants_gpu = requested_device.backend != InferenceBackend::cpu &&
                                requested_gpu_layers != 0 &&
                                (requested_gpu_layers == -2 || requested_gpu_layers == -1 || requested_gpu_layers > 0);
@@ -310,15 +315,6 @@ private:
                   << " id=" << runtime_info_.device.device_id << '\n';
         std::clog << "[CORE] model loaded\n";
     }
-
-public:
-    static void initialize() {
-        (void)instance();
-    }
-    static ModelManager& instance() {
-        static ModelManager e;
-        return e;
-    }
     llama_model* model() {
         return _model.get();
     }
@@ -330,30 +326,33 @@ public:
         auto params = llama_context_default_params();
         if (n_ctx != 0) {
             params.n_ctx = n_ctx;
-        } else if (CorePaths::context_length() != 0) {
-            params.n_ctx = CorePaths::context_length();
+        } else if (paths_->context_length() != 0) {
+            params.n_ctx = paths_->context_length();
         }
         if (n_batch != 0) {
             params.n_batch = n_batch;
             params.n_ubatch = n_batch;
         }
-        params.n_threads = static_cast<int32_t>(CorePaths::threads());
-        params.n_threads_batch = static_cast<int32_t>(CorePaths::threads());
+        params.n_threads = static_cast<int32_t>(paths_->threads());
+        params.n_threads_batch = static_cast<int32_t>(paths_->threads());
         auto ctx = llama_init_from_model(_model.get(), params);
         if (!ctx) throw std::runtime_error("Failed to create llama context");
-        std::clog << "[CORE] context created threads=" << CorePaths::threads() << '\n';
+        std::clog << "[CORE] context created threads=" << paths_->threads() << '\n';
         return ctx;
     }
 };
 
 class LlamaEngine : public IEngine {
+    std::shared_ptr<ModelManager> model_manager_;
+    std::shared_ptr<const Tokenizer> tokenizer_;
+    std::shared_ptr<const HanziMapEngine> hanzi_map_;
+    std::shared_ptr<Logger> logger_;
     llama_context_ptr llama_ctx;
     llama_context_ptr warmup_ctx;
     std::vector<llama_token> prev_tokens;
     llama_memory_t mem;
     llama_pos next_pos = 0;
     std::chrono::steady_clock::time_point last_backend_touch = std::chrono::steady_clock::time_point::min();
-    std::shared_ptr<Logger> logger_;
 
     struct PredictTiming {
         long long tokenize_us = 0;
@@ -374,9 +373,18 @@ class LlamaEngine : public IEngine {
     };
 
 public:
-    explicit LlamaEngine(std::shared_ptr<Logger> logger) : logger_(std::move(logger)) {
-        ModelManager::initialize();
-        llama_ctx.reset(ModelManager::instance().new_context());
+    LlamaEngine(std::shared_ptr<ModelManager> model_manager,
+                std::shared_ptr<const Tokenizer> tokenizer,
+                std::shared_ptr<const HanziMapEngine> hanzi_map,
+                std::shared_ptr<Logger> logger)
+        : model_manager_(std::move(model_manager)),
+          tokenizer_(std::move(tokenizer)),
+          hanzi_map_(std::move(hanzi_map)),
+          logger_(std::move(logger)) {
+        if (!model_manager_ || !tokenizer_ || !hanzi_map_ || !logger_) {
+            throw std::invalid_argument("llama engine dependencies are required");
+        }
+        llama_ctx.reset(model_manager_->new_context());
         mem = llama_get_memory(llama_ctx.get());
         llama_memory_clear(mem, true);
         logger_->log("[CORE] engine ready");
@@ -389,14 +397,14 @@ public:
             return;
         }
 
+        const auto warmup_start = std::chrono::steady_clock::now();
         if (!warmup_ctx) {
-            warmup_ctx.reset(ModelManager::instance().new_context(8, 1));
+            warmup_ctx.reset(model_manager_->new_context(8, 1));
         }
 
         llama_token token = warmup_token();
         llama_set_warmup(warmup_ctx.get(), true);
         llama_batch batch = make_token_batch(&token, 1, 0, false);
-        const auto warmup_start = std::chrono::steady_clock::now();
         int rc = llama_decode(warmup_ctx.get(), batch);
         llama_synchronize(warmup_ctx.get());
         llama_batch_free(batch);
@@ -415,7 +423,7 @@ public:
         PredictTiming timing;
 
         const auto tokenize_start = std::chrono::steady_clock::now();
-        auto& tok = Tokenizer::instance();
+        const auto& tok = *tokenizer_;
         std::vector<int> new_tokens = tok.tokenize(context, padding);
         timing.tokenize_us += elapsed_us(tokenize_start);
 
@@ -445,7 +453,7 @@ public:
             PredictResult r;
             if (!entry.is_chosen) {
                 const auto candidate_start = std::chrono::steady_clock::now();
-                auto candidates = HanziMapEngine::instance().lookup_all(entry.bpmf);
+                auto candidates = hanzi_map_->lookup_all(entry.bpmf);
                 if (!candidates.empty()) {
                     std::vector<llama_token> cand_tokens;
                     std::map<llama_token, char32_t> inv;
@@ -517,8 +525,8 @@ private:
         return static_cast<double>(microseconds) / 1000.0;
     }
 
-    static llama_token warmup_token() {
-        const llama_vocab* vocab = ModelManager::instance().vocab();
+    llama_token warmup_token() const {
+        const llama_vocab* vocab = model_manager_->vocab();
         const llama_token candidates[] = {
             llama_vocab_bos(vocab),
             llama_vocab_eos(vocab),
@@ -694,6 +702,13 @@ private:
             common++;
         }
 
+        // Truncating cached guess tokens does not refresh llama.cpp's output
+        // logits. Re-decode the last retained prompt token so the first
+        // candidate is conditioned on the shortened sequence.
+        if (common == new_tokens.size() && common < prev_tokens.size() && common > 0) {
+            --common;
+        }
+
 #if IME_CORE_TRACE_PREDICT
         const auto previous_count = prev_tokens.size();
         const auto current_count = new_tokens.size();
@@ -710,9 +725,11 @@ private:
                 return std::format("[CORE] seq_rm from={} result={}", common,
                                    ok ? "ok" : "FAIL");
             });
-#else
-            (void)ok;
 #endif
+            if (!ok) {
+                llama_memory_clear(mem, true);
+                common = 0;
+            }
             prev_tokens.resize(common);
         }
         next_pos = static_cast<llama_pos>(common);

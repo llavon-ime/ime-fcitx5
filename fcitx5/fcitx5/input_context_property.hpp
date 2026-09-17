@@ -60,6 +60,7 @@ public:
     PendingInput pending_token;
     MixedDecisionState mixed_decision;
     ContextCache context_cache;
+    bool client_surrounding_authoritative = false;
 
     protocol::SessionId session_id{};
     std::uint64_t next_request_id = 1;
