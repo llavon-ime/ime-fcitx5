@@ -137,8 +137,14 @@ void ServiceTransport::stop() {
         }
     }
     condition_.notify_all();
-    disconnect();
+    // Wake a blocking recv without closing/reusing the descriptor underneath
+    // the worker. The worker owns the final disconnect while it unwinds.
+    {
+        std::lock_guard lock(mutex_);
+        if (socket_fd_ >= 0) (void)::shutdown(socket_fd_, SHUT_RDWR);
+    }
     if (worker_.joinable()) worker_.join();
+    disconnect();
     if (should_shutdown) shutdown_service();
 }
 
@@ -195,14 +201,22 @@ std::filesystem::path ServiceTransport::default_service_path() {
 }
 
 void ServiceTransport::enqueue(RequestKind kind, protocol::Message message, Callback callback) {
+    Callback rejected_callback;
+    std::optional<protocol::Message> rejected_response;
     {
         std::lock_guard lock(mutex_);
         if (stopping_) {
-            if (callback) callback(protocol::Message{correlation_error(message, protocol::ErrorCode::ServiceShuttingDown, "transport is stopped")});
-            return;
+            if (callback) {
+                rejected_callback = std::move(callback);
+                rejected_response = protocol::Message{correlation_error(
+                    message, protocol::ErrorCode::ServiceShuttingDown, "transport is stopped")};
+            }
+        } else {
+            queue_.push(Pending{kind, std::move(message), std::move(callback)});
         }
-        queue_.push(Pending{kind, std::move(message), std::move(callback)});
     }
+    if (rejected_callback) rejected_callback(std::move(*rejected_response));
+    if (rejected_response) return;
     condition_.notify_one();
 }
 
@@ -219,6 +233,17 @@ void ServiceTransport::run() {
 
         try {
             if (!ensure_connected()) throw std::system_error(ENOENT, std::generic_category(), "service is unavailable");
+            bool stopped = false;
+            {
+                std::lock_guard lock(mutex_);
+                stopped = stopping_;
+            }
+            if (stopped) {
+                disconnect();
+                fail(std::move(pending), protocol::ErrorCode::ServiceShuttingDown,
+                     "transport is stopped");
+                continue;
+            }
             const auto bytes = protocol::encode(pending.message);
             if (!write_all(socket_fd_, bytes.data(), bytes.size())) throw std::system_error(errno, std::generic_category(), "write service frame");
             const auto response = protocol::decode(recv_frame(socket_fd_));

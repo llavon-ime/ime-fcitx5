@@ -79,7 +79,9 @@ target_sources(ime_fcitx5_shared PRIVATE
     shared/engine/fallback_engine.cpp
     shared/input/ascii_tokenizer.cpp
     shared/input/keypad.cpp
+    shared/input/input_processor.cpp
     shared/input/mixed_input_decoder.cpp
+    shared/input/punctuation.cpp
     shared/protocol/protocol.cpp
     shared/symbol/symbol_menu.cpp
     shared/phrase_override/phrase_override_store.cpp
@@ -125,7 +127,10 @@ if(Fcitx5_FOUND AND NOT WIN32)
         set(IME_FCITX5_FCITX_PKGDATADIR "${CMAKE_INSTALL_DATADIR}/fcitx5")
     endif()
 
-    add_library(llavon-ime-addon MODULE fcitx5/ime_engine.cpp fcitx5/ime_config.cpp)
+    add_library(llavon-ime-addon MODULE
+        fcitx5/ime_engine.cpp
+        fcitx5/ime_config.cpp
+        fcitx5/prediction_coordinator.cpp)
     target_include_directories(llavon-ime-addon PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(llavon-ime-addon PRIVATE Fcitx5::Core ime_fcitx5_shared)
     target_compile_definitions(llavon-ime-addon PRIVATE

@@ -1,5 +1,6 @@
 #ifndef _WIN32
 
+#include "config/config.hpp"
 #include "engine/service_transport.hpp"
 #include "protocol/protocol.hpp"
 #include "text/utf.hpp"
@@ -10,6 +11,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -56,19 +58,30 @@ bool candidates_non_empty(const protocol::Prediction& prediction, size_t index) 
 
 }  // namespace
 
-// Runs only when IME_FCITX5_REAL_SERVICE is set, because it requires a live
-// llavon-ime-unix-service and a loaded model. The service socket can be
-// overridden with LLAVON_IME_UNIX_SOCKET_PATH; auto_start stays off so the
-// test never shuts down a user's service.
+// Runs only when IME_FCITX5_REAL_SERVICE is set. The transport starts an
+// isolated backend on the test socket, using the same model and runtime values
+// as the configured frontend, then shuts down only that backend.
 int run_real_service_tests() {
     const char* enabled = std::getenv("IME_FCITX5_REAL_SERVICE");
     if (enabled == nullptr || enabled[0] == '\0') return EXIT_SUCCESS;
 
+    const auto config = load_config();
     ServiceTransportOptions options;
     if (const char* socket = std::getenv("LLAVON_IME_UNIX_SOCKET_PATH"); socket != nullptr && socket[0] != '\0') {
         options.socket_path = socket;
+        // An externally supplied socket is owned by the caller (for example
+        // release CI); never send that service a shutdown request.
+        options.auto_start = false;
+    } else {
+        options.socket_path = std::filesystem::temp_directory_path() /
+                              ("llavon-ime-real-service-" + std::to_string(getpid()) + ".sock");
     }
-    options.auto_start = false;
+    options.model_path = config.model_path;
+    options.tables_dir = std::filesystem::path(IME_FCITX5_TEST_TABLE_PATH).parent_path();
+    options.context_length = static_cast<std::uint32_t>(config.context_length);
+    options.threads = static_cast<std::uint32_t>(config.thread_count);
+    options.gpu_layers = config.gpu_layers;
+    options.idle_timeout_seconds = static_cast<std::uint32_t>(config.idle_timeout_seconds);
     ServiceTransport transport(options);
 
     Waiter waiter;

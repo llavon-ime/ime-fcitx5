@@ -12,22 +12,16 @@
 #include <fcitx/instance.h>
 
 #include <algorithm>
-#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
-#include <functional>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 #include "context/accessibility_context.hpp"
 #include "context/sample_adoption.hpp"
-#include "bopomofo/keymap.hpp"
-#include "debug/debug_log.hpp"
-#include "input/ascii_tokenizer.hpp"
-#include "input/keypad.hpp"
+#include "debug/context_log.hpp"
+#include "input/input_processor.hpp"
 #include "text/utf.hpp"
 
 namespace ime::fcitx5 {
@@ -49,25 +43,6 @@ std::string to_utf8(const std::u32string& value) {
     for (const char32_t codepoint : value) result += char32_to_utf8(codepoint);
     return result;
 }
-
-#ifdef LLAVON_IME_DEBUG
-std::string context_preview(std::u16string_view text, size_t max_units = 40) {
-    std::u16string preview(text.substr(0, std::min(text.size(), max_units)));
-    if (!preview.empty() && preview.back() >= 0xD800 && preview.back() <= 0xDBFF) preview.pop_back();
-    try {
-        return u16_to_utf8(preview);
-    } catch (const std::exception&) {
-        return "<invalid>";
-    }
-}
-
-void log_context(const char* source, std::u16string_view text) {
-    LLAVON_DEBUG_LOG("CTX", "source=%s units=%zu text=\"%s\"", source, text.size(),
-                     context_preview(text).c_str());
-}
-#else
-void log_context(const char*, std::u16string_view) {}
-#endif
 
 std::string accessibility_status_text(const AccessibilityContextState& state) {
     switch (state.availability) {
@@ -132,142 +107,23 @@ ServiceTransportOptions default_transport_options() {
     return options;
 }
 
-char32_t normalize_ascii_letter(char32_t key) {
-    if (key >= U'A' && key <= U'Z') return key + (U'a' - U'A');
-    return key;
-}
-
-bool is_ascii_letter(char16_t ch) {
-    return (ch >= u'a' && ch <= u'z') || (ch >= u'A' && ch <= u'Z');
-}
-
-bool is_complete_structured_ascii(std::u16string_view raw) {
-    for (const auto& token : tokenize_ascii(raw, 0)) {
-        if (token.end != raw.size()) continue;
-        switch (token.kind) {
-            case AsciiTokenKind::Email:
-            case AsciiTokenKind::Domain:
-            case AsciiTokenKind::URL:
-            case AsciiTokenKind::FilesystemPath:
-            case AsciiTokenKind::Identifier:
-                return true;
-            default:
-                break;
-        }
+// Builds the current composition as a sequence of per-segment states and
+// removes it from the tail of an accessibility sample.
+std::optional<std::u16string> strip_accessibility_preedit(const InputSession& session,
+                                                          const std::u16string& sample) {
+    std::vector<std::pair<std::u16string, std::u16string>> storage;
+    for (const auto& segment : session.buffer.segments()) {
+        if (segment.empty()) continue;
+        storage.emplace_back(segment.rendered_text(), segment.reading());
     }
-    return false;
-}
-
-bool has_blocking_modifier(const fcitx::Key& key) {
-    return static_cast<bool>(key.states() & fcitx::KeyState::SimpleMask);
-}
-
-char32_t shifted_ascii_key(fcitx::KeySym key) {
-    switch (key) {
-        case FcitxKey_1:
-            return U'!';
-        case FcitxKey_2:
-            return U'@';
-        case FcitxKey_3:
-            return U'#';
-        case FcitxKey_4:
-            return U'$';
-        case FcitxKey_5:
-            return U'%';
-        case FcitxKey_6:
-            return U'^';
-        case FcitxKey_7:
-            return U'&';
-        case FcitxKey_8:
-            return U'*';
-        case FcitxKey_9:
-            return U'(';
-        case FcitxKey_0:
-            return U')';
-        case FcitxKey_minus:
-            return U'_';
-        case FcitxKey_equal:
-            return U'+';
-        case FcitxKey_bracketleft:
-            return U'{';
-        case FcitxKey_bracketright:
-            return U'}';
-        case FcitxKey_backslash:
-            return U'|';
-        case FcitxKey_semicolon:
-            return U':';
-        case FcitxKey_apostrophe:
-            return U'"';
-        case FcitxKey_comma:
-            return U'<';
-        case FcitxKey_period:
-            return U'>';
-        case FcitxKey_slash:
-            return U'?';
-        case FcitxKey_grave:
-            return U'~';
-        default:
-            return static_cast<char32_t>(key);
-    }
-}
-
-// fcitx5 normalizes symbol keys by folding Shift into the keysym and clearing
-// the Shift state, so a pressed Shift+comma reaches the engine as sym='<' with
-// no Shift bit. A keysym that is itself a shifted symbol therefore counts as
-// Shifted.
-bool is_shifted_ascii_symbol(char32_t symbol) {
-    switch (symbol) {
-        case U'!':
-        case U'@':
-        case U'#':
-        case U'$':
-        case U'%':
-        case U'^':
-        case U'&':
-        case U'*':
-        case U'(':
-        case U')':
-        case U'_':
-        case U'+':
-        case U'{':
-        case U'}':
-        case U'|':
-        case U':':
-        case U'"':
-        case U'<':
-        case U'>':
-        case U'?':
-        case U'~':
-            return true;
-        default:
-            return false;
-    }
-}
-
-std::optional<char32_t> chewing_punctuation_for_key(const fcitx::Key& key, BopomofoKeyboardLayout layout) {
-    if ((key.states() & fcitx::KeyState::Alt) || (key.states() & fcitx::KeyState::Super) ||
-        (key.states() & fcitx::KeyState::Meta)) {
-        return std::nullopt;
-    }
-    const char32_t raw_symbol = static_cast<char32_t>(key.sym());
-    const char32_t shifted_symbol = shifted_ascii_key(key.sym());
-    const bool shifted = static_cast<bool>(key.states() & fcitx::KeyState::Shift) ||
-                         is_shifted_ascii_symbol(raw_symbol);
-    const char32_t symbol = shifted ? shifted_symbol : raw_symbol;
-
-    if (key.states() & fcitx::KeyState::Ctrl) {
-        if (const auto punctuation = lookup_microsoft_ctrl_punctuation_key(symbol)) return punctuation;
-        return lookup_microsoft_ctrl_punctuation_key(raw_symbol);
+    if (!session.pending_token.empty()) {
+        storage.emplace_back(InputProcessor::pending_rendered_text(session), session.pending_token.raw);
     }
 
-    // On the Hsu layout a punctuation key without Shift commits the halfwidth
-    // key symbol itself instead of the fullwidth punctuation.
-    if (layout == BopomofoKeyboardLayout::Hsu && !shifted) {
-        if (lookup_chewing_punctuation_key(raw_symbol)) return raw_symbol;
-        return std::nullopt;
-    }
-
-    return lookup_chewing_punctuation_key(symbol);
+    std::vector<PreeditSegmentState> states;
+    states.reserve(storage.size());
+    for (const auto& [rendered, reading] : storage) states.push_back({rendered, reading});
+    return strip_preedit_suffix(sample, states);
 }
 
 class SelectableCandidateWord final : public fcitx::CandidateWord {
@@ -307,29 +163,9 @@ void ImeEngine::enter_context(fcitx::InputContext* input_context) {
     auto* state = property(input_context);
     if (state == nullptr) return;
 
-    buffer_ = state->buffer;
-    displayed_candidates_ = state->displayed_candidates;
-    candidate_page_ = state->candidate_page;
-    candidate_cursor_ = state->candidate_cursor;
-    candidate_expanded_ = state->candidate_expanded;
-    input_state_ = state->input_state;
-    symbol_menu_ = state->symbol_menu;
-    pending_token_ = state->pending_token;
-    mixed_decision_ = state->mixed_decision;
-    context_cache_ = state->context_cache;
-    client_surrounding_authoritative_ = state->client_surrounding_authoritative;
-    context_cache_.set_limit(static_cast<size_t>(config_.context_history_limit));
-    context_cache_.set_surrounding_limit(static_cast<size_t>(config_.context_length));
-    session_id_ = state->session_id;
-    next_request_id_ = state->next_request_id;
-    generation_ = state->generation;
-    inflight_request_id_ = state->inflight_request_id;
-    inflight_revision_ = state->inflight_revision;
-    prediction_key_ = state->prediction_key;
-    prediction_revision_ = state->prediction_revision;
-    prediction_segment_indices_ = state->inflight_segment_indices;
-    prediction_pending_ = state->prediction_pending;
-    prediction_dirty_ = state->prediction_dirty;
+    session_ = state->session;
+    session_.context_cache.set_limit(static_cast<size_t>(config_.context_history_limit));
+    session_.context_cache.set_surrounding_limit(static_cast<size_t>(config_.context_length));
 }
 
 void ImeEngine::leave_context() {
@@ -337,27 +173,7 @@ void ImeEngine::leave_context() {
     if (--state_scope_depth_ != 0) return;
     auto* state = property(active_input_context_);
     if (state != nullptr) {
-        state->buffer = buffer_;
-        state->displayed_candidates = displayed_candidates_;
-        state->candidate_page = candidate_page_;
-        state->candidate_cursor = candidate_cursor_;
-        state->candidate_expanded = candidate_expanded_;
-        state->input_state = input_state_;
-        state->symbol_menu = symbol_menu_;
-        state->pending_token = pending_token_;
-        state->mixed_decision = mixed_decision_;
-        state->context_cache = context_cache_;
-        state->client_surrounding_authoritative = client_surrounding_authoritative_;
-        state->session_id = session_id_;
-        state->next_request_id = next_request_id_;
-        state->generation = generation_;
-        state->inflight_request_id = inflight_request_id_;
-        state->inflight_revision = inflight_revision_;
-        state->prediction_key = prediction_key_;
-        state->prediction_revision = prediction_revision_;
-        state->inflight_segment_indices = prediction_segment_indices_;
-        state->prediction_pending = prediction_pending_;
-        state->prediction_dirty = prediction_dirty_;
+        state->session = session_;
     }
     active_input_context_ = nullptr;
 }
@@ -367,10 +183,44 @@ ImeEngine::ImeEngine(fcitx::Instance* instance)
       decoder_([this](std::u16string_view reading) { return fallback_.lookup(reading); },
                [this](std::u16string_view word) { return fallback_.latin_frequency(word); }),
       phrase_overrides_(phrase_overrides_path()),
+      processor_(fallback_, decoder_, phrase_overrides_),
       service_transport_(default_transport_options()),
+      coordinator_(service_transport_, processor_,
+                   [dispatcher = instance ? &instance->eventDispatcher() : nullptr](
+                       PredictionCoordinator::ContextReference context,
+                       std::function<void(fcitx::InputContext*)> body) {
+                       if (dispatcher == nullptr) return;
+                       dispatcher->scheduleWithContext(context, [context, body = std::move(body)]() mutable {
+                           if (auto* input_context = context.get()) body(input_context);
+                       });
+                   },
+                   alive_,
+                   PredictionCoordinator::Callbacks{
+                       [this]() -> const Config& { return config_; },
+                       [this](fcitx::InputContext* input_context, InputSession& session) {
+                           resync_context_cache(input_context, session);
+                       },
+                       [this](fcitx::InputContext* input_context, const std::function<void(InputSession&)>& body) {
+                           StateScope state_scope(*this, input_context);
+                           body(session_);
+                       },
+                       [this](fcitx::InputContext* input_context) { update_ui(input_context); },
+                       [this](fcitx::InputContext* input_context) { return property(input_context); },
+                   }),
       config_(default_config()),
       instance_(instance),
       event_dispatcher_(instance ? &instance->eventDispatcher() : nullptr) {
+    processor_.set_state_observer([this](InputStateKind previous, InputStateKind next) {
+        if (accessibility_context_ == nullptr) return;
+        if (previous == InputStateKind::Empty && next == InputStateKind::Inputting) {
+            // Samples published from here on may contain this composition's
+            // preedit; earlier ones cannot.
+            accessibility_composition_base_ = accessibility_context_->sequence();
+        } else if (next == InputStateKind::Empty) {
+            accessibility_composition_base_ = 0;
+        }
+    });
+
     if (instance_ != nullptr) {
         (void)instance_->inputContextManager().registerProperty("llavon-ime-input-state", &property_factory_);
         capability_changed_handler_ = instance_->watchEvent(
@@ -378,7 +228,7 @@ ImeEngine::ImeEngine(fcitx::Instance* instance)
             [this](fcitx::Event& event) {
                 const auto& capability_event = static_cast<const fcitx::CapabilityEvent&>(event);
                 if (capability_event.newFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
-                    if (auto* state = property(capability_event.inputContext())) state->context_cache.clear();
+                    if (auto* state = property(capability_event.inputContext())) state->session.context_cache.clear();
                 }
             });
     }
@@ -386,7 +236,10 @@ ImeEngine::ImeEngine(fcitx::Instance* instance)
 }
 
 ImeEngine::~ImeEngine() {
-    if (alive_) *alive_ = false;
+    alive_.reset();
+    // Transport callbacks hold a raw coordinator pointer after checking the
+    // lifetime token. Drain them while the coordinator is still alive.
+    service_transport_.stop();
 }
 
 void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event) {
@@ -398,523 +251,17 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
     const fcitx::Key effective_key(event.key().sym(),
                                    event.key().states() | (raw_key.states() & fcitx::KeyState::Meta),
                                    event.key().code());
-    const auto key = effective_key.sym();
+    InputKey input_key;
+    input_key.sym = static_cast<char32_t>(effective_key.sym());
+    input_key.states = static_cast<std::uint32_t>(effective_key.states());
+    input_key.frontend_states = static_cast<std::uint32_t>(event.key().states());
+    input_key.raw_states = static_cast<std::uint32_t>(raw_key.states());
+    input_key.caps_lock = static_cast<bool>(raw_key.states() & fcitx::KeyState::CapsLock);
+    input_key.release = event.isRelease();
 
-    // CapsLock state only exists in the raw key. When Chinese input is
-    // disabled under CapsLock, everything passes through to the application
-    // (mirrors McBopomofo's capsLockAllowChineseInput=False behavior) and the
-    // composition is reset.
-    if (raw_key.states() & fcitx::KeyState::CapsLock) {
-        if (!config_.caps_lock_inputs_bopomofo) {
-            if (!pending_token_.empty()) {
-                commit_composition_with(input_context, 0);
-            } else {
-                buffer_.clear();
-                mixed_decision_.clear();
-                symbol_menu_.close();
-                (void)transition_to(InputState::Empty);
-                prediction_pending_ = false;
-                prediction_dirty_ = false;
-                inflight_request_id_.reset();
-                prediction_segment_indices_.clear();
-                update_ui(input_context);
-            }
-            if (config_.context_edit_tracking) context_cache_.clear();
-            return;
-        }
-    }
-
-    // Shift+Left/Right (McBopomofo also accepts Ctrl+Shift) marks a range
-    // inside the composition; Enter then stores the marked text as a phrase
-    // override. Plain arrows keep moving the caret and clear the mark.
-    const auto selection_states = effective_key.states();
-    const bool arrow_key = key == FcitxKey_Left || key == FcitxKey_Right;
-    if (arrow_key && static_cast<bool>(selection_states & fcitx::KeyState::Shift) &&
-        !selection_states.testAny(
-            fcitx::KeyStates{fcitx::KeyState::Alt, fcitx::KeyState::Super, fcitx::KeyState::Meta}) &&
-        !symbol_menu_.active() && !candidate_list_active() && !buffer_.empty() &&
-        buffer_.extend_selection(key == FcitxKey_Left ? -1 : 1)) {
-        update_ui(input_context);
-        event.filterAndAccept();
-        return;
-    }
-
-    // Shift+space commits the composition followed by a space; with an empty
-    // buffer the key passes through (mirrors McBopomofo's Shift+space).
-    if (key == FcitxKey_space && (raw_key.states() & fcitx::KeyState::Shift)) {
-        if (composition_empty()) {
-            if (config_.context_edit_tracking) context_cache_.clear();
-            return;
-        }
-        commit_composition_with(input_context, U' ');
-        event.filterAndAccept();
-        return;
-    }
-
-    // Edit tracking for clients that never push surrounding text. With an
-    // empty composition the engine cannot see the document, so it heuristically
-    // invalidates context on external edits. Even plain Backspace may delete
-    // a selection or a multi-scalar grapheme rather than one scalar.
-    // These keys always pass through to the application.
-    if (composition_empty() && config_.context_edit_tracking) {
-        const auto states = effective_key.states();
-        const bool edit_shortcut = states.testAny(
-            fcitx::KeyStates{fcitx::KeyState::Ctrl, fcitx::KeyState::Super, fcitx::KeyState::Meta});
-        if (key == FcitxKey_BackSpace || key == FcitxKey_Delete || key == FcitxKey_Left ||
-                   key == FcitxKey_Right || key == FcitxKey_Up || key == FcitxKey_Down ||
-                   key == FcitxKey_Home || key == FcitxKey_End || key == FcitxKey_Page_Up ||
-                   key == FcitxKey_Page_Down) {
-            context_cache_.clear();
-        } else if (edit_shortcut && (key == FcitxKey_z || key == FcitxKey_Z || key == FcitxKey_y ||
-                                     key == FcitxKey_Y || key == FcitxKey_x || key == FcitxKey_X ||
-                                     key == FcitxKey_a || key == FcitxKey_A || key == FcitxKey_v ||
-                                     key == FcitxKey_V)) {
-            context_cache_.clear();
-        } else if (key == FcitxKey_Insert && static_cast<bool>(states & fcitx::KeyState::Shift)) {
-            context_cache_.clear();
-        }
-    }
-
-    const auto layout = config_.keyboard_layout == "hsu" ? BopomofoKeyboardLayout::Hsu
-                                                         : BopomofoKeyboardLayout::Standard;
-    const auto chewing_punctuation = chewing_punctuation_for_key(effective_key, layout);
-    const auto raw_symbol = static_cast<char32_t>(key);
-    const bool punctuation_is_standard_bopomofo =
-        layout == BopomofoKeyboardLayout::Standard && !has_blocking_modifier(effective_key) &&
-        (raw_symbol == U',' || raw_symbol == U'.' || raw_symbol == U';');
-    const auto punctuation = punctuation_is_standard_bopomofo ? std::nullopt : chewing_punctuation;
-    if (!punctuation && has_blocking_modifier(event.key())) return;
-
-    if (symbol_menu_.active()) {
-        handle_symbol_menu_key(input_context, event);
-        event.filterAndAccept();
-        return;
-    }
-
-    if (key == FcitxKey_grave && !has_blocking_modifier(effective_key)) {
-        if (config_.smart_english && !pending_token_.empty()) {
-            (void)settle_pending_preview(input_context);
-            open_symbol_menu(input_context);
-        } else if (!buffer_.has_unfinished_reading()) {
-            open_symbol_menu(input_context);
-        }
-        event.filterAndAccept();
-        return;
-    }
-
-    if (is_keypad_passthrough_keysym(static_cast<std::uint32_t>(key))) {
-        if (!pending_token_.empty()) (void)settle_pending_preview(input_context);
-        if (!buffer_.empty()) commit_current(input_context);
-        return;
-    }
-
-    if (poll_prediction(input_context)) update_ui(input_context);
-
-    if (candidate_list_active()) {
-        if (key == FcitxKey_Up) {
-            if (move_candidate_cursor_in_page(-1)) update_ui(input_context);
-            event.filterAndAccept();
-            return;
-        }
-
-        if (key == FcitxKey_Down) {
-            if (move_candidate_cursor_in_page(1)) update_ui(input_context);
-            event.filterAndAccept();
-            return;
-        }
-
-        if (key == FcitxKey_Left) {
-            if (!page_candidates(-1, true)) return;
-            update_ui(input_context);
-            event.filterAndAccept();
-            return;
-        }
-
-        if (key == FcitxKey_Right) {
-            if (!page_candidates(1, true)) return;
-            update_ui(input_context);
-            event.filterAndAccept();
-            return;
-        }
-
-        if (key == FcitxKey_Home) {
-            if (set_candidate_cursor(0)) update_ui(input_context);
-            event.filterAndAccept();
-            return;
-        }
-
-        if (key == FcitxKey_End) {
-            if (set_candidate_cursor(static_cast<int>(displayed_candidates_.size()) - 1)) update_ui(input_context);
-            event.filterAndAccept();
-            return;
-        }
-
-        if (is_return_keysym(static_cast<std::uint32_t>(key))) {
-            if (mixed_decision_.active()) {
-                (void)commit_mixed_candidate(input_context, candidate_cursor_);
-            } else {
-                (void)select_candidate(input_context, candidate_cursor_);
-            }
-            event.filterAndAccept();
-            return;
-        }
-
-        if (key == FcitxKey_space && config_.space_selects_candidate) {
-            (void)select_candidate(input_context, candidate_cursor_);
-            event.filterAndAccept();
-            return;
-        }
-
-        const int digit_index = ascii_digit_selection_index(static_cast<std::uint32_t>(key));
-        if (digit_index >= 0 && !has_blocking_modifier(effective_key)) {
-            (void)select_candidate(input_context, candidate_page_offset() + digit_index);
-            event.filterAndAccept();
-            return;
-        }
-
-        if (const auto index = selection_index_for_key(key)) {
-            const bool continued_ascii = mixed_decision_.active() && raw_symbol <= 0x7f &&
-                                         is_ascii_letter(static_cast<char16_t>(raw_symbol));
-            if (!continued_ascii) {
-                (void)select_candidate(input_context, candidate_page_offset() + *index);
-                event.filterAndAccept();
-                return;
-            }
-        }
-
-        if (chewing_punctuation && !mixed_decision_.active()) {
-            event.filterAndAccept();
-            return;
-        }
-    }
-
-    // Smart English keeps the raw input in a pending token; the mixed-input
-    // decoder derives every language interpretation. It only resolves at an
-    // explicit tone key or Space.
-    if (config_.smart_english) {
-        const bool is_upper = raw_symbol >= U'A' && raw_symbol <= U'Z';
-        const bool is_lower = raw_symbol >= U'a' && raw_symbol <= U'z';
-        const bool caps_on = static_cast<bool>(raw_key.states() & fcitx::KeyState::CapsLock);
-        const bool english_intent = (is_upper || is_lower) && (is_upper != caps_on);
-        if (english_intent) {
-            if (handle_english_letter(input_context, raw_symbol, caps_on)) event.filterAndAccept();
-            return;
-        }
-
-        const auto smart_layout = pending_token_.empty() ? layout : pending_token_.layout;
-        if (!pending_token_.empty()) {
-            if (key == FcitxKey_Escape) {
-                (void)buffer_.clear_selection();
-                if (mixed_decision_.active() && input_state_ == InputState::ChoosingCandidate) {
-                    (void)transition_to(InputState::Inputting);
-                } else if (mixed_decision_.active() && mixed_decision_.preview_path != 0) {
-                    mixed_decision_.preview_path = 0;
-                    mixed_decision_.preview_character = 0;
-                    mixed_decision_.english_boundary = false;
-                    mixed_decision_.raw_forced = true;
-                } else {
-                    pending_token_.clear();
-                    mixed_decision_.clear();
-                }
-                (void)transition_to(composition_empty() ? InputState::Empty : InputState::Inputting);
-                update_ui(input_context);
-                event.filterAndAccept();
-                return;
-            }
-
-            if (key == FcitxKey_BackSpace) {
-                if (mixed_decision_.active() && input_state_ == InputState::ChoosingCandidate) {
-                    (void)transition_to(InputState::Inputting);
-                }
-                if (mixed_decision_.active() && mixed_decision_.english_boundary) {
-                    mixed_decision_.clear();
-                    (void)transition_to(InputState::Inputting);
-                    update_ui(input_context);
-                    event.filterAndAccept();
-                    return;
-                }
-                pending_token_.pop();
-                mixed_decision_.clear();
-                (void)transition_to(composition_empty() ? InputState::Empty : InputState::Inputting);
-                if (pending_token_.empty()) {
-                    update_ui(input_context);
-                } else {
-                    rerun_pending_decision(input_context, false);
-                }
-                event.filterAndAccept();
-                return;
-            }
-
-            if (is_return_keysym(static_cast<std::uint32_t>(key))) {
-                commit_current(input_context);
-                event.filterAndAccept();
-                return;
-            }
-
-            if (key == FcitxKey_Down && mixed_decision_.active()) {
-                (void)show_mixed_candidates(input_context);
-                event.filterAndAccept();
-                return;
-            }
-
-            if (key == FcitxKey_space) {
-                if (mixed_decision_.active()) {
-                    if (mixed_decision_.preview_path == 0) {
-                        if (!mixed_decision_.english_boundary &&
-                            is_complete_structured_ascii(pending_token_.raw)) {
-                            rerun_pending_decision(input_context, true);
-                        } else {
-                            (void)commit_composition_with(input_context, U' ');
-                        }
-                    } else {
-                        const auto& preview = mixed_decision_.result.paths[mixed_decision_.preview_path];
-                        if (!preview.segments.empty() &&
-                            preview.segments.back().kind == MixedSegmentKind::Bopomofo) {
-                            (void)settle_pending_preview(input_context);
-                        } else {
-                            std::u16string latin_tail;
-                            for (auto it = preview.segments.rbegin(); it != preview.segments.rend(); ++it) {
-                                if (it->kind == MixedSegmentKind::Bopomofo) break;
-                                latin_tail.insert(0, it->raw);
-                            }
-                            const bool long_latin = latin_tail.size() >= 4 &&
-                                                    std::all_of(latin_tail.begin(), latin_tail.end(),
-                                                                [](char16_t ch) { return is_ascii_letter(ch); });
-                            if (fallback_.is_known_english(latin_tail) || long_latin) {
-                                (void)commit_composition_with(input_context, U' ');
-                            } else {
-                                rerun_pending_decision(input_context, true);
-                            }
-                        }
-                    }
-                } else {
-                    rerun_pending_decision(input_context, true);
-                }
-                event.filterAndAccept();
-                return;
-            }
-
-            if (punctuation && (event.key().states() & fcitx::KeyState::Ctrl)) {
-                (void)settle_pending_preview(input_context);
-                (void)buffer_.add_literal(*punctuation);
-                (void)transition_to(InputState::Inputting);
-                update_ui(input_context);
-                event.filterAndAccept();
-                return;
-            }
-
-            if (raw_symbol >= 0x21 && raw_symbol <= 0x7e && !has_blocking_modifier(effective_key)) {
-                if (mixed_decision_.active() && mixed_decision_.english_boundary) {
-                    if (mixed_decision_.preview_path == 0) {
-                        settle_pending_as_literals();
-                        (void)buffer_.add_literal(U' ');
-                    } else {
-                        (void)settle_pending_preview(input_context);
-                    }
-                }
-                append_pending_char(raw_symbol, smart_layout);
-                rerun_pending_decision(input_context, false);
-                event.filterAndAccept();
-                return;
-            }
-
-            // Navigation/editing operates on settled ASCII literals inside the
-            // composition rather than committing into the client first.
-            (void)settle_pending_preview(input_context);
-        }
-
-        const auto& segments = buffer_.segments();
-        const bool all_literals = !segments.empty() &&
-                                  std::all_of(segments.begin(), segments.end(),
-                                              [](const Segment& segment) { return segment.literal != 0; });
-        if (pending_token_.empty() && all_literals && !buffer_.caret_at_end() &&
-            raw_symbol >= 0x20 && raw_symbol <= 0x7e && !has_blocking_modifier(effective_key)) {
-            (void)buffer_.add_literal(raw_symbol);
-            (void)transition_to(InputState::Inputting);
-            mark_prediction_dirty();
-            update_ui(input_context);
-            event.filterAndAccept();
-            return;
-        }
-
-        if (pending_token_.empty() && is_smart_start_char(key, layout)) {
-            if (candidate_list_active()) (void)transition_to(InputState::Inputting);
-            append_pending_char(key, layout);
-            rerun_pending_decision(input_context, false);
-            event.filterAndAccept();
-            return;
-        }
-    }
-
-    if (punctuation) {
-        if (!buffer_.has_unfinished_reading()) {
-            (void)buffer_.add_literal(*punctuation);
-            (void)transition_to(InputState::Inputting);
-            update_ui(input_context);
-        }
-        event.filterAndAccept();
-        return;
-    }
-
-    // Letter keys: the keysym case XOR the CapsLock state decides between
-    // English output and bopomofo input, mirroring McBopomofo's case swap.
-    // (CapsLock+letter with Chinese disabled already returned above.)
-    {
-        const bool is_upper = raw_symbol >= U'A' && raw_symbol <= U'Z';
-        const bool is_lower = raw_symbol >= U'a' && raw_symbol <= U'z';
-        if (is_upper || is_lower) {
-            const bool caps_on = static_cast<bool>(raw_key.states() & fcitx::KeyState::CapsLock);
-            if (is_upper != caps_on) {
-                if (handle_english_letter(input_context, raw_symbol, caps_on)) event.filterAndAccept();
-                return;
-            }
-        }
-    }
-
-    // Match Chewing: digits commit directly from an empty state, join completed
-    // composition as literals, and bell while a Hsu syllable is unfinished.
-    if (layout == BopomofoKeyboardLayout::Hsu &&
-        is_ascii_digit_keysym(static_cast<std::uint32_t>(key))) {
-        if (buffer_.has_unfinished_reading()) {
-            event.filterAndAccept();
-            return;
-        }
-        if (buffer_.empty()) {
-            const std::u16string digit(1, static_cast<char16_t>(key));
-            input_context->commitString(to_utf8(digit));
-            record_context_commit(input_context, digit);
-        } else {
-            (void)buffer_.add_literal(static_cast<char32_t>(key));
-            (void)transition_to(InputState::Inputting);
-            update_ui(input_context);
-        }
-        event.filterAndAccept();
-        return;
-    }
-
-    if (key == FcitxKey_space && !buffer_.empty() && !buffer_.has_unfinished_reading_before_caret()) {
-        const bool target_complete = current_candidate_target().has_value();
-        const bool has_candidates = !available_candidates().empty();
-        if (target_complete || has_candidates) {
-            if (input_state_ != InputState::ChoosingCandidate) {
-                (void)transition_to(InputState::ChoosingCandidate);
-                update_ui(input_context);
-            } else if (config_.space_selects_candidate && !displayed_candidates_.empty()) {
-                (void)select_candidate(input_context, candidate_cursor_);
-            }
-            event.filterAndAccept();
-            return;
-        }
-    }
-
-    if (is_return_keysym(static_cast<std::uint32_t>(key)) && !composition_empty()) {
-        if (buffer_.marked_range()) {
-            // Enter in the marking state stores the phrase and keeps composing.
-            if (save_marked_phrase_override()) {
-                (void)buffer_.clear_selection();
-                update_ui(input_context);
-            }
-            event.filterAndAccept();
-            return;
-        }
-        commit_current(input_context);
-        event.filterAndAccept();
-        return;
-    }
-
-    if (key == FcitxKey_Escape && !composition_empty()) {
-        if (handle_escape(input_context)) event.filterAndAccept();
-        return;
-    }
-
-    if (key == FcitxKey_BackSpace && !buffer_.empty()) {
-        buffer_.backspace();
-        (void)transition_to(buffer_.empty() ? InputState::Empty : InputState::Inputting);
-        mark_prediction_dirty();
-        update_ui(input_context);
-        event.filterAndAccept();
-        return;
-    }
-
-    if (key == FcitxKey_Delete && !buffer_.empty()) {
-        buffer_.delete_forward();
-        (void)transition_to(buffer_.empty() ? InputState::Empty : InputState::Inputting);
-        mark_prediction_dirty();
-        update_ui(input_context);
-        event.filterAndAccept();
-        return;
-    }
-
-    if (key == FcitxKey_Left && !buffer_.empty()) {
-        if (!buffer_.move_cursor_left()) return;
-        (void)transition_to(InputState::Inputting);
-        update_ui(input_context);
-        event.filterAndAccept();
-        return;
-    }
-
-    if (key == FcitxKey_Right && !buffer_.empty()) {
-        if (!buffer_.move_cursor_right()) return;
-        (void)transition_to(InputState::Inputting);
-        update_ui(input_context);
-        event.filterAndAccept();
-        return;
-    }
-
-    if (key == FcitxKey_Down && !buffer_.empty()) {
-        const bool target_complete = current_candidate_target().has_value();
-        const bool has_candidates = !available_candidates().empty();
-        if (target_complete || has_candidates) {
-            (void)transition_to(InputState::ChoosingCandidate);
-            update_ui(input_context);
-            event.filterAndAccept();
-            return;
-        }
-    }
-
-    if (key == FcitxKey_Tab && !buffer_.empty() && !available_candidates().empty()) {
-        if (input_state_ != InputState::ChoosingCandidate) {
-            (void)transition_to(InputState::ChoosingCandidate);
-        } else {
-            candidate_expanded_ = !candidate_expanded_;
-        }
-        update_ui(input_context);
-        event.filterAndAccept();
-        return;
-    }
-
-    if ((key == FcitxKey_Page_Up || key == FcitxKey_Page_Down) && !buffer_.empty() && !displayed_candidates_.empty()) {
-        if (page_candidates(key == FcitxKey_Page_Up ? -1 : 1)) {
-            (void)set_candidate_cursor(candidate_page_offset());
-            update_ui(input_context);
-        }
-        event.filterAndAccept();
-        return;
-    }
-
-    if (key == FcitxKey_space && buffer_.empty()) return;
-
-    if (const auto input =
-            buffer_.add_bopomofo_key(static_cast<char32_t>(key), layout, config_.caps_lock_inputs_bopomofo)) {
-        (void)transition_to(InputState::Inputting);
-        mark_prediction_dirty();
-        if (input->completed) {
-            if (const auto segment = buffer_.last_edited_segment(); segment && buffer_.segment_complete(*segment)) {
-                apply_fallback_candidates(*segment);
-                const auto* candidates = buffer_.segment_candidates(*segment);
-                if (candidates == nullptr || candidates->empty()) {
-                    (void)buffer_.remove_segment(*segment);
-                    update_ui(input_context);
-                    event.filterAndAccept();
-                    return;
-                }
-            }
-            request_prediction_if_ready(input_context);
-        }
-        update_ui(input_context);
-        event.filterAndAccept();
-        return;
-    }
+    const auto effect = processor_.process(input_key, session_, config_);
+    apply_effect(input_context, effect);
+    if (effect.handled) event.filterAndAccept();
 }
 
 void ImeEngine::activate(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& event) {
@@ -939,34 +286,19 @@ void ImeEngine::deactivate(const fcitx::InputMethodEntry& entry, fcitx::InputCon
 void ImeEngine::reset(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& event) {
     StateScope state_scope(*this, event.inputContext());
     const bool focus_out = event.type() == fcitx::EventType::InputContextFocusOut;
-    const bool complete_composition = !buffer_.empty() && !buffer_.has_unfinished_reading();
-    if ((focus_out && (!pending_token_.empty() || complete_composition)) ||
-        (!focus_out && event.type() != fcitx::EventType::InputContextReset)) {
-        auto text = buffer_.candidate_commit_text();
-        text += pending_rendered_text();
-        if (!text.empty()) event.inputContext()->commitString(to_utf8(text));
-        record_context_commit(event.inputContext(), text);
-    }
-
-    buffer_.clear();
-    pending_token_.clear();
-    mixed_decision_.clear();
-    symbol_menu_.close();
-    if (event.inputContext()->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
-        context_cache_.clear();
-    }
-    if (focus_out && config_.reset_context_on_focus_out) context_cache_.clear();
+    const auto reason = focus_out ? InputResetReason::FocusOut
+                                 : event.type() == fcitx::EventType::InputContextReset
+                                       ? InputResetReason::Explicit
+                                       : InputResetReason::Deactivate;
+    const bool sensitive =
+        event.inputContext()->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive);
+    const auto effect = processor_.reset(session_, config_, reason,
+                                         sensitive || (focus_out && config_.reset_context_on_focus_out));
     if (focus_out && accessibility_context_) {
         accessibility_context_->set_active(false);
         accessibility_base_sequence_ = accessibility_context_->sequence();
     }
-    (void)transition_to(InputState::Empty);
-    ++generation_;
-    prediction_pending_ = false;
-    prediction_dirty_ = false;
-    inflight_request_id_.reset();
-    prediction_segment_indices_.clear();
-    update_ui(event.inputContext());
+    apply_effect(event.inputContext(), effect);
 }
 
 void ImeEngine::reloadConfig() {
@@ -1033,25 +365,14 @@ void ImeEngine::setConfig(const fcitx::RawConfig& config) {
     apply_context_cache_limits();
     apply_context_sources();
     save();
-    ++generation_;
-    inflight_request_id_.reset();
-    prediction_pending_ = false;
-    prediction_dirty_ = false;
+    processor_.prepare_for_config_change(session_);
     if (instance_ != nullptr) {
         instance_->inputContextManager().foreach([this](fcitx::InputContext* input_context) {
             auto* state = property(input_context);
             if (state == nullptr) return true;
-            for (const char16_t ch : state->pending_token.raw) {
-                (void)state->buffer.add_literal(static_cast<char32_t>(ch));
-            }
-            state->pending_token.clear();
-            state->mixed_decision.clear();
-            if (!protocol::is_zero(state->session_id)) {
-                service_transport_.close_session(state->session_id, {});
-                state->session_id = {};
-            }
+            processor_.prepare_for_config_change(state->session);
+            coordinator_.close_session(state->session);
             state->session_close_handle = {};
-            state->invalidate_generation();
             return true;
         });
     }
@@ -1078,15 +399,15 @@ void ImeEngine::reload_config() {
 void ImeEngine::apply_context_cache_limits() {
     const auto history_limit = static_cast<size_t>(config_.context_history_limit);
     const auto surrounding_limit = static_cast<size_t>(config_.context_length);
-    context_cache_.set_limit(history_limit);
-    context_cache_.set_surrounding_limit(surrounding_limit);
+    session_.context_cache.set_limit(history_limit);
+    session_.context_cache.set_surrounding_limit(surrounding_limit);
 
     if (instance_ == nullptr) return;
     instance_->inputContextManager().foreach([this, history_limit, surrounding_limit](fcitx::InputContext* input_context) {
         auto* state = property(input_context);
         if (state == nullptr) return true;
-        state->context_cache.set_limit(history_limit);
-        state->context_cache.set_surrounding_limit(surrounding_limit);
+        state->session.context_cache.set_limit(history_limit);
+        state->session.context_cache.set_surrounding_limit(surrounding_limit);
         return true;
     });
 }
@@ -1127,34 +448,47 @@ void ImeEngine::update_accessibility_status() {
     (void)fcitx_config_.accessibilityStatus.setValue(status);
 }
 
+void ImeEngine::apply_effect(fcitx::InputContext* input_context, const InputEffect& effect) {
+    if (!effect.commit.empty()) {
+        input_context->commitString(to_utf8(effect.commit));
+        record_context_commit(input_context, effect.commit);
+    }
+    if (effect.request_prediction) request_prediction_if_ready(input_context);
+    if (effect.redraw) update_ui(input_context);
+}
+
+void ImeEngine::run_effect(fcitx::InputContext* input_context, const std::function<InputEffect()>& operation) {
+    StateScope state_scope(*this, input_context);
+    apply_effect(input_context, operation());
+}
+
 void ImeEngine::update_ui(fcitx::InputContext* input_context) {
     StateScope state_scope(*this, input_context);
-    (void)poll_prediction(input_context);
+    processor_.sync_state(session_, config_);
 
-    if (composition_empty()) {
-        if (input_state_ != InputState::Empty) (void)transition_to(InputState::Empty);
+    if (InputProcessor::composition_empty(session_)) {
         input_context->inputPanel().reset();
         input_context->updatePreedit();
-        if (!symbol_menu_.active()) {
+        if (!session_.symbol_menu.active()) {
             input_context->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
             return;
         }
     } else {
-        if (input_state_ == InputState::Empty) (void)transition_to(InputState::Inputting);
-
-        auto rendered = current_preedit();
-        auto prefix = buffer_.rendered_prefix_before_caret();
-        if (!pending_token_.empty()) prefix += pending_rendered_text();
+        auto rendered = InputProcessor::current_preedit(session_);
+        auto prefix = session_.buffer.rendered_prefix_before_caret();
+        if (!session_.pending_token.empty()) prefix += InputProcessor::pending_rendered_text(session_);
         // Frontends that render preedit formatting underline the marked range;
         // the rest still show the caret at the marking edge.
         fcitx::Text preedit;
-        if (const auto marked = buffer_.marked_range()) {
-            for (size_t i = 0; i < buffer_.segments().size(); ++i) {
-                preedit.append(to_utf8(buffer_.segments()[i].rendered_text()),
+        if (const auto marked = session_.buffer.marked_range()) {
+            for (size_t i = 0; i < session_.buffer.segments().size(); ++i) {
+                preedit.append(to_utf8(session_.buffer.segments()[i].rendered_text()),
                                i >= marked->first && i < marked->second ? fcitx::TextFormatFlag::Underline
                                                                         : fcitx::TextFormatFlag::NoFlag);
             }
-            if (!pending_token_.empty()) preedit.append(to_utf8(pending_rendered_text()));
+            if (!session_.pending_token.empty()) {
+                preedit.append(to_utf8(InputProcessor::pending_rendered_text(session_)));
+            }
         } else {
             preedit = fcitx::Text(to_utf8(rendered));
         }
@@ -1162,8 +496,8 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
         const bool use_client_preedit = input_context->capabilityFlags().test(fcitx::CapabilityFlag::Preedit);
         input_context->inputPanel().setClientPreedit(use_client_preedit ? preedit : fcitx::Text());
         input_context->inputPanel().setPreedit(use_client_preedit ? fcitx::Text() : preedit);
-        if (buffer_.marked_range()) {
-            input_context->inputPanel().setAuxUp(fcitx::Text(to_utf8(marking_hint_text())));
+        if (session_.buffer.marked_range()) {
+            input_context->inputPanel().setAuxUp(fcitx::Text(to_utf8(InputProcessor::marking_hint_text(session_))));
         } else {
             input_context->inputPanel().setAuxUp(fcitx::Text());
         }
@@ -1172,71 +506,79 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
     }
 
     auto candidates = std::make_unique<fcitx::CommonCandidateList>();
-    if (mixed_decision_.active() && input_state_ == InputState::ChoosingCandidate) {
-        displayed_candidates_.clear();
+    if (session_.mixed_decision.active() && session_.choosing_candidate()) {
+        session_.displayed_candidates.clear();
         const auto entries = decoder_.expand_candidates(
-            mixed_decision_.result, candidate_page_size(), mixed_decision_.preview_path);
-        for (const auto& entry : entries) displayed_candidates_.push_back(entry.text);
-    } else if (symbol_menu_.active()) {
-        // Candidates are rendered from symbol_menu_ items below; the placeholder
+            session_.mixed_decision.result, InputProcessor::candidate_page_size(session_, config_),
+            session_.mixed_decision.preview_path);
+        for (const auto& entry : entries) session_.displayed_candidates.push_back(entry.text);
+    } else if (session_.symbol_menu.active()) {
+        // Candidates are rendered from symbol menu items below; the placeholder
         // entries keep page and cursor bookkeeping sized identically.
-        displayed_candidates_.assign(symbol_menu_.menu().size(), u"?");
-    } else if (buffer_.marked_range() && input_state_ != InputState::ChoosingCandidate) {
+        session_.displayed_candidates.assign(session_.symbol_menu.menu().size(), u"?");
+    } else if (session_.buffer.marked_range() && !session_.choosing_candidate()) {
         // The marking hint doubles as the tooltip McBopomofo shows next to the
         // composing buffer, because the macOS frontend can only render it as a
         // candidate list.
-        displayed_candidates_.assign(1, marking_hint_text());
+        session_.displayed_candidates.assign(1, InputProcessor::marking_hint_text(session_));
     } else {
-        displayed_candidates_.clear();
-        if (input_state_ == InputState::ChoosingCandidate) {
-            for (const char32_t candidate : available_candidates()) {
-                displayed_candidates_.push_back(to_utf16(candidate));
+        session_.displayed_candidates.clear();
+        if (session_.choosing_candidate()) {
+            for (const char32_t candidate : InputProcessor::available_candidates(session_, config_)) {
+                session_.displayed_candidates.push_back(to_utf16(candidate));
             }
         }
     }
-    if (displayed_candidates_.empty()) {
-        reset_candidate_view();
+    if (session_.displayed_candidates.empty()) {
+        session_.candidate_view.reset();
         input_context->inputPanel().setCandidateList(nullptr);
         input_context->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
         return;
     }
 
-    clamp_candidate_cursor();
-    const int page_size = candidate_page_size();
+    InputProcessor::clamp_candidate_cursor(session_, config_);
+    const int page_size = InputProcessor::candidate_page_size(session_, config_);
     const int page_count = static_cast<int>(
-        (displayed_candidates_.size() + static_cast<size_t>(page_size) - 1) / static_cast<size_t>(page_size));
-    if (candidate_page_ >= page_count) candidate_page_ = page_count - 1;
-    if (candidate_page_ < 0) candidate_page_ = 0;
+        (session_.displayed_candidates.size() + static_cast<size_t>(page_size) - 1) / static_cast<size_t>(page_size));
+    if (session_.candidate_view.page >= page_count) session_.candidate_view.page = page_count - 1;
+    if (session_.candidate_view.page < 0) session_.candidate_view.page = 0;
     candidates->setPageSize(page_size);
     candidates->setSelectionKey(selection_key_list());
     candidates->setLayoutHint(candidate_layout_hint());
-    const auto target = symbol_menu_.active() ? std::optional<size_t>() : current_candidate_target();
-    const auto symbol_epoch = symbol_menu_.epoch();
+    const auto target =
+        session_.symbol_menu.active() ? std::optional<size_t>() : InputProcessor::current_candidate_target(session_, config_);
+    const auto symbol_epoch = session_.symbol_menu.epoch();
     int index = 0;
-    if (symbol_menu_.active()) {
-        for (const auto& item : symbol_menu_.menu()) {
+    if (session_.symbol_menu.active()) {
+        for (const auto& item : session_.symbol_menu.menu()) {
             candidates->append<SelectableCandidateWord>(
                 fcitx::Text(to_utf8(item)), [this, index, symbol_epoch](fcitx::InputContext* context) {
-                    select_symbol(context, index, symbol_epoch);
+                    run_effect(context, [this, index, symbol_epoch]() {
+                        return processor_.select_symbol(session_, config_, index, symbol_epoch);
+                    });
                 });
             ++index;
         }
-    } else if (buffer_.marked_range() && input_state_ != InputState::ChoosingCandidate) {
+    } else if (session_.buffer.marked_range() && !session_.choosing_candidate()) {
         // The marking hint is informational: clicking it must not pick a
         // candidate behind the user's back.
-        candidates->append<SelectableCandidateWord>(fcitx::Text(to_utf8(displayed_candidates_.front())),
+        candidates->append<SelectableCandidateWord>(fcitx::Text(to_utf8(session_.displayed_candidates.front())),
                                                     [](fcitx::InputContext*) {});
     } else {
-        for (const auto& candidate : displayed_candidates_) {
+        for (const auto& candidate : session_.displayed_candidates) {
             candidates->append<SelectableCandidateWord>(
-                fcitx::Text(to_utf8(candidate)),
-                [this, index](fcitx::InputContext* context) { select_candidate(context, index); });
+                fcitx::Text(to_utf8(candidate)), [this, index](fcitx::InputContext* context) {
+                    run_effect(context, [this, index]() {
+                        return processor_.select_candidate(session_, config_, index);
+                    });
+                });
             ++index;
         }
     }
-    candidates->setPage(candidate_page_);
-    if (symbol_menu_.active() || mixed_decision_.active() || target) {
-        candidates->setCursorIndex(candidate_cursor_ - candidate_page_offset());
+    candidates->setPage(session_.candidate_view.page);
+    if (session_.symbol_menu.active() || session_.mixed_decision.active() || target) {
+        candidates->setCursorIndex(session_.candidate_view.cursor -
+                                   InputProcessor::candidate_page_offset(session_, config_));
     }
     input_context->inputPanel().setCandidateList(std::move(candidates));
     input_context->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
@@ -1245,854 +587,23 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
 void ImeEngine::record_context_commit(const fcitx::InputContext* input_context, const std::u16string& text) {
     if (input_context == nullptr ||
         input_context->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
-        context_cache_.clear();
+        session_.context_cache.clear();
         return;
     }
     if (config_.context_history_limit > 0 && !text.empty()) {
-        context_cache_.on_commit(text);
+        session_.context_cache.on_commit(text);
     }
-}
-
-std::vector<std::u16string> ImeEngine::current_phrase_override_readings() const {
-    if (!pending_token_.empty()) return {};
-
-    std::vector<std::u16string> readings;
-    readings.reserve(buffer_.segments().size());
-    for (const auto& segment : buffer_.segments()) {
-        if (!segment.complete() || segment.literal != 0 || !segment.visible_candidate()) return {};
-        readings.push_back(segment.reading());
-    }
-    return readings;
-}
-
-std::optional<std::u16string> ImeEngine::matching_phrase_override() const {
-    const auto readings = current_phrase_override_readings();
-    if (readings.empty()) return std::nullopt;
-    for (const auto& segment : buffer_.segments()) {
-        if (segment.manually_chosen && !segment.phrase_override_chosen) return std::nullopt;
-    }
-    return phrase_overrides_.lookup(readings);
-}
-
-void ImeEngine::apply_phrase_override() {
-    const auto phrase = matching_phrase_override();
-    if (!phrase) {
-        (void)buffer_.clear_phrase_override_choices();
-        return;
-    }
-
-    try {
-        const auto codepoints = utf8_to_u32(u16_to_utf8(*phrase));
-        if (!buffer_.apply_phrase_override(codepoints)) (void)buffer_.clear_phrase_override_choices();
-    } catch (...) {
-        (void)buffer_.clear_phrase_override_choices();
-    }
-}
-
-// McBopomofo shows a tooltip while marking. fcitx5-macos renders neither
-// preedit formatting nor aux text, so the same message is also shown as the
-// single candidate of the marking panel, which every frontend displays.
-std::u16string ImeEngine::marking_hint_text() const {
-    const auto readings = buffer_.marked_readings();
-    std::u16string hint = u"強制替代詞彙：「" + buffer_.marked_text() + u"」";
-    if (readings.empty()) {
-        hint += u"（含未完成的字）— Esc 取消";
-    } else if (PhraseOverrideStore::valid_entry(buffer_.marked_text(), readings.size())) {
-        hint += u" — 按 Enter 加入、Esc 取消";
-    } else {
-        hint += u"（需選取 2 至 8 個字）— Esc 取消";
-    }
-    return hint;
-}
-
-bool ImeEngine::save_marked_phrase_override() {
-    const auto readings = buffer_.marked_readings();
-    if (!PhraseOverrideStore::valid_entry(buffer_.marked_text(), readings.size())) return false;
-    return phrase_overrides_.add(buffer_.marked_text(), readings);
-}
-
-void ImeEngine::commit_current(fcitx::InputContext* input_context) {
-    StateScope state_scope(*this, input_context);
-    auto text = buffer_.commit_text();
-    text += pending_rendered_text();
-    input_context->commitString(to_utf8(text));
-    record_context_commit(input_context, text);
-    buffer_.clear();
-    pending_token_.clear();
-    mixed_decision_.clear();
-    symbol_menu_.close();
-    (void)transition_to(InputState::Empty);
-    prediction_pending_ = false;
-    prediction_dirty_ = false;
-    prediction_segment_indices_.clear();
-    update_ui(input_context);
-}
-
-void ImeEngine::commit_composition_with(fcitx::InputContext* input_context, char32_t extra) {
-    StateScope state_scope(*this, input_context);
-    std::u16string text = buffer_.commit_text();
-    text += pending_rendered_text();
-    if (extra != 0) text.push_back(extra);
-    buffer_.clear();
-    pending_token_.clear();
-    mixed_decision_.clear();
-    symbol_menu_.close();
-    (void)transition_to(InputState::Empty);
-    prediction_pending_ = false;
-    prediction_dirty_ = false;
-    inflight_request_id_.reset();
-    prediction_segment_indices_.clear();
-    input_context->commitString(to_utf8(text));
-    record_context_commit(input_context, text);
-    update_ui(input_context);
-}
-
-bool ImeEngine::handle_english_letter(fcitx::InputContext* input_context, char32_t letter, bool caps_on) {
-    StateScope state_scope(*this, input_context);
-    if (config_.shift_letter_keys == "directly_put_to_buffer") {
-        if (!pending_token_.empty()) (void)settle_pending_preview(input_context);
-        const char32_t lower = letter >= U'A' && letter <= U'Z' ? letter + (U'a' - U'A') : letter;
-        const char32_t upper = letter >= U'a' && letter <= U'z' ? letter + (U'A' - U'a') : letter;
-        if (!buffer_.add_literal(caps_on ? upper : lower)) return false;
-        (void)transition_to(InputState::Inputting);
-        update_ui(input_context);
-        return true;
-    }
-
-    // DirectlyOutputUppercase: an empty composition passes the key through,
-    // a non-empty composition commits together with the uppercase letter.
-    if (composition_empty()) return false;
-    const char32_t upper = letter >= U'a' && letter <= U'z' ? letter + (U'A' - U'a') : letter;
-    commit_composition_with(input_context, upper);
-    return true;
-}
-
-bool ImeEngine::is_smart_tone_key(char32_t key, BopomofoKeyboardLayout layout) const {
-    if (layout == BopomofoKeyboardLayout::Hsu) {
-        return key == U'd' || key == U'f' || key == U'j' || key == U's';
-    }
-    if (const auto symbol = lookup_bopomofo_key(key)) {
-        return is_bopomofo_tone(*symbol) && *symbol != U' ';
-    }
-    return false;
-}
-
-bool ImeEngine::is_smart_start_char(char32_t key, BopomofoKeyboardLayout layout) const {
-    if (key >= U'a' && key <= U'z') return true;
-    if (layout == BopomofoKeyboardLayout::Standard) {
-        if (const auto symbol = lookup_bopomofo_key(key)) return !is_bopomofo_tone(*symbol);
-    }
-    return false;
-}
-
-// Re-decode the exact raw pending keys. A language decision only changes the
-// preedit preview; it is not written into the composition until confirmation.
-void ImeEngine::rerun_pending_decision(fcitx::InputContext* input_context, bool space_triggered) {
-    StateScope state_scope(*this, input_context);
-    if (pending_token_.empty()) return;
-
-    std::vector<MixedSegment> previous_chinese;
-    if (mixed_decision_.active() && mixed_decision_.preview_path > 0 &&
-        mixed_decision_.preview_path < mixed_decision_.result.paths.size() &&
-        mixed_decision_.source_revision + (space_triggered ? 0 : 1) == pending_token_.revision) {
-        for (const auto& segment : mixed_decision_.result.paths[mixed_decision_.preview_path].segments) {
-            if (segment.kind == MixedSegmentKind::Bopomofo) previous_chinese.push_back(segment);
-        }
-    }
-
-    auto result = decoder_.decode(pending_token_.raw, pending_token_.layout, space_triggered);
-    const size_t raw_size = pending_token_.raw.size();
-    const size_t no_path = std::numeric_limits<size_t>::max();
-    size_t best_closing = no_path;
-    size_t best_chinese = no_path;
-    size_t best_known_prefix_closing = no_path;
-    size_t best_known_tail = no_path;
-    size_t best_preserved = no_path;
-    size_t best_prefix_len = std::numeric_limits<size_t>::max();
-    size_t longest_known_prefix = 0;
-    double best_closing_score = -1;
-    double best_chinese_score = -1;
-    double best_known_prefix_score = -1;
-    double best_known_tail_score = -1;
-    double best_preserved_score = -1;
-    size_t best_chinese_segments = 0;
-
-    for (size_t i = 1; i < result.paths.size(); ++i) {
-        const auto& path = result.paths[i];
-        if (path.segments.empty()) continue;
-
-        bool has_chinese = false;
-        bool seen_chinese = false;
-        bool known_latin_tail = false;
-        size_t chinese_segments = 0;
-        size_t preserved_segments = 0;
-        for (const auto& segment : path.segments) {
-            if (segment.kind == MixedSegmentKind::Bopomofo) {
-                has_chinese = true;
-                seen_chinese = true;
-                ++chinese_segments;
-                if (preserved_segments < previous_chinese.size()) {
-                    const auto& previous = previous_chinese[preserved_segments];
-                    if (segment.begin == previous.begin && segment.end == previous.end &&
-                        segment.reading == previous.reading) {
-                        ++preserved_segments;
-                    }
-                }
-            } else if (seen_chinese && segment.kind == MixedSegmentKind::Latin &&
-                       fallback_.is_known_english(segment.raw)) {
-                known_latin_tail = true;
-            }
-        }
-        if (has_chinese &&
-            (chinese_segments > best_chinese_segments ||
-             (chinese_segments == best_chinese_segments && path.score > best_chinese_score))) {
-            best_chinese = i;
-            best_chinese_score = path.score;
-            best_chinese_segments = chinese_segments;
-        }
-        if (known_latin_tail && path.score > best_known_tail_score) {
-            best_known_tail = i;
-            best_known_tail_score = path.score;
-        }
-        if (!previous_chinese.empty() && preserved_segments == previous_chinese.size() &&
-            path.score > best_preserved_score) {
-            best_preserved = i;
-            best_preserved_score = path.score;
-        }
-
-        if (path.segments.back().kind == MixedSegmentKind::Bopomofo) {
-            const size_t begin = path.segments.back().begin;
-            if (begin < best_prefix_len ||
-                (begin == best_prefix_len && path.score > best_closing_score)) {
-                best_closing = i;
-                best_prefix_len = begin;
-                best_closing_score = path.score;
-            }
-            if (begin >= 3) {
-                const auto prefix = pending_token_.raw.substr(0, begin);
-                if (fallback_.is_known_english(prefix) &&
-                    (begin > longest_known_prefix ||
-                     (begin == longest_known_prefix && path.score > best_known_prefix_score))) {
-                    best_known_prefix_closing = i;
-                    longest_known_prefix = begin;
-                    best_known_prefix_score = path.score;
-                }
-            }
-        }
-    }
-
-    const bool explicit_tone = is_smart_tone_key(pending_token_.raw.back(), pending_token_.layout);
-    const bool whole_token_closing =
-        best_closing != no_path && result.paths[best_closing].segments.back().begin == 0;
-    if (space_triggered) {
-        const bool all_letters = std::all_of(pending_token_.raw.begin(), pending_token_.raw.end(),
-                                             [](char16_t ch) { return is_ascii_letter(ch); });
-        if (previous_chinese.empty() &&
-            (fallback_.is_known_english(pending_token_.raw) ||
-             (all_letters && pending_token_.raw.size() >= 4))) {
-            (void)commit_composition_with(input_context, U' ');
-            return;
-        }
-        if (explicit_tone && !whole_token_closing && best_preserved == no_path &&
-            best_known_prefix_closing == no_path) {
-            (void)commit_composition_with(input_context, U' ');
-            return;
-        }
-        if (best_closing == no_path) {
-            (void)commit_composition_with(input_context, U' ');
-            return;
-        }
-        const size_t preview = best_preserved != no_path ? best_preserved :
-                               pending_prefers_raw() ? 0 :
-                               best_known_prefix_closing != no_path ? best_known_prefix_closing : best_closing;
-        set_mixed_preview(input_context, std::move(result), preview, true);
-        return;
-    }
-
-    bool prefer_raw = pending_prefers_raw();
-    if (explicit_tone && raw_size > 4 &&
-        fallback_.is_known_english(pending_token_.raw.substr(0, raw_size - 1))) {
-        prefer_raw = true;
-    }
-
-    size_t preview = no_path;
-    if (is_complete_structured_ascii(pending_token_.raw) && best_chinese != no_path) {
-        preview = 0;
-    } else if (explicit_tone && best_preserved != no_path) {
-        preview = best_preserved;
-    } else if (best_known_tail != no_path) {
-        preview = best_known_tail;
-    } else if (explicit_tone && best_known_prefix_closing != no_path) {
-        preview = best_known_prefix_closing;
-    } else if (prefer_raw && best_chinese != no_path) {
-        preview = 0;
-    } else if (best_preserved != no_path &&
-               pending_token_.layout == BopomofoKeyboardLayout::Standard) {
-        preview = best_preserved;
-    } else if (explicit_tone && whole_token_closing) {
-        preview = best_closing;
-    } else if (explicit_tone) {
-        preview = 0;
-    } else if (pending_token_.layout == BopomofoKeyboardLayout::Standard && best_chinese != no_path) {
-        preview = best_chinese;
-    }
-
-    if (preview != no_path) {
-        set_mixed_preview(input_context, std::move(result), preview, false);
-    } else {
-        mixed_decision_.clear();
-        (void)transition_to(InputState::Inputting);
-        update_ui(input_context);
-    }
-}
-
-void ImeEngine::set_mixed_preview(fcitx::InputContext* input_context, MixedDecodeResult result,
-                                  size_t preview_path, bool english_boundary) {
-    StateScope state_scope(*this, input_context);
-    mixed_decision_.result = std::move(result);
-    mixed_decision_.source_revision = pending_token_.revision;
-    mixed_decision_.preview_path = preview_path;
-    mixed_decision_.preview_character = 0;
-    mixed_decision_.english_boundary = english_boundary;
-    mixed_decision_.raw_forced = false;
-    (void)transition_to(InputState::Inputting);
-    update_ui(input_context);
-}
-
-bool ImeEngine::show_mixed_candidates(fcitx::InputContext* input_context) {
-    StateScope state_scope(*this, input_context);
-    if (!mixed_decision_.active() || mixed_decision_.source_revision != pending_token_.revision) return false;
-
-    const auto entries = decoder_.expand_candidates(
-        mixed_decision_.result, candidate_page_size(), mixed_decision_.preview_path);
-    if (entries.size() < 2) return false;
-    (void)transition_to(InputState::ChoosingCandidate);
-    candidate_cursor_ = 0;
-    for (size_t i = 1; i < entries.size(); ++i) {
-        if (entries[i].path_index == mixed_decision_.preview_path &&
-            entries[i].char_index == mixed_decision_.preview_character) {
-            candidate_cursor_ = static_cast<int>(i);
-            break;
-        }
-    }
-    candidate_page_ = candidate_cursor_ / candidate_page_size();
-    update_ui(input_context);
-    return true;
-}
-
-bool ImeEngine::commit_mixed_candidate(fcitx::InputContext* input_context, int index) {
-    StateScope state_scope(*this, input_context);
-    if (!mixed_decision_.active() || index < 0) return false;
-    const auto entries = decoder_.expand_candidates(
-        mixed_decision_.result, candidate_page_size(), mixed_decision_.preview_path);
-    if (index >= static_cast<int>(entries.size())) return false;
-
-    auto text = buffer_.commit_text();
-    text += entries[static_cast<size_t>(index)].text;
-    if (index == 0 && mixed_decision_.english_boundary) text.push_back(u' ');
-    input_context->commitString(to_utf8(text));
-    record_context_commit(input_context, text);
-    buffer_.clear();
-    pending_token_.clear();
-    mixed_decision_.clear();
-    symbol_menu_.close();
-    (void)transition_to(InputState::Empty);
-    prediction_pending_ = false;
-    prediction_dirty_ = false;
-    inflight_request_id_.reset();
-    prediction_segment_indices_.clear();
-    update_ui(input_context);
-    return true;
-}
-
-bool ImeEngine::select_mixed_candidate(fcitx::InputContext* input_context, int index) {
-    StateScope state_scope(*this, input_context);
-    if (!mixed_decision_.active() || index < 0) return false;
-    if (mixed_decision_.source_revision != pending_token_.revision) return false;
-
-    const auto entries = decoder_.expand_candidates(
-        mixed_decision_.result, candidate_page_size(), mixed_decision_.preview_path);
-    if (index >= static_cast<int>(entries.size())) return false;
-
-    if (index == 0) {
-        if (mixed_decision_.english_boundary) {
-            (void)commit_composition_with(input_context, U' ');
-        } else {
-            mixed_decision_.preview_path = 0;
-            mixed_decision_.preview_character = 0;
-            mixed_decision_.raw_forced = true;
-            (void)transition_to(InputState::Inputting);
-            update_ui(input_context);
-        }
-        return true;
-    }
-
-    const auto& entry = entries[static_cast<size_t>(index)];
-    if (entry.path_index >= mixed_decision_.result.paths.size()) return false;
-    return apply_mixed_path(input_context, mixed_decision_.result.paths[entry.path_index], entry.char_index);
-}
-
-bool ImeEngine::apply_mixed_path(fcitx::InputContext* input_context, const MixedPath& path, size_t char_index) {
-    StateScope state_scope(*this, input_context);
-    CompositionBuffer next = buffer_;
-    for (size_t i = 0; i < path.segments.size(); ++i) {
-        const auto& segment = path.segments[i];
-        if (segment.kind == MixedSegmentKind::Bopomofo) {
-            const auto result =
-                next.add_bopomofo_keys(segment.body_keys, segment.tone_key, pending_token_.layout, true);
-            if (!result || !result->completed) return false;
-            (void)next.set_segment_candidates(result->segment_index, segment.candidates);
-            const size_t candidate_index = i + 1 == path.segments.size() ? char_index : 0;
-            if (candidate_index >= segment.candidates.size()) return false;
-            if (!next.select_candidate(result->segment_index, candidate_index,
-                                       config_.move_cursor_after_selection)) {
-                return false;
-            }
-        } else {
-            for (const char16_t ch : segment.raw) (void)next.add_literal(static_cast<char32_t>(ch));
-        }
-    }
-    buffer_ = std::move(next);
-    pending_token_.clear();
-    mixed_decision_.clear();
-    (void)transition_to(InputState::Inputting);
-    mark_prediction_dirty();
-    request_prediction_if_ready(input_context);
-    update_ui(input_context);
-    return true;
-}
-
-void ImeEngine::append_pending_char(char32_t key, BopomofoKeyboardLayout layout) {
-    pending_token_.push(key, layout);
-    (void)transition_to(InputState::Inputting);
-    update_ui(active_input_context_);
-}
-
-std::u16string ImeEngine::pending_rendered_text() const {
-    if (pending_token_.empty()) return {};
-    if (!mixed_decision_.active() || mixed_decision_.source_revision != pending_token_.revision ||
-        mixed_decision_.result.raw != pending_token_.raw ||
-        mixed_decision_.preview_path >= mixed_decision_.result.paths.size()) {
-        return pending_token_.raw;
-    }
-    return mixed_decision_.result.paths[mixed_decision_.preview_path].rendered;
-}
-
-// The exact text the composing buffer shows before the caret, including any
-// pending reading preview. Accessibility samples read the widget as-is, so
-// this is what must be stripped from their tail before the sample can become
-// prediction context.
-std::u16string ImeEngine::current_preedit() const {
-    auto rendered = buffer_.rendered_composition();
-    const auto pending = pending_rendered_text();
-    if (!pending.empty()) rendered += pending;
-    return rendered;
-}
-
-// Builds the current composition as a sequence of per-segment states and
-// removes it from the tail of an accessibility sample.
-std::optional<std::u16string> ImeEngine::strip_accessibility_preedit(const std::u16string& sample) const {
-    std::vector<std::pair<std::u16string, std::u16string>> storage;
-    for (const auto& segment : buffer_.segments()) {
-        if (segment.empty()) continue;
-        storage.emplace_back(segment.rendered_text(), segment.reading());
-    }
-    if (!pending_token_.empty()) storage.emplace_back(pending_rendered_text(), pending_token_.raw);
-
-    std::vector<PreeditSegmentState> states;
-    states.reserve(storage.size());
-    for (const auto& [rendered, reading] : storage) states.push_back({rendered, reading});
-    return strip_preedit_suffix(sample, states);
-}
-
-void ImeEngine::settle_pending_as_literals() {
-    for (const char16_t ch : pending_token_.raw) (void)buffer_.add_literal(static_cast<char32_t>(ch));
-    pending_token_.clear();
-    mixed_decision_.clear();
-    (void)transition_to(buffer_.empty() ? InputState::Empty : InputState::Inputting);
-}
-
-bool ImeEngine::settle_pending_preview(fcitx::InputContext* input_context) {
-    if (mixed_decision_.active() && mixed_decision_.source_revision == pending_token_.revision &&
-        mixed_decision_.preview_path > 0 &&
-        mixed_decision_.preview_path < mixed_decision_.result.paths.size()) {
-        return apply_mixed_path(input_context,
-                                mixed_decision_.result.paths[mixed_decision_.preview_path],
-                                mixed_decision_.preview_character);
-    }
-    settle_pending_as_literals();
-    return true;
-}
-
-bool ImeEngine::pending_prefers_raw() const {
-    if (pending_token_.empty()) return false;
-    if (pending_token_.raw.size() == 1 || fallback_.is_known_english(pending_token_.raw)) return true;
-    if (is_complete_structured_ascii(pending_token_.raw)) return true;
-
-    const bool all_letters = std::all_of(pending_token_.raw.begin(), pending_token_.raw.end(),
-                                         [](char16_t ch) { return is_ascii_letter(ch); });
-    if (all_letters && pending_token_.raw.size() >= 4) return true;
-
-    for (const auto& token : tokenize_ascii(pending_token_.raw, 0)) {
-        if (token.end == pending_token_.raw.size() && token.kind == AsciiTokenKind::Number) return true;
-    }
-    return false;
-}
-
-bool ImeEngine::select_candidate(fcitx::InputContext* input_context, int index) {
-    StateScope state_scope(*this, input_context);
-    if (input_state_ != InputState::ChoosingCandidate) return false;
-    if (mixed_decision_.active()) return select_mixed_candidate(input_context, index);
-    const auto target = current_candidate_target();
-    if (!target || index < 0) return false;
-
-    const auto candidates = available_candidates();
-    if (index >= static_cast<int>(candidates.size())) return false;
-
-    if (!buffer_.select_candidate(*target, static_cast<size_t>(index), config_.move_cursor_after_selection))
-        return false;
-    (void)transition_to(InputState::Inputting);
-    request_prediction_if_ready(input_context);
-    update_ui(input_context);
-    return true;
-}
-
-void ImeEngine::open_symbol_menu(fcitx::InputContext* input_context) {
-    StateScope state_scope(*this, input_context);
-    symbol_menu_.open();
-    if (input_state_ == InputState::ChoosingCandidate) {
-        (void)transition_to(InputState::Inputting);
-    } else {
-        displayed_candidates_.clear();
-        reset_candidate_view();
-    }
-    update_ui(input_context);
-}
-
-void ImeEngine::close_symbol_menu(fcitx::InputContext* input_context) {
-    StateScope state_scope(*this, input_context);
-    symbol_menu_.close();
-    displayed_candidates_.clear();
-    reset_candidate_view();
-    if (buffer_.empty()) {
-        if (input_state_ != InputState::Empty) (void)transition_to(InputState::Empty);
-    } else {
-        (void)transition_to(InputState::Inputting);
-    }
-    update_ui(input_context);
-}
-
-void ImeEngine::handle_symbol_menu_key(fcitx::InputContext* input_context, fcitx::KeyEvent& event) {
-    const auto key = event.key().sym();
-    if (key == FcitxKey_Escape || key == FcitxKey_grave) {
-        close_symbol_menu(input_context);
-        return;
-    }
-
-    if (key == FcitxKey_BackSpace) {
-        if (symbol_menu_.in_category()) {
-            symbol_menu_.back();
-            reset_candidate_view();
-            update_ui(input_context);
-        } else {
-            close_symbol_menu(input_context);
-        }
-        return;
-    }
-
-    if (key == FcitxKey_Up) {
-        if (move_candidate_cursor_in_page(-1)) update_ui(input_context);
-        return;
-    }
-    if (key == FcitxKey_Down) {
-        if (move_candidate_cursor_in_page(1)) update_ui(input_context);
-        return;
-    }
-    if (key == FcitxKey_Left || key == FcitxKey_Right) {
-        if (page_candidates(key == FcitxKey_Left ? -1 : 1, true)) update_ui(input_context);
-        return;
-    }
-    if (key == FcitxKey_Home || key == FcitxKey_End) {
-        const int index = key == FcitxKey_Home ? 0 : static_cast<int>(displayed_candidates_.size()) - 1;
-        if (set_candidate_cursor(index)) update_ui(input_context);
-        return;
-    }
-    if (key == FcitxKey_Page_Up || key == FcitxKey_Page_Down) {
-        if (page_candidates(key == FcitxKey_Page_Up ? -1 : 1)) {
-            (void)set_candidate_cursor(candidate_page_offset());
-            update_ui(input_context);
-        }
-        return;
-    }
-    if (key == FcitxKey_Tab) {
-        candidate_expanded_ = !candidate_expanded_;
-        update_ui(input_context);
-        return;
-    }
-    if (is_return_keysym(static_cast<std::uint32_t>(key)) ||
-        (key == FcitxKey_space && config_.space_selects_candidate)) {
-        (void)select_symbol(input_context, candidate_cursor_, symbol_menu_.epoch());
-        return;
-    }
-    if (const auto index = selection_index_for_key(key)) {
-        (void)select_symbol(input_context, candidate_page_offset() + *index, symbol_menu_.epoch());
-    }
-}
-
-bool ImeEngine::select_symbol(fcitx::InputContext* input_context, int index, std::uint64_t epoch) {
-    StateScope state_scope(*this, input_context);
-    if (!symbol_menu_.matches(epoch) || index < 0 || index >= static_cast<int>(symbol_menu_.menu().size()))
-        return false;
-
-    char32_t symbol = 0;
-    if (!symbol_menu_.select(static_cast<size_t>(index), symbol)) {
-        // Descended into a category level; keep the menu open.
-        reset_candidate_view();
-        update_ui(input_context);
-        return true;
-    }
-
-    symbol_menu_.close();
-    displayed_candidates_.clear();
-    reset_candidate_view();
-    if (!buffer_.add_literal(symbol)) return false;
-    (void)transition_to(InputState::Inputting);
-    mark_prediction_dirty();
-    update_ui(input_context);
-    return true;
-}
-
-bool ImeEngine::handle_escape(fcitx::InputContext* input_context) {
-    StateScope state_scope(*this, input_context);
-    // Marking only changes the selection, so Escape drops it first without
-    // touching the composition itself.
-    if (buffer_.clear_selection()) {
-        update_ui(input_context);
-        return true;
-    }
-    const auto manual_target = buffer_.manually_chosen_segment_at_caret();
-    const auto action = escape_action(config_.esc_clears_entire_buffer, input_state_,
-                                      !available_candidates().empty(),
-                                      buffer_.has_unfinished_reading(), manual_target.has_value());
-    switch (action) {
-        case EscapeAction::ClearBuffer:
-            buffer_.clear();
-            (void)transition_to(InputState::Empty);
-            prediction_pending_ = false;
-            prediction_dirty_ = false;
-            update_ui(input_context);
-            return true;
-        case EscapeAction::CloseCandidateList:
-            (void)transition_to(InputState::Inputting);
-            update_ui(input_context);
-            return true;
-        case EscapeAction::ClearUnfinishedReading:
-            if (!buffer_.clear_unfinished_reading()) return false;
-            (void)transition_to(buffer_.empty() ? InputState::Empty : InputState::Inputting);
-            mark_prediction_dirty();
-            update_ui(input_context);
-            return true;
-        case EscapeAction::CancelCandidateSelection:
-            if (!manual_target || !buffer_.cancel_candidate_selection(*manual_target)) return false;
-            (void)transition_to(InputState::Inputting);
-            request_prediction_if_ready(input_context);
-            update_ui(input_context);
-            return true;
-        case EscapeAction::KeepBuffer:
-            (void)transition_to(InputState::Inputting);
-            update_ui(input_context);
-            return true;
-    }
-    return false;
-}
-
-int ImeEngine::candidate_page_size() const {
-    if (candidate_expanded_ && !displayed_candidates_.empty()) return static_cast<int>(displayed_candidates_.size());
-    return config_.candidate_page_size;
-}
-
-int ImeEngine::candidate_page_offset() const {
-    return candidate_page_ * candidate_page_size();
-}
-
-bool ImeEngine::page_candidates(int delta, bool preserve_cursor_offset) {
-    if (displayed_candidates_.empty()) return false;
-
-    const int page_size = candidate_page_size();
-    const int page_count = static_cast<int>(
-        (displayed_candidates_.size() + static_cast<size_t>(page_size) - 1) / static_cast<size_t>(page_size));
-    const int next_page = std::clamp(candidate_page_ + delta, 0, page_count - 1);
-    if (next_page == candidate_page_) return false;
-
-    const int cursor_offset = preserve_cursor_offset ? candidate_cursor_ % page_size : 0;
-    candidate_page_ = next_page;
-    if (preserve_cursor_offset) {
-        const int page_begin = candidate_page_offset();
-        const int max_index = static_cast<int>(displayed_candidates_.size()) - 1;
-        candidate_cursor_ = std::min(page_begin + cursor_offset, max_index);
-    }
-    return true;
-}
-
-void ImeEngine::reset_candidate_view() {
-    candidate_page_ = 0;
-    candidate_cursor_ = 0;
-    candidate_expanded_ = false;
-}
-
-bool ImeEngine::transition_to(InputState state) {
-    const auto previous = input_state_;
-    if (!transition_input_state(input_state_, state)) return false;
-    if (accessibility_context_ != nullptr) {
-        if (previous == InputState::Empty && state == InputState::Inputting) {
-            // Samples published from here on may contain this composition's
-            // preedit; earlier ones cannot.
-            accessibility_composition_base_ = accessibility_context_->sequence();
-        } else if (state == InputState::Empty) {
-            accessibility_composition_base_ = 0;
-        }
-    }
-    if (state == InputState::ChoosingCandidate) {
-        if (previous != InputState::ChoosingCandidate) {
-            reset_candidate_view();
-            if (const auto target = current_candidate_target()) {
-                if (const auto selected = buffer_.segment_selected_index(*target)) {
-                    candidate_cursor_ = static_cast<int>(*selected);
-                }
-            }
-        }
-    } else {
-        displayed_candidates_.clear();
-        reset_candidate_view();
-    }
-    return true;
-}
-
-void ImeEngine::clamp_candidate_cursor() {
-    if (displayed_candidates_.empty()) {
-        candidate_cursor_ = 0;
-        candidate_page_ = 0;
-        return;
-    }
-
-    const int max_index = static_cast<int>(displayed_candidates_.size()) - 1;
-    candidate_cursor_ = std::clamp(candidate_cursor_, 0, max_index);
-
-    const int page_size = candidate_page_size();
-    if (page_size > 0) candidate_page_ = candidate_cursor_ / page_size;
-}
-
-bool ImeEngine::move_candidate_cursor_in_page(int delta) {
-    if (displayed_candidates_.empty()) return false;
-
-    const int page_size = candidate_page_size();
-    if (page_size <= 0) return false;
-
-    const int page_begin = candidate_page_offset();
-    const int page_end = std::min(page_begin + page_size, static_cast<int>(displayed_candidates_.size()));
-    if (page_begin >= page_end) return false;
-
-    int next = candidate_cursor_ + delta;
-    if (next < page_begin) next = page_end - 1;
-    if (next >= page_end) next = page_begin;
-    if (next == candidate_cursor_) return false;
-
-    candidate_cursor_ = next;
-    return true;
-}
-
-bool ImeEngine::set_candidate_cursor(int index) {
-    if (displayed_candidates_.empty()) return false;
-
-    const int max_index = static_cast<int>(displayed_candidates_.size()) - 1;
-    const int next = std::clamp(index, 0, max_index);
-    if (next == candidate_cursor_) return false;
-
-    candidate_cursor_ = next;
-    clamp_candidate_cursor();
-    return true;
-}
-
-bool ImeEngine::candidate_list_active() const {
-    return input_state_ == InputState::ChoosingCandidate && !displayed_candidates_.empty();
-}
-
-bool ImeEngine::composition_empty() const {
-    return buffer_.empty() && pending_token_.empty();
-}
-
-void ImeEngine::mark_prediction_dirty() {
-    if (prediction_pending_) prediction_dirty_ = true;
-}
-
-void ImeEngine::apply_fallback_candidates(size_t segment_index) {
-    if (!buffer_.segment_complete(segment_index)) return;
-
-    const auto predictions = fallback_.predict(buffer_);
-    if (segment_index >= predictions.size()) return;
-    (void)buffer_.set_segment_candidates(segment_index, predictions[segment_index].candidates);
 }
 
 void ImeEngine::request_prediction_if_ready(fcitx::InputContext* input_context) {
-    apply_phrase_override();
-    resync_context_cache(input_context);
-    if (prediction_pending_) {
-        prediction_dirty_ = true;
-        return;
-    }
-    auto completed = buffer_.completed_segment_indices();
-    if (completed.empty()) return;
-    prediction_segment_indices_ = std::move(completed);
-    prediction_pending_ = true;
-    prediction_dirty_ = false;
-    prediction_key_ = buffer_.raw_composition();
-    prediction_revision_ = buffer_.revision();
-    const auto generation = generation_;
-    const auto engine_alive = std::weak_ptr<bool>(alive_);
-    if (protocol::is_zero(session_id_)) {
-        auto context = input_context ? input_context->watch() : fcitx::TrackableObjectReference<fcitx::InputContext>();
-        auto* dispatcher = event_dispatcher_;
-        service_transport_.open_session([this, context, generation, engine_alive, dispatcher](protocol::Message response) mutable {
-            if (engine_alive.expired() || dispatcher == nullptr) return;
-            dispatcher->scheduleWithContext(context, [this, context, generation, engine_alive,
-                                                     response = std::move(response)]() mutable {
-                auto* input_context = context.get();
-                if (engine_alive.expired() || input_context == nullptr) return;
-                StateScope state_scope(*this, input_context);
-                if (generation_ != generation || !prediction_pending_ || !protocol::is_zero(session_id_)) return;
-                if (const auto* opened = std::get_if<protocol::OpenSessionResponse>(&response)) {
-                    session_id_ = opened->session_id;
-                    if (auto* state = property(input_context)) {
-                        const auto alive = std::weak_ptr<bool>(alive_);
-                        const auto session_id = session_id_;
-                        state->session_close_handle = [this, alive, session_id]() {
-                            if (alive.expired()) return;
-                            service_transport_.close_session(session_id, {});
-                        };
-                    }
-                    send_prediction(input_context, generation);
-                } else {
-                    const bool dirty = prediction_dirty_;
-                    prediction_pending_ = false;
-                    inflight_request_id_.reset();
-                    for (const auto index : prediction_segment_indices_) apply_fallback_candidates(index);
-                    apply_phrase_override();
-                    prediction_segment_indices_.clear();
-                    prediction_dirty_ = false;
-                    if (dirty) request_prediction_if_ready(input_context);
-                    update_ui(input_context);
-                }
-            });
-        });
-    } else {
-        send_prediction(input_context, generation);
-    }
+    processor_.apply_phrase_override(session_);
+    coordinator_.request(input_context, session_);
 }
 
-void ImeEngine::resync_context_cache(const fcitx::InputContext* input_context) {
+void ImeEngine::resync_context_cache(fcitx::InputContext* input_context, InputSession& session) {
     if (input_context == nullptr ||
         input_context->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
-        context_cache_.clear();
+        session.context_cache.clear();
         return;
     }
 
@@ -2104,12 +615,12 @@ void ImeEngine::resync_context_cache(const fcitx::InputContext* input_context) {
     if (surrounding.isValid()) {
         try {
             const size_t cursor = std::min(surrounding.cursor(), surrounding.anchor());
-            const size_t limit = context_cache_.limit() > 0 ? context_cache_.limit()
-                                                           : context_cache_.surrounding_limit();
+            const size_t limit = session.context_cache.limit() > 0 ? session.context_cache.limit()
+                                                                   : session.context_cache.surrounding_limit();
             const auto text = utf8_prefix_tail(surrounding.text(), cursor, limit);
             if (!text.empty()) {
-                client_surrounding_authoritative_ = true;
-                context_cache_.on_surrounding(text, text.size());
+                session.client_surrounding_authoritative = true;
+                session.context_cache.on_surrounding(text, text.size());
                 log_context("client-surrounding", text);
                 return;
             }
@@ -2127,20 +638,19 @@ void ImeEngine::resync_context_cache(const fcitx::InputContext* input_context) {
             // after the composing text is stripped from its tail.
             const bool predates_composition =
                 accessibility_composition_base_ != 0 && sample->sequence <= accessibility_composition_base_;
-            const bool may_contain_preedit = !composition_empty() && !predates_composition;
+            const bool may_contain_preedit = !InputProcessor::composition_empty(session) && !predates_composition;
             std::optional<std::u16string> text;
             if (!may_contain_preedit) {
                 text = sample->text;
             } else {
-                text = strip_accessibility_preedit(sample->text);
+                text = strip_accessibility_preedit(session, sample->text);
             }
-            if (text && (!text->empty() || !may_contain_preedit || !context_cache_.valid())) {
-                context_cache_.on_surrounding(*text, text->size());
+            if (text && (!text->empty() || !may_contain_preedit || !session.context_cache.valid())) {
+                session.context_cache.on_surrounding(*text, text->size());
                 log_context("accessibility", *text);
                 return;
             }
-            log_context(text ? "accessibility-empty-cache-fallback" :
-                               "accessibility-preedit-mismatch",
+            log_context(text ? "accessibility-empty-cache-fallback" : "accessibility-preedit-mismatch",
                         sample->text);
         } else {
             log_context("accessibility-unusable", {});
@@ -2148,161 +658,18 @@ void ImeEngine::resync_context_cache(const fcitx::InputContext* input_context) {
     }
 
     if (client_empty) {
-        if (client_surrounding_authoritative_) {
-            context_cache_.on_surrounding(std::u16string_view(), 0);
+        if (session.client_surrounding_authoritative) {
+            session.context_cache.on_surrounding(std::u16string_view(), 0);
             log_context("client-surrounding-empty", {});
         } else {
             // Some clients always expose a valid but empty document. Preserve
             // commits until that client demonstrates usable surrounding text.
-            log_context(context_cache_.valid() ? "client-empty-cache-fallback" :
-                                                 "client-surrounding-empty",
+            log_context(session.context_cache.valid() ? "client-empty-cache-fallback" : "client-surrounding-empty",
                         {});
         }
         return;
     }
     log_context("cache-fallback", {});
-}
-
-protocol::PredictRequest ImeEngine::build_predict_request(const fcitx::InputContext* input_context) const {
-    protocol::PredictRequest request;
-    request.session_id = session_id_;
-    request.buffer_revision = buffer_.revision();
-    for (const auto& segment : buffer_.segments()) {
-        if (!segment.complete()) continue;
-
-        protocol::PaddingEntry entry;
-        entry.bopomofo = segment.reading();
-        if (segment.manually_chosen && segment.selected_candidate() != 0) {
-            entry.chosen = true;
-            entry.chosen_char = segment.selected_candidate();
-        }
-        request.padding.push_back(std::move(entry));
-    }
-
-    if (input_context == nullptr ||
-        input_context->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
-        return request;
-    }
-
-    const size_t reserved_tokens = 2 + request.padding.size() * 2;
-    const size_t context_limit = config_.context_length > static_cast<int>(reserved_tokens)
-                                     ? static_cast<size_t>(config_.context_length) - reserved_tokens
-                                     : 0;
-    request.context = context_cache_.window(context_limit);
-    log_context("model", request.context);
-    return request;
-}
-
-void ImeEngine::send_prediction(fcitx::InputContext* input_context, std::uint64_t generation) {
-    if (generation_ != generation || !prediction_pending_ || protocol::is_zero(session_id_)) return;
-    resync_context_cache(input_context);
-    auto request = build_predict_request(input_context);
-    request.request_id = next_request_id_++;
-    request.buffer_revision = prediction_revision_;
-    inflight_request_id_ = request.request_id;
-    inflight_revision_ = request.buffer_revision;
-    auto context = input_context ? input_context->watch() : fcitx::TrackableObjectReference<fcitx::InputContext>();
-    const auto engine_alive = std::weak_ptr<bool>(alive_);
-    auto* dispatcher = event_dispatcher_;
-    service_transport_.predict(
-        request.session_id, request.request_id, request.buffer_revision, std::move(request.context),
-        std::move(request.padding), [this, context, generation, engine_alive, dispatcher](protocol::Message response) mutable {
-            if (engine_alive.expired() || dispatcher == nullptr) return;
-            dispatcher->scheduleWithContext(context, [this, context, generation, engine_alive,
-                                                     response = std::move(response)]() mutable {
-                auto* input_context = context.get();
-                if (engine_alive.expired() || input_context == nullptr) return;
-                schedule_response(input_context, generation, std::move(response));
-            });
-        });
-}
-
-void ImeEngine::schedule_response(fcitx::InputContext* input_context, std::uint64_t generation,
-                                     protocol::Message response) {
-    StateScope state_scope(*this, input_context);
-    if (generation_ != generation || !prediction_pending_) return;
-
-    bool accepted = false;
-    if (const auto* prediction = std::get_if<protocol::Prediction>(&response)) {
-        accepted = inflight_request_id_ && *inflight_request_id_ == prediction->request_id &&
-                   inflight_revision_ == prediction->buffer_revision &&
-                   prediction->session_id == session_id_;
-        if (accepted && prediction->candidates.size() == prediction_segment_indices_.size() &&
-            prediction_key_ == buffer_.raw_composition() && prediction_revision_ == buffer_.revision()) {
-            for (std::size_t i = 0; i < prediction_segment_indices_.size(); ++i) {
-                const auto index = prediction_segment_indices_[i];
-                if (index < buffer_.segments().size()) {
-                    const auto& segment = buffer_.segments()[index];
-                    (void)buffer_.set_segment_candidates(
-                        index, fallback_.append_alternative_candidates(segment, prediction->candidates[i]),
-                        !segment.phrase_override_chosen);
-                }
-            }
-        } else if (accepted) {
-            for (const auto index : prediction_segment_indices_) apply_fallback_candidates(index);
-        }
-    } else if (const auto* error = std::get_if<protocol::Error>(&response)) {
-        accepted = !inflight_request_id_ || error->request_id == 0 || error->request_id == *inflight_request_id_;
-        if (accepted) {
-            if (error->code == protocol::ErrorCode::UnknownSession) session_id_ = {};
-            for (const auto index : prediction_segment_indices_) apply_fallback_candidates(index);
-        }
-    }
-    if (!accepted) return;
-
-    apply_phrase_override();
-
-    const bool dirty = prediction_dirty_;
-    prediction_pending_ = false;
-    prediction_dirty_ = false;
-    inflight_request_id_.reset();
-    inflight_revision_ = 0;
-    prediction_segment_indices_.clear();
-    if (dirty) request_prediction_if_ready(input_context);
-    update_ui(input_context);
-}
-
-bool ImeEngine::poll_prediction(fcitx::InputContext* input_context) {
-    (void)input_context;
-    return false;
-}
-
-std::vector<char32_t> ImeEngine::available_candidates() const {
-    const auto target = current_candidate_target();
-    if (!target) return {};
-
-    const auto* candidates = buffer_.segment_candidates(*target);
-    if (candidates == nullptr) return {};
-    return *candidates;
-}
-
-CandidateTarget ImeEngine::candidate_target_mode() const {
-    return config_.select_phrase == "after_cursor" ? CandidateTarget::AfterCursor : CandidateTarget::BeforeCursor;
-}
-
-std::optional<size_t> ImeEngine::current_candidate_target() const {
-    if (const auto target = buffer_.candidate_target(candidate_target_mode())) return target;
-
-    // The caret sits at a boundary where the configured side has no segment to
-    // select (e.g. position 0 with before-cursor selection). Fall back to the
-    // other side so the candidate list can still open and stay visible instead
-    // of disappearing (macOS frontend hides the panel when the list is empty).
-    const auto fallback = candidate_target_mode() == CandidateTarget::BeforeCursor
-                              ? CandidateTarget::AfterCursor
-                              : CandidateTarget::BeforeCursor;
-    return buffer_.candidate_target(fallback);
-}
-
-std::optional<int> ImeEngine::selection_index_for_key(fcitx::KeySym key) const {
-    const auto raw_key = static_cast<char32_t>(key);
-    const auto normalized_key = config_.caps_lock_inputs_bopomofo ? normalize_ascii_letter(raw_key) : raw_key;
-    const int count = std::min(config_.selection_key_count, static_cast<int>(config_.selection_keys.size()));
-    for (int i = 0; i < count; ++i) {
-        const auto selection_key =
-            static_cast<char32_t>(static_cast<unsigned char>(config_.selection_keys[static_cast<size_t>(i)]));
-        if (normalized_key == selection_key) return i;
-    }
-    return std::nullopt;
 }
 
 fcitx::KeyList ImeEngine::selection_key_list() const {

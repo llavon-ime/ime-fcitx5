@@ -83,6 +83,22 @@ void engine_test_smart_candidate(fcitx::Instance* instance) {
         FCITX_ASSERT(harness.preedit() == "你");
     });
 
+    // Space selects a mixed raw candidate without committing it. Return is
+    // the explicit mixed-candidate commit action.
+    instance->eventDispatcher().schedule([instance]() {
+        EngineHarness harness(instance);
+        harness.set_config("SmartEnglish", "True");
+        harness.type("hello_world283");
+        FCITX_ASSERT(harness.preedit() == "hello_world283");
+        harness.key(fcitx::Key(FcitxKey_Down));
+        FCITX_ASSERT(harness.has_candidates());
+        FCITX_ASSERT(harness.candidate(0) == "hello_world283");
+        harness.key(fcitx::Key(FcitxKey_space));
+        FCITX_ASSERT(!harness.has_candidates());
+        FCITX_ASSERT(harness.preedit() == "hello_world283");
+        harness.expect_commit("hello_world283");
+    });
+
     // 5. English after selecting a Chinese candidate: the digit selects the
     // candidate into the preedit, Return commits it, then the next pending
     // word types English.

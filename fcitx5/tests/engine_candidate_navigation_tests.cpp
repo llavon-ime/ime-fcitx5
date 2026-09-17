@@ -202,14 +202,14 @@ void engine_test_candidate_navigation_tests(fcitx::Instance* instance) {
         FCITX_ASSERT(harness.has_candidates());
 
         harness.settle_prediction();
-        FCITX_ASSERT(!harness.engine_state()->prediction_pending);
-        const size_t revision_before = harness.engine_state()->buffer.revision();
+        FCITX_ASSERT(!harness.engine_state()->session.prediction.pending);
+        const size_t revision_before = harness.engine_state()->session.buffer.revision();
 
         harness.key(fcitx::Key(FcitxKey_1));
         const auto* state = harness.engine_state();
-        FCITX_ASSERT(state->prediction_pending);
-        FCITX_ASSERT(state->prediction_revision == state->buffer.revision());
-        FCITX_ASSERT(state->prediction_revision > revision_before);
-        FCITX_ASSERT(state->prediction_key == state->buffer.raw_composition());
+        FCITX_ASSERT(state->session.prediction.pending);
+        FCITX_ASSERT(state->session.prediction.revision == state->session.buffer.revision());
+        FCITX_ASSERT(state->session.prediction.revision > revision_before);
+        FCITX_ASSERT(state->session.prediction.key == state->session.buffer.raw_composition());
     });
 }

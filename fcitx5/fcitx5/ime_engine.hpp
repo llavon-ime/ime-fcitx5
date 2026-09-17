@@ -6,20 +6,19 @@
 #include <fcitx/inputmethodengine.h>
 #include <fcitx/instance.h>
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
 
-#include "buffer/composition_buffer.hpp"
 #include "config/config.hpp"
 #include "engine/fallback_engine.hpp"
 #include "engine/service_transport.hpp"
 #include "fcitx5/ime_config.hpp"
 #include "fcitx5/input_context_property.hpp"
-#include "input/input_state.hpp"
-#include "input/mixed_input_decoder.hpp"
-#include "input/pending_token.hpp"
-#include "symbol/symbol_menu.hpp"
+#include "fcitx5/prediction_coordinator.hpp"
+#include "input/input_processor.hpp"
+#include "input/input_session.hpp"
 #include "phrase_override/phrase_override_store.hpp"
 
 namespace fcitx {
@@ -67,100 +66,40 @@ private:
     void apply_context_sources();
     void update_accessibility_status();
     void update_ui(fcitx::InputContext* input_context);
-    void commit_current(fcitx::InputContext* input_context);
-    bool handle_english_letter(fcitx::InputContext* input_context, char32_t letter, bool caps_on);
-    void commit_composition_with(fcitx::InputContext* input_context, char32_t extra);
-    std::u16string pending_rendered_text() const;
-    std::u16string current_preedit() const;
-    void append_pending_char(char32_t key, BopomofoKeyboardLayout layout);
-    void settle_pending_as_literals();
-    bool settle_pending_preview(fcitx::InputContext* input_context);
-    bool pending_prefers_raw() const;
-    bool is_smart_tone_key(char32_t key, BopomofoKeyboardLayout layout) const;
-    bool is_smart_start_char(char32_t key, BopomofoKeyboardLayout layout) const;
-    void rerun_pending_decision(fcitx::InputContext* input_context, bool space_triggered);
-    void set_mixed_preview(fcitx::InputContext* input_context, MixedDecodeResult result,
-                           size_t preview_path, bool english_boundary);
-    bool show_mixed_candidates(fcitx::InputContext* input_context);
-    bool commit_mixed_candidate(fcitx::InputContext* input_context, int index);
-    bool select_mixed_candidate(fcitx::InputContext* input_context, int index);
-    bool apply_mixed_path(fcitx::InputContext* input_context, const MixedPath& path, size_t char_index);
-    bool select_candidate(fcitx::InputContext* input_context, int index);
-    void open_symbol_menu(fcitx::InputContext* input_context);
-    void close_symbol_menu(fcitx::InputContext* input_context);
-    void handle_symbol_menu_key(fcitx::InputContext* input_context, fcitx::KeyEvent& event);
-    bool select_symbol(fcitx::InputContext* input_context, int index, std::uint64_t epoch);
-    bool handle_escape(fcitx::InputContext* input_context);
-    int candidate_page_size() const;
-    int candidate_page_offset() const;
-    bool page_candidates(int delta, bool preserve_cursor_offset = false);
-    bool transition_to(InputState state);
-    void reset_candidate_view();
-    void clamp_candidate_cursor();
-    bool move_candidate_cursor_in_page(int delta);
-    bool set_candidate_cursor(int index);
-    bool candidate_list_active() const;
-    bool composition_empty() const;
-    void record_context_commit(const fcitx::InputContext* input_context, const std::u16string& text);
-    std::vector<std::u16string> current_phrase_override_readings() const;
-    std::optional<std::u16string> matching_phrase_override() const;
-    std::u16string marking_hint_text() const;
-    void apply_phrase_override();
-    bool save_marked_phrase_override();
-    void refresh_phrase_override_editor() const;
-    void resync_context_cache(const fcitx::InputContext* input_context);
-    std::optional<std::u16string> strip_accessibility_preedit(const std::u16string& sample) const;
-    void mark_prediction_dirty();
-    void apply_fallback_candidates(size_t segment_index);
+
+    // Applies the frontend-visible parts of an input effect. Must be called
+    // with the input context entered.
+    void apply_effect(fcitx::InputContext* input_context, const InputEffect& effect);
+    // Enters the input context, runs an input operation on its session, and
+    // applies the effect.
+    void run_effect(fcitx::InputContext* input_context, const std::function<InputEffect()>& operation);
+
     void request_prediction_if_ready(fcitx::InputContext* input_context);
-    protocol::PredictRequest build_predict_request(const fcitx::InputContext* input_context) const;
-    void send_prediction(fcitx::InputContext* input_context, std::uint64_t generation);
-    void schedule_response(fcitx::InputContext* input_context, std::uint64_t generation, protocol::Message response);
-    bool poll_prediction(fcitx::InputContext* input_context);
-    std::vector<char32_t> available_candidates() const;
-    CandidateTarget candidate_target_mode() const;
-    std::optional<size_t> current_candidate_target() const;
-    std::optional<int> selection_index_for_key(fcitx::KeySym key) const;
+    void record_context_commit(const fcitx::InputContext* input_context, const std::u16string& text);
+    void resync_context_cache(fcitx::InputContext* input_context, InputSession& session);
     fcitx::KeyList selection_key_list() const;
     fcitx::CandidateLayoutHint candidate_layout_hint() const;
+    void refresh_phrase_override_editor() const;
 
-    CompositionBuffer buffer_;
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
+    InputSession session_;
     FallbackEngine fallback_;
     MixedInputDecoder decoder_;
     PhraseOverrideStore phrase_overrides_;
+    InputProcessor processor_;
     ServiceTransport service_transport_;
+    PredictionCoordinator coordinator_;
     ImeFcitxConfig fcitx_config_;
     // Refreshed in place so a pointer handed to a config frontend stays valid.
     mutable PhraseOverrideEditorConfig phrase_override_editor_;
     Config config_;
-    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     fcitx::Instance* instance_ = nullptr;
     fcitx::EventDispatcher* event_dispatcher_ = nullptr;
-    bool prediction_pending_ = false;
-    bool prediction_dirty_ = false;
-    std::u16string prediction_key_;
-    size_t prediction_revision_ = 0;
-    std::vector<size_t> prediction_segment_indices_;
-    std::vector<std::u16string> displayed_candidates_;
-    int candidate_page_ = 0;
-    int candidate_cursor_ = 0;
-    bool candidate_expanded_ = false;
-    InputState input_state_ = InputState::Empty;
-    SymbolMenuState symbol_menu_;
-    PendingInput pending_token_;
-    MixedDecisionState mixed_decision_;
-    ContextCache context_cache_;
-    bool client_surrounding_authoritative_ = false;
     std::unique_ptr<AccessibilityContextProvider> accessibility_context_;
     std::uint64_t accessibility_base_sequence_ = 0;
     std::uint64_t accessibility_composition_base_ = 0;
     std::size_t accessibility_max_code_units_ = 0;
 
-    protocol::SessionId session_id_{};
-    std::uint64_t next_request_id_ = 1;
-    std::uint64_t generation_ = 0;
-    std::optional<std::uint64_t> inflight_request_id_;
-    std::uint64_t inflight_revision_ = 0;
     fcitx::InputContext* active_input_context_ = nullptr;
     std::size_t state_scope_depth_ = 0;
     ImeInputContextPropertyFactory property_factory_;

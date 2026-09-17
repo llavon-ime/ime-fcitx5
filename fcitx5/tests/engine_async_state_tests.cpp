@@ -8,15 +8,18 @@ void engine_test_async_state_tests(fcitx::Instance* instance) {
         ime::fcitx5::ImeInputContextProperty first;
         ime::fcitx5::ImeInputContextProperty second;
 
-        first.prediction_revision = 7;
-        second.prediction_revision = 19;
-        FCITX_ASSERT(first.prediction_revision == 7);
-        FCITX_ASSERT(second.prediction_revision == 19);
+        first.session.prediction.revision = 7;
+        second.session.prediction.revision = 19;
+        FCITX_ASSERT(first.session.prediction.revision == 7);
+        FCITX_ASSERT(second.session.prediction.revision == 19);
 
-        bool dirty = false;
-        FCITX_ASSERT(ime::fcitx5::prediction_change_requires_request(false, dirty));
-        FCITX_ASSERT(!dirty);
-        FCITX_ASSERT(!ime::fcitx5::prediction_change_requires_request(true, dirty));
-        FCITX_ASSERT(dirty);
+        // Dirty marking only applies while a request is in flight, and each
+        // input context owns its own prediction state.
+        first.session.prediction.mark_dirty();
+        FCITX_ASSERT(!first.session.prediction.dirty);
+        (void)first.session.prediction.begin({0}, u"key", 1);
+        first.session.prediction.mark_dirty();
+        FCITX_ASSERT(first.session.prediction.dirty);
+        FCITX_ASSERT(!second.session.prediction.dirty);
     });
 }

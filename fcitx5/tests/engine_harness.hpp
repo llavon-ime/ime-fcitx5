@@ -33,16 +33,22 @@ public:
     // leftover composition so the engine's focus-out switch does not commit it
     // unexpectedly (each scenario must still commit or clear its own text).
     ~EngineHarness() {
-        if (auto* context = input_context()) context->reset();
+        if (auto* context = input_context()) {
+            context->reset();
+            testfrontend_->call<fcitx::ITestFrontend::destroyInputContext>(uuid_);
+        }
     }
 
     // Switches the input context to llavon-ime (trigger key cycles the group).
     void activate() {
-        if (instance_->inputMethod(input_context()) == "llavon-ime") return;
-        key(fcitx::Key("Control+space"));
-        if (instance_->inputMethod(input_context()) != "llavon-ime") {
+        auto* context = input_context();
+        if (instance_->inputMethod(context) != "llavon-ime") {
             key(fcitx::Key("Control+space"));
+            if (instance_->inputMethod(context) != "llavon-ime") {
+                key(fcitx::Key("Control+space"));
+            }
         }
+        if (!context->hasFocus()) context->focusIn();
     }
 
     // Applies addon config values together. Addon setConfig() treats a partial
@@ -143,7 +149,7 @@ public:
     // consumed) so tests can observe which state changes must issue a fresh
     // request. Bumps the generation so late responses are ignored.
     void settle_prediction() {
-        if (auto* state = engine_state()) state->invalidate_generation();
+        if (auto* state = engine_state()) state->session.prediction.invalidate();
     }
 
     fcitx::Instance* instance() const { return instance_; }

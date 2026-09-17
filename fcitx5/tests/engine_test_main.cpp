@@ -19,6 +19,7 @@ void engine_test_shift_letter_tests(fcitx::Instance* instance);
 void engine_test_context_cache(fcitx::Instance* instance);
 void engine_test_context_source(fcitx::Instance* instance);
 void engine_test_async_state_tests(fcitx::Instance* instance);
+void engine_test_lifecycle(fcitx::Instance* instance);
 void engine_test_smart_candidate(fcitx::Instance* instance);
 void engine_test_smart_chat(fcitx::Instance* instance);
 void engine_test_smart_config(fcitx::Instance* instance);
@@ -39,10 +40,12 @@ int main() {
     // never read or overwrite the user's real ~/.config/fcitx5 configuration.
     // Must be set before the testing environment initializes StandardPath.
     const auto config_home = std::filesystem::path(TESTING_BINARY_DIR) / "test-config";
+    std::filesystem::remove_all(config_home);
     std::filesystem::create_directories(config_home / "conf");
     std::filesystem::create_directories(config_home / "fcitx5" / "conf");
     setenv("FCITX_CONFIG_HOME", config_home.c_str(), 1);
     setenv("XDG_CONFIG_HOME", config_home.c_str(), 1);
+    setenv("IME_FCITX5_TABLE_PATH", TESTING_TABLE_PATH, 1);
 
     // Back the accessibility context source with a file instead of the
     // desktop accessibility bus so tests never depend on a running desktop.
@@ -81,6 +84,7 @@ int main() {
     engine_test_context_cache(&instance);
     engine_test_context_source(&instance);
     engine_test_async_state_tests(&instance);
+    engine_test_lifecycle(&instance);
     engine_test_smart_candidate(&instance);
     engine_test_smart_chat(&instance);
     engine_test_smart_config(&instance);

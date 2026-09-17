@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <mutex>
 #include <thread>
+#include <unistd.h>
 
 namespace {
 
@@ -27,7 +28,8 @@ ime::fcitx5::protocol::ByteVector receive_frame(const ime::fcitx5::UnixSocketCon
 
 int run_service_transport_tests() {
     using namespace ime::fcitx5;
-    const auto socket_path = std::filesystem::temp_directory_path() / "llavon-ime-transport-test.sock";
+    const auto socket_path = std::filesystem::temp_directory_path() /
+                             ("llavon-ime-transport-test-" + std::to_string(getpid()) + ".sock");
     std::error_code error;
     std::filesystem::remove(socket_path, error);
     UnixSocketServer server;
@@ -108,6 +110,74 @@ int run_service_transport_tests() {
     transport.stop();
     server_thread.join();
     if (!server_ok || !std::holds_alternative<protocol::Prediction>(responses.back())) return EXIT_FAILURE;
+
+    // stop() may race with the initial status handshake. Once stopping is set,
+    // the worker must not publish the newly connected socket and block waiting
+    // for an open-session response.
+    const auto delayed_path = std::filesystem::temp_directory_path() /
+                              ("llavon-ime-transport-stop-test-" + std::to_string(getpid()) + ".sock");
+    std::filesystem::remove(delayed_path, error);
+    UnixSocketServer delayed_server;
+    delayed_server.bind_listen(delayed_path);
+    std::mutex delayed_mutex;
+    std::condition_variable delayed_condition;
+    bool status_received = false;
+    bool release_status = false;
+    bool open_seen = false;
+    bool shutdown_callback = false;
+    std::thread delayed_server_thread([&]() {
+        try {
+            auto connection = delayed_server.accept_one();
+            const auto status_message = protocol::decode(receive_frame(connection));
+            if (!std::holds_alternative<protocol::StatusRequest>(status_message)) server_ok = false;
+            {
+                std::unique_lock lock(delayed_mutex);
+                status_received = true;
+                delayed_condition.notify_one();
+                delayed_condition.wait(lock, [&]() { return release_status; });
+            }
+            connection.send_all(protocol::encode(
+                protocol::Message{protocol::StatusResponse{epoch, false, false, 0, 8, std::nullopt}}));
+            try {
+                const auto next = protocol::decode(receive_frame(connection));
+                open_seen = std::holds_alternative<protocol::OpenSessionRequest>(next);
+            } catch (...) {
+                // The fixed worker closes immediately after the handshake.
+            }
+        } catch (...) {
+            server_ok = false;
+        }
+    });
+
+    ServiceTransportOptions delayed_options;
+    delayed_options.socket_path = delayed_path;
+    delayed_options.auto_start = false;
+    ServiceTransport delayed_transport(delayed_options);
+    delayed_transport.open_session([&](protocol::Message response) {
+        const auto* value = std::get_if<protocol::Error>(&response);
+        shutdown_callback = value != nullptr && value->code == protocol::ErrorCode::ServiceShuttingDown;
+    });
+    {
+        std::unique_lock lock(delayed_mutex);
+        if (!delayed_condition.wait_for(lock, std::chrono::seconds(2), [&]() { return status_received; })) {
+            delayed_transport.stop();
+            delayed_server_thread.join();
+            return EXIT_FAILURE;
+        }
+    }
+    std::thread release_thread([&]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        {
+            std::lock_guard lock(delayed_mutex);
+            release_status = true;
+        }
+        delayed_condition.notify_one();
+    });
+    delayed_transport.stop();
+    release_thread.join();
+    delayed_server_thread.join();
+    std::filesystem::remove(delayed_path, error);
+    if (open_seen || !shutdown_callback) return EXIT_FAILURE;
     return EXIT_SUCCESS;
 }
 

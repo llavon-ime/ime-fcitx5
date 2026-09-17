@@ -11,7 +11,7 @@ using namespace ime::fcitx5::test;
 namespace {
 
 void seed_cache(EngineHarness& harness, std::u16string text) {
-    harness.engine_state()->context_cache.on_commit(std::move(text));
+    harness.engine_state()->session.context_cache.on_commit(std::move(text));
 }
 
 }  // namespace
@@ -29,7 +29,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.type("cl3");
         harness.expect_commit("好");
         FCITX_ASSERT(harness.engine_state() != nullptr);
-        const auto cache = harness.engine_state()->context_cache;
+        const auto cache = harness.engine_state()->session.context_cache;
         FCITX_ASSERT(cache.valid());
         FCITX_ASSERT(cache.window(100) == std::u16string(u"你好"));
     });
@@ -42,7 +42,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
             harness.type("su3");
             harness.expect_commit("你");
         }
-        const auto cache = harness.engine_state()->context_cache;
+        const auto cache = harness.engine_state()->session.context_cache;
         FCITX_ASSERT(cache.window(10000).size() == 30);
     });
 
@@ -57,7 +57,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         // A completed syllable triggers a prediction request, which resyncs
         // the cache against the surrounding text first.
         harness.type("su3");
-        const auto cache = harness.engine_state()->context_cache;
+        const auto cache = harness.engine_state()->session.context_cache;
         FCITX_ASSERT(cache.window(100) == std::u16string(u"hello world 你"));
     });
 
@@ -70,7 +70,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.expect_commit("你");
         harness.set_surrounding("completely different", 10, 10);
         harness.type("su3");
-        const auto cache = harness.engine_state()->context_cache;
+        const auto cache = harness.engine_state()->session.context_cache;
         FCITX_ASSERT(cache.window(100) == std::u16string(u"completely"));
     });
 
@@ -82,12 +82,12 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         for (const auto& endpoints : {std::pair<size_t, size_t>{3, 5}, {5, 3}}) {
             harness.set_surrounding("a\xF0\x9F\x98\x80" "bcd", endpoints.first, endpoints.second);
             harness.type("su3");
-            FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"a\U0001F600b");
+            FCITX_ASSERT(harness.engine_state()->session.context_cache.window(100) == u"a\U0001F600b");
             harness.input_context()->reset();
         }
         harness.set_config("ContextHistoryLimit", "0");
         harness.type("su3");
-        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"b");
+        FCITX_ASSERT(harness.engine_state()->session.context_cache.window(100) == u"b");
         harness.set_configs({{"ContextHistoryLimit", "1024"}, {"ContextLength", "512"}});
     });
 
@@ -98,7 +98,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.type("su3");
         harness.expect_commit("你");
         harness.input_context()->reset();
-        const auto cache = harness.engine_state()->context_cache;
+        const auto cache = harness.engine_state()->session.context_cache;
         FCITX_ASSERT(cache.valid());
         FCITX_ASSERT(cache.window(100) == std::u16string(u"你"));
     });
@@ -109,7 +109,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.set_config("ResetContextOnFocusOut", "True");
         seed_cache(harness, u"你");
         harness.input_context()->focusOut();
-        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+        FCITX_ASSERT(!harness.engine_state()->session.context_cache.valid());
     });
 
     // The explicit opt-out preserves history across FocusOut.
@@ -118,7 +118,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.set_config("ResetContextOnFocusOut", "False");
         seed_cache(harness, u"你");
         harness.input_context()->focusOut();
-        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == std::u16string(u"你"));
+        FCITX_ASSERT(harness.engine_state()->session.context_cache.window(100) == std::u16string(u"你"));
         harness.set_config("ResetContextOnFocusOut", "True");
     });
 
@@ -132,7 +132,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         auto capabilities = context->capabilityFlags();
         capabilities |= fcitx::CapabilityFlag::PasswordOrSensitive;
         context->setCapabilityFlags(capabilities);
-        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+        FCITX_ASSERT(!harness.engine_state()->session.context_cache.valid());
     });
 
     // Disabling self-managed history still permits client surrounding text.
@@ -141,11 +141,11 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.set_configs({{"SmartEnglish", "False"}, {"ContextHistoryLimit", "0"}});
         harness.type("su3");
         harness.expect_commit("你");
-        const auto cache = harness.engine_state()->context_cache;
+        const auto cache = harness.engine_state()->session.context_cache;
         FCITX_ASSERT(!cache.valid());
         harness.set_surrounding("hello", 5, 5);
         harness.type("su3");
-        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == std::u16string(u"hello"));
+        FCITX_ASSERT(harness.engine_state()->session.context_cache.window(100) == std::u16string(u"hello"));
         harness.set_config("ContextHistoryLimit", "1024");
     });
 
@@ -158,15 +158,15 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.input_context()->focusOut();
         EngineHarness active(instance);
         active.set_config("ContextHistoryLimit", "3");
-        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"ret");
+        FCITX_ASSERT(harness.engine_state()->session.context_cache.window(100) == u"ret");
         active.set_config("ContextHistoryLimit", "0");
-        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
-        harness.engine_state()->context_cache.on_surrounding(u"abcdef", 6);
+        FCITX_ASSERT(!harness.engine_state()->session.context_cache.valid());
+        harness.engine_state()->session.context_cache.on_surrounding(u"abcdef", 6);
         active.set_config("ContextLength", "2");
-        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"ef");
+        FCITX_ASSERT(harness.engine_state()->session.context_cache.window(100) == u"ef");
         active.set_configs({{"ContextHistoryLimit", "1024"}, {"ContextLength", "512"},
                             {"ResetContextOnFocusOut", "True"}});
-        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"ef");
+        FCITX_ASSERT(harness.engine_state()->session.context_cache.window(100) == u"ef");
     });
 
     // Modified Backspace can delete more than one character and invalidates.
@@ -174,21 +174,21 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         EngineHarness harness(instance);
         seed_cache(harness, u"你好");
         harness.key(fcitx::Key(FcitxKey_BackSpace, fcitx::KeyState::Ctrl));
-        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+        FCITX_ASSERT(!harness.engine_state()->session.context_cache.valid());
     });
 
     instance->eventDispatcher().schedule([instance]() {
         EngineHarness harness(instance);
         seed_cache(harness, u"你好");
         harness.key(fcitx::Key(FcitxKey_BackSpace, fcitx::KeyState::Alt));
-        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+        FCITX_ASSERT(!harness.engine_state()->session.context_cache.valid());
     });
 
     instance->eventDispatcher().schedule([instance]() {
         EngineHarness harness(instance);
         seed_cache(harness, u"你好");
         harness.key(fcitx::Key(FcitxKey_Delete));
-        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+        FCITX_ASSERT(!harness.engine_state()->session.context_cache.valid());
     });
 
     // With edit tracking on by default, a Backspace outside the composition
@@ -201,7 +201,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.type("cl3");
         harness.expect_commit("好");
         harness.key(fcitx::Key(FcitxKey_BackSpace));
-        const auto cache = harness.engine_state()->context_cache;
+        const auto cache = harness.engine_state()->session.context_cache;
         FCITX_ASSERT(!cache.valid());
         FCITX_ASSERT(cache.window(100).empty());
     });
@@ -215,7 +215,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.type("cl3");
         harness.expect_commit("好");
         harness.key(fcitx::Key(FcitxKey_BackSpace, fcitx::KeyState::Shift));
-        const auto cache = harness.engine_state()->context_cache;
+        const auto cache = harness.engine_state()->session.context_cache;
         FCITX_ASSERT(!cache.valid());
     });
 
@@ -224,12 +224,12 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         for (const auto* text : {u"prefix e\u0301", u"prefix \U0001F469\u200D\U0001F4BB"}) {
             seed_cache(harness, text);
             FCITX_ASSERT(!harness.key_accepted(fcitx::Key(FcitxKey_BackSpace)));
-            FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+            FCITX_ASSERT(!harness.engine_state()->session.context_cache.valid());
         }
         harness.set_surrounding("selected text", 0, 8);
         seed_cache(harness, u"selected text");
         FCITX_ASSERT(!harness.key_accepted(fcitx::Key(FcitxKey_BackSpace)));
-        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+        FCITX_ASSERT(!harness.engine_state()->session.context_cache.valid());
     });
 
     instance->eventDispatcher().schedule([instance]() {
@@ -238,7 +238,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         seed_cache(harness, u"prefix");
         harness.type("s");
         FCITX_ASSERT(harness.key_accepted(fcitx::Key(FcitxKey_BackSpace)));
-        FCITX_ASSERT(harness.engine_state()->context_cache.window(100) == u"prefix");
+        FCITX_ASSERT(harness.engine_state()->session.context_cache.window(100) == u"prefix");
     });
 
     // A caret jump (Up/Down/Home/End/Page) with an empty composition clears
@@ -251,7 +251,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.type("cl3");
         harness.expect_commit("好");
         harness.key(fcitx::Key(FcitxKey_Up));
-        const auto cache = harness.engine_state()->context_cache;
+        const auto cache = harness.engine_state()->session.context_cache;
         FCITX_ASSERT(!cache.valid());
         FCITX_ASSERT(cache.window(100).empty());
     });
@@ -263,7 +263,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.type("su3");
         harness.expect_commit("你");
         harness.key(fcitx::Key(FcitxKey_z, fcitx::KeyState::Ctrl));
-        const auto cache = harness.engine_state()->context_cache;
+        const auto cache = harness.engine_state()->session.context_cache;
         FCITX_ASSERT(!cache.valid());
     });
 
@@ -274,7 +274,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.type("su3");
         harness.expect_commit("你");
         harness.key(fcitx::Key(FcitxKey_Left));
-        const auto cache = harness.engine_state()->context_cache;
+        const auto cache = harness.engine_state()->session.context_cache;
         FCITX_ASSERT(!cache.valid());
     });
 
@@ -283,7 +283,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         EngineHarness harness(instance);
         seed_cache(harness, u"你");
         harness.key(fcitx::Key(FcitxKey_v, fcitx::KeyState::Ctrl));
-        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+        FCITX_ASSERT(!harness.engine_state()->session.context_cache.valid());
     });
 
     // Pass-through edits under CapsLock and Shift+Space invalidate history
@@ -293,21 +293,21 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.set_config("CapsLockInputsBopomofo", "False");
         seed_cache(harness, u"你");
         harness.key(fcitx::Key(FcitxKey_A, fcitx::KeyState::CapsLock));
-        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+        FCITX_ASSERT(!harness.engine_state()->session.context_cache.valid());
     });
 
     instance->eventDispatcher().schedule([instance]() {
         EngineHarness harness(instance);
         seed_cache(harness, u"你");
         harness.key(fcitx::Key("Shift+space"));
-        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+        FCITX_ASSERT(!harness.engine_state()->session.context_cache.valid());
     });
 
     instance->eventDispatcher().schedule([instance]() {
         EngineHarness harness(instance);
         seed_cache(harness, u"你");
         harness.key(fcitx::Key(FcitxKey_Insert, fcitx::KeyState::Shift));
-        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+        FCITX_ASSERT(!harness.engine_state()->session.context_cache.valid());
     });
 
     // macOS Command is delivered as a Super/Meta-style modifier rather than
@@ -316,10 +316,10 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         EngineHarness harness(instance);
         seed_cache(harness, u"你");
         harness.key(fcitx::Key(FcitxKey_v, fcitx::KeyState::Super));
-        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+        FCITX_ASSERT(!harness.engine_state()->session.context_cache.valid());
         seed_cache(harness, u"prefix");
         harness.key(fcitx::Key(FcitxKey_v, fcitx::KeyState::Meta));
-        FCITX_ASSERT(!harness.engine_state()->context_cache.valid());
+        FCITX_ASSERT(!harness.engine_state()->session.context_cache.valid());
     });
 
     // Navigation inside a non-empty composition must NOT clear the cache
@@ -331,7 +331,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.expect_commit("你");
         harness.type("cl3");
         harness.key(fcitx::Key(FcitxKey_Up));
-        const auto cache = harness.engine_state()->context_cache;
+        const auto cache = harness.engine_state()->session.context_cache;
         FCITX_ASSERT(cache.valid());
         FCITX_ASSERT(cache.window(100) == std::u16string(u"你"));
     });
@@ -346,7 +346,7 @@ void engine_test_context_cache(fcitx::Instance* instance) {
         harness.expect_commit("好");
         harness.type("ji3");
         harness.expect_commit("我");
-        const auto cache = harness.engine_state()->context_cache;
+        const auto cache = harness.engine_state()->session.context_cache;
         FCITX_ASSERT(cache.valid());
         FCITX_ASSERT(cache.window(100) == std::u16string(u"好我"));
     });
