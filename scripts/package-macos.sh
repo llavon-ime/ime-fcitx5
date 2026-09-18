@@ -13,6 +13,8 @@ PKGROOT="${DIST_DIR}/pkgroot"
 PKG_IDENTIFIER="${IME_FCITX5_PKG_IDENTIFIER:-llavon-ime}"
 VCPKG_FEATURES="${IME_FCITX5_VCPKG_FEATURES:-llama-metal}"
 FCITX5_MACOS_SOURCE_DIR="${FCITX5_MACOS_SOURCE_DIR:-${1:-}}"
+FCITX5_MACOS_VERSION="${FCITX5_MACOS_VERSION:-0.3.7}"
+FCITX5_MACOS_RUNTIME_TARBALL="${FCITX5_MACOS_RUNTIME_TARBALL:-}"
 MODEL_PATH="${IME_FCITX5_PACKAGE_MODEL_PATH:-}"
 MODEL_INSTALL_DIR="/Library/Application Support/llavon-ime/models"
 MODEL_INSTALL_PATH=""
@@ -79,6 +81,22 @@ fi
 
 MODEL_INSTALL_PATH="${MODEL_INSTALL_DIR}/$(basename "${MODEL_PATH}")"
 
+if [[ -z "${FCITX5_MACOS_RUNTIME_TARBALL}" ]]; then
+    runtime_cache_dir="${ROOT_DIR}/build/macos-runtime"
+    mkdir -p "${runtime_cache_dir}"
+    FCITX5_MACOS_RUNTIME_TARBALL="${runtime_cache_dir}/Fcitx5-${ARCH}.tar.bz2"
+    if [[ ! -f "${FCITX5_MACOS_RUNTIME_TARBALL}" ]]; then
+        curl --fail --location --retry 3 \
+            -o "${FCITX5_MACOS_RUNTIME_TARBALL}" \
+            "https://github.com/fcitx/fcitx5-macos/releases/download/${FCITX5_MACOS_VERSION}/Fcitx5-${ARCH}.tar.bz2"
+    fi
+fi
+
+if [[ ! -f "${FCITX5_MACOS_RUNTIME_TARBALL}" ]]; then
+    echo "Fcitx5 runtime tarball not found: ${FCITX5_MACOS_RUNTIME_TARBALL}" >&2
+    exit 2
+fi
+
 rm -rf "${PKGROOT}"
 mkdir -p "${PKGROOT}" "${DIST_DIR}"
 
@@ -132,10 +150,28 @@ cmake \
     -DPROJECT_ROOT="${ROOT_DIR}" \
     -P "${ROOT_DIR}/scripts/install-licenses.cmake"
 
+# Bundle the fcitx5-macos runtime so a single install provides Fcitx5 and
+# the addon, and add the helper used to register the input source.
+runtime_root="${PKGROOT}/Library/Input Methods"
+mkdir -p "${runtime_root}"
+tar -xjf "${FCITX5_MACOS_RUNTIME_TARBALL}" -C "${runtime_root}"
+if [[ ! -d "${runtime_root}/Fcitx5.app" ]]; then
+    echo "Fcitx5.app was not found in ${FCITX5_MACOS_RUNTIME_TARBALL}" >&2
+    exit 1
+fi
+
+tool_root="${PKGROOT}/Library/Application Support/llavon-ime/tools"
+mkdir -p "${tool_root}"
+xcrun clang -O2 -Wall -Wextra -framework Carbon \
+    -o "${tool_root}/llavon-ime-tis" \
+    "${ROOT_DIR}/packaging/macos/tools/tis.c"
+
 if command -v xattr >/dev/null 2>&1; then
     xattr -cr "${PKGROOT}" || true
 fi
 find "${PKGROOT}" -name '._*' -delete
+
+codesign --force --deep --sign - "${runtime_root}/Fcitx5.app"
 
 # Keep the plugin descriptor's file list in sync with the payload so
 # fcitx5-macos can uninstall every installed file.
@@ -181,6 +217,8 @@ required_files=(
     "${license_root}/mcbopomofo-symbols/NOTICE"
     "${payload_root}/plugin/llavon-ime.json"
     "${PKGROOT}${MODEL_INSTALL_PATH}"
+    "${runtime_root}/Fcitx5.app/Contents/lib/libFcitx5Core.dylib"
+    "${tool_root}/llavon-ime-tis"
 )
 
 for file in "${required_files[@]}"; do
