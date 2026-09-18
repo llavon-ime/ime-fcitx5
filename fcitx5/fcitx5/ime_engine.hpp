@@ -62,7 +62,6 @@ private:
     void enter_context(fcitx::InputContext* input_context);
     void leave_context();
     void reload_config();
-    void apply_context_cache_limits();
     void apply_context_sources();
     void update_accessibility_status();
     void update_ui(fcitx::InputContext* input_context);
@@ -75,8 +74,7 @@ private:
     void run_effect(fcitx::InputContext* input_context, const std::function<InputEffect()>& operation);
 
     void request_prediction_if_ready(fcitx::InputContext* input_context);
-    void record_context_commit(const fcitx::InputContext* input_context, const std::u16string& text);
-    void resync_context_cache(fcitx::InputContext* input_context, InputSession& session);
+    void resync_context(fcitx::InputContext* input_context, InputSession& session);
     fcitx::KeyList selection_key_list() const;
     fcitx::CandidateLayoutHint candidate_layout_hint() const;
     void refresh_phrase_override_editor() const;

@@ -14,7 +14,6 @@ set(IME_FCITX5_TEST_SOURCES
     prediction_state_tests.cpp
     symbol_menu_tests.cpp
     ascii_tokenizer_tests.cpp
-    context_cache_tests.cpp
     caret_prefix_sampler_tests.cpp
     sample_adoption_tests.cpp
     accessibility_context_tests.cpp
@@ -111,7 +110,6 @@ if(Fcitx5_FOUND AND NOT WIN32)
             engine_candidate_navigation_tests.cpp
             engine_punctuation_tests.cpp
             engine_shift_letter_tests.cpp
-            engine_context_cache_tests.cpp
             engine_context_source_tests.cpp
             engine_async_state_tests.cpp
             engine_lifecycle_tests.cpp

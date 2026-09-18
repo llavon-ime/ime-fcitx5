@@ -6,7 +6,6 @@
 #include <vector>
 
 #include "buffer/composition_buffer.hpp"
-#include "context/context_cache.hpp"
 #include "input/candidate_view.hpp"
 #include "input/input_state.hpp"
 #include "input/mixed_input_decoder.hpp"
@@ -49,8 +48,9 @@ struct InputSession {
     SymbolMenuState symbol_menu;
     PendingInput pending_token;
     MixedDecisionState mixed_decision;
-    ContextCache context_cache;
-    bool client_surrounding_authoritative = false;
+    // Text before the caret as read from the current prediction source for the
+    // pending request. Never accumulated by this IME.
+    std::u16string context_text;
 
     PredictionState prediction;
 

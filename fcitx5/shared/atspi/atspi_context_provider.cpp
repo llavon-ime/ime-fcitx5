@@ -29,8 +29,9 @@ namespace ime::fcitx5 {
 
 // libatspi is optional at runtime: it is loaded with dlopen so the addon still
 // loads on systems without at-spi2-core. When the library is missing the
-// provider reports itself unavailable and the engine keeps using the commit
-// cache. IME_FCITX5_ATSPI_LIBRARY overrides the library name for tests.
+// provider reports itself unavailable and the engine simply has no
+// accessibility context. IME_FCITX5_ATSPI_LIBRARY overrides the library name
+// for tests.
 struct AtspiLibrary {
     using Init = void (*)();
     using IsInitialized = gboolean (*)();

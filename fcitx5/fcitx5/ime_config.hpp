@@ -94,14 +94,7 @@ FCITX_CONFIGURATION(ImeFcitxConfig,
                                                     ShiftLetterKeys::DirectlyOutputUppercase};
     fcitx::Option<bool> smartEnglish{this, "SmartEnglish", "智慧型中英文", default_config().smart_english};
     fcitx::SubConfigOption phraseOverrides{this, "PhraseOverrides", "管理強制替代詞彙",
-                                           "fcitx://config/addon/llavon-ime/phraseoverrides"};
-    fcitx::Option<int, fcitx::IntConstrain> contextHistoryLimit{this, "ContextHistoryLimit", "上下文歷史長度",
-                                                                 default_config().context_history_limit,
-                                                                 fcitx::IntConstrain(0, 1048576)};
-    fcitx::Option<bool> resetContextOnFocusOut{this, "ResetContextOnFocusOut", "失焦時清除上下文",
-                                               default_config().reset_context_on_focus_out};
-    fcitx::Option<bool> contextEditTracking{this, "ContextEditTracking", "追蹤編輯以更新上下文",
-                                             default_config().context_edit_tracking};
+                                            "fcitx://config/addon/llavon-ime/phraseoverrides"};
     fcitx::Option<std::string, fcitx::NoConstrain<std::string>, fcitx::DefaultMarshaller<std::string>,
                   fcitx::ToolTipAnnotation>
         accessibilityStatus{this,

@@ -16,7 +16,6 @@ void engine_test_symbol_menu_tests(fcitx::Instance* instance);
 void engine_test_candidate_navigation_tests(fcitx::Instance* instance);
 void engine_test_punctuation_tests(fcitx::Instance* instance);
 void engine_test_shift_letter_tests(fcitx::Instance* instance);
-void engine_test_context_cache(fcitx::Instance* instance);
 void engine_test_context_source(fcitx::Instance* instance);
 void engine_test_async_state_tests(fcitx::Instance* instance);
 void engine_test_lifecycle(fcitx::Instance* instance);
@@ -92,7 +91,6 @@ int main() {
     engine_test_candidate_navigation_tests(&instance);
     engine_test_punctuation_tests(&instance);
     engine_test_shift_letter_tests(&instance);
-    engine_test_context_cache(&instance);
     engine_test_context_source(&instance);
     engine_test_async_state_tests(&instance);
     engine_test_lifecycle(&instance);

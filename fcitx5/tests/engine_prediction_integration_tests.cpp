@@ -72,7 +72,7 @@ int main() {
 
             const auto predict_message = protocol::decode(receive_frame(connection));
             const auto* predict = std::get_if<protocol::PredictRequest>(&predict_message);
-            if (predict == nullptr || predict->padding.size() != 1) {
+            if (predict == nullptr || predict->padding.size() != 1 || predict->context != u"history") {
                 server_ok = false;
                 return;
             }
@@ -127,6 +127,7 @@ int main() {
         instance.eventDispatcher().schedule([&]() {
             harness = std::make_shared<EngineHarness>(&instance);
             harness->set_config("SmartEnglish", "False");
+            harness->set_surrounding("history", 7, 7);
             harness->type("su3");
         });
 
