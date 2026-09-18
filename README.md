@@ -38,7 +38,8 @@ Ubuntu 26.04）。
 `llavon-ime-installer-<版本>-arm64.zip`（Release 頁面若尚無 installer 檔案，
 請改用下方 `.pkg` 或原始碼建置），解壓縮後執行 `Fcitx5Installer.app`。
 安裝程式會一併安裝小企鵝輸入法（Fcitx5）、拉風輸入法與模型，並自動啟用輸入法
-及加入 macOS 輸入來源。首次開啟若被 Gatekeeper 阻擋，請對 `Fcitx5Installer.app`
+及加入 macOS 輸入來源。首次安裝需登出再登入（或重開機），候選窗才能在全螢幕
+應用程式中顯示。首次開啟若被 Gatekeeper 阻擋，請對 `Fcitx5Installer.app`
 按右鍵選擇「打開」，或執行
 `xattr -dr com.apple.quarantine <解壓後的 Fcitx5Installer.app>`。
 
