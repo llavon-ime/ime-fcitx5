@@ -9,8 +9,6 @@ namespace ime::fcitx5 {
 
 namespace {
 
-constexpr size_t kMinPhraseLength = 2;
-constexpr size_t kMaxPhraseLength = 8;
 constexpr std::string_view kIdeographicSpace = "\xE3\x80\x80";
 
 // One reading separator: the file uses '-', but the editor also accepts
@@ -58,7 +56,7 @@ bool PhraseOverrideStore::valid_entry(std::u16string_view phrase, size_t reading
     try {
         const auto utf8 = u16_to_utf8(phrase);
         if (utf8.find_first_of(" \t\r\n") != std::string::npos) return false;
-        return reading_count >= kMinPhraseLength && reading_count <= kMaxPhraseLength &&
+        return reading_count >= PhraseOverrideStore::kMinReadings && reading_count <= PhraseOverrideStore::kMaxReadings &&
                utf8_to_u32(utf8).size() == reading_count;
     } catch (...) {
         return false;
@@ -188,7 +186,7 @@ const std::filesystem::path& PhraseOverrideStore::path() const noexcept {
 }
 
 std::optional<std::string> PhraseOverrideStore::reading_key(std::span<const std::u16string> readings) {
-    if (readings.size() < kMinPhraseLength || readings.size() > kMaxPhraseLength) return std::nullopt;
+    if (readings.size() < kMinReadings || readings.size() > kMaxReadings) return std::nullopt;
 
     std::string key;
     try {

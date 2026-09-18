@@ -93,8 +93,16 @@ public:
     std::optional<size_t> segment_selected_index(size_t index) const;
     std::optional<size_t> manually_chosen_segment_at_caret() const noexcept;
     bool set_segment_candidates(size_t index, std::vector<char32_t> candidates, bool preserve_manual_choice = true);
+    // Refreshes fallback/model candidates without dropping a phrase override
+    // pin: the pinned character stays selected at the front. Explicit manual
+    // choices are preserved like set_segment_candidates(..., true).
+    bool refresh_segment_candidates(size_t index, std::vector<char32_t> candidates);
     bool apply_phrase_override(std::span<const char32_t> phrase);
+    // Pins [offset, offset + phrase.size()) only, so a stored phrase can apply
+    // anywhere inside the composition.
+    bool apply_phrase_override(size_t offset, std::span<const char32_t> phrase);
     bool clear_phrase_override_choices();
+    bool clear_phrase_override_choices(size_t offset, size_t count);
     bool select_candidate(size_t segment_index, size_t candidate_index, bool move_cursor_after_selection);
     bool cancel_candidate_selection(size_t segment_index);
     bool remove_segment(size_t index);

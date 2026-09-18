@@ -191,7 +191,6 @@ private:
     bool settle_pending_preview();
     bool pending_prefers_raw() const;
 
-    std::optional<std::u16string> matching_phrase_override(const InputSession& session) const;
     bool save_marked_phrase_override();
 
     FallbackEngine& fallback_;

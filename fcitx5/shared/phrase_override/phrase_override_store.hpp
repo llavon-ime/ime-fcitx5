@@ -16,6 +16,10 @@ struct PhraseOverrideRecord {
 
 class PhraseOverrideStore {
 public:
+    // Supported reading counts for a stored phrase.
+    static constexpr size_t kMinReadings = 2;
+    static constexpr size_t kMaxReadings = 8;
+
     explicit PhraseOverrideStore(std::filesystem::path path);
 
     bool load();
