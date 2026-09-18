@@ -137,6 +137,31 @@ if command -v xattr >/dev/null 2>&1; then
 fi
 find "${PKGROOT}" -name '._*' -delete
 
+# Keep the plugin descriptor's file list in sync with the payload so
+# fcitx5-macos can uninstall every installed file.
+if command -v python3 >/dev/null 2>&1; then
+    python3 - "${payload_root}" <<'PY'
+import json
+import os
+import sys
+
+root = sys.argv[1]
+descriptor = os.path.join(root, "plugin", "llavon-ime.json")
+with open(descriptor, encoding="utf-8") as f:
+    data = json.load(f)
+files = []
+for dirpath, _, names in os.walk(root):
+    for name in names:
+        rel = os.path.relpath(os.path.join(dirpath, name), root)
+        if rel != os.path.join("plugin", "llavon-ime.json"):
+            files.append(rel)
+data["files"] = sorted(files)
+with open(descriptor, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PY
+fi
+
 required_files=(
     "${payload_root}/bin/llavon-ime-unix-service"
     "${payload_root}/lib/fcitx5/llavon-ime-addon.so"
@@ -175,6 +200,22 @@ if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
         "${payload_root}/bin/llavon-ime-unix-service" \
         "${payload_root}/lib/fcitx5/llavon-ime-addon.so"
 fi
+
+# Plugin tarballs consumed by the fcitx5-macos Plugin Manager and the
+# one-click installer. Keep the layout relative to ~/Library/fcitx5.
+plugin_dist_dir="${DIST_DIR}/plugin"
+rm -rf "${plugin_dist_dir}"
+mkdir -p "${plugin_dist_dir}"
+tar -C "${payload_root}" -cjf "${plugin_dist_dir}/llavon-ime-${ARCH}.tar.bz2" \
+    bin/llavon-ime-unix-service \
+    lib/fcitx5/llavon-ime-addon.so \
+    plugin/llavon-ime.json
+tar -C "${payload_root}" -cjf "${plugin_dist_dir}/llavon-ime-any.tar.bz2" \
+    plugin/llavon-ime.json \
+    share/fcitx5/addon/llavon-ime.conf \
+    share/fcitx5/inputmethod/llavon-ime.conf \
+    share/llavon-ime
+echo "Built plugin tarballs in: ${plugin_dist_dir}"
 
 unsigned_pkg="${DIST_DIR}/llavon-ime-${VERSION}-${ARCH}.pkg"
 pkgbuild \

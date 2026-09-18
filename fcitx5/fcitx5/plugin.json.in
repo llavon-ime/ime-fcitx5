@@ -10,7 +10,7 @@
     "share/llavon-ime/tables/tokens/latin.json",
     "share/llavon-ime/tables/tokens/special_tokens.json"
   ],
-  "data_version": "@PROJECT_VERSION@",
-  "version": "@PROJECT_VERSION@",
+  "data_version": "@IME_FCITX5_DISPLAY_VERSION@",
+  "version": "@IME_FCITX5_DISPLAY_VERSION@",
   "input_methods": ["llavon-ime"]
 }

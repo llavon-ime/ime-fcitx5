@@ -34,6 +34,19 @@ Ubuntu 26.04）。
 
 ### macOS
 
+從 [Releases](https://github.com/llavon-ime/ime-fcitx5/releases/latest) 下載
+`llavon-ime-installer-<版本>-arm64.zip`（Release 頁面若尚無 installer 檔案，
+請改用下方 `.pkg` 或原始碼建置），解壓縮後執行 `Fcitx5Installer.app`。
+安裝程式會一併安裝小企鵝輸入法（Fcitx5）、拉風輸入法與模型，並自動啟用輸入法
+及加入 macOS 輸入來源。首次開啟若被 Gatekeeper 阻擋，請對 `Fcitx5Installer.app`
+按右鍵選擇「打開」，或執行
+`xattr -dr com.apple.quarantine <解壓後的 Fcitx5Installer.app>`。
+
+已安裝 Fcitx5 的使用者也可只下載 `llavon-ime-<版本>-arm64.pkg` 安裝，再到
+fcitx5 設定工具啟用 `llavon-ime`。
+
+開發者可直接從原始碼建置：
+
 ```bash
 ./scripts/build-macos.sh
 ```
@@ -42,11 +55,12 @@ Ubuntu 26.04）。
 測試並安裝到 `~/Library/fcitx5`；fcitx5-macos 標頭會自動 pull 到
 `$TMPDIR/llavon-ime-fcitx5-macos`，也可用 `FCITX5_MACOS_SOURCE_DIR` 指定。
 模型位於 `/Library/Application Support/llavon-ime/models`，已存在就沿用，否則
-下載後以 `sudo` 安裝。目前僅支援 Apple Silicon，Release 另提供 arm64 `.pkg`。
+下載後以 `sudo` 安裝。目前僅支援 Apple Silicon。
 
 ### 啟用
 
-在 fcitx5 設定工具啟用 `llavon-ime`，Linux 執行 `fcitx5 -r` 重新啟動；macOS 執行：
+在 fcitx5 設定工具啟用 `llavon-ime`（一鍵安裝版本會自動啟用），Linux 執行
+`fcitx5 -r` 重新啟動；macOS 執行：
 
 ```bash
 pkill -x Fcitx5; open -gj -b org.fcitx.inputmethod.Fcitx5
