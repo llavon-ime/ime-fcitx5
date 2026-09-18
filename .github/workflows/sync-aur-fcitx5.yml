@@ -90,7 +90,11 @@ jobs:
           chmod 600 "${ssh_dir}/config"
 
       - name: Clone AUR package repository
-        run: git clone "${AUR_REPOSITORY}" aur-repo
+        run: |
+          git clone "${AUR_REPOSITORY}" aur-repo
+          # A clone can leave a detached HEAD when the remote HEAD ref is
+          # stale, so always base the update on the current master tip.
+          git -C aur-repo checkout -B master origin/master
 
       - name: Update AUR package files
         env:
