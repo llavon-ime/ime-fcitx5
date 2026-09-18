@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+# Replace any previously installed Fcitx5.app so the bundled runtime is not
+# merged with stale files from an older version.
+if [ -d "/Library/Input Methods/Fcitx5.app" ]; then
+    /bin/rm -rf "/Library/Input Methods/Fcitx5.app"
+fi
+
+exit 0

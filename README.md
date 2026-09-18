@@ -43,8 +43,13 @@ Ubuntu 26.04）。
 按右鍵選擇「打開」，或執行
 `xattr -dr com.apple.quarantine <解壓後的 Fcitx5Installer.app>`。
 
-已安裝 Fcitx5 的使用者也可只下載 `llavon-ime-<版本>-arm64.pkg` 安裝，再到
-fcitx5 設定工具啟用 `llavon-ime`。
+也可以使用 Homebrew 或 `.pkg` 安裝，兩者都會一併安裝 Fcitx5 與拉風輸入法：
+
+```bash
+brew tap llavon-ime/llavon-ime
+brew trust --cask llavon-ime/llavon-ime/llavon-ime
+brew install --cask llavon-ime
+```
 
 開發者可直接從原始碼建置：
 
@@ -60,7 +65,7 @@ fcitx5 設定工具啟用 `llavon-ime`。
 
 ### 啟用
 
-在 fcitx5 設定工具啟用 `llavon-ime`（一鍵安裝版本會自動啟用），Linux 執行
+在 fcitx5 設定工具啟用 `llavon-ime`（首次安裝會自動啟用），Linux 執行
 `fcitx5 -r` 重新啟動；macOS 執行：
 
 ```bash

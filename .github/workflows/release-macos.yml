@@ -169,6 +169,7 @@ jobs:
           set -euo pipefail
           IME_FCITX5_VERSION="${{ steps.version.outputs.version }}" \
           FCITX5_MACOS_SOURCE_DIR="${RUNNER_TEMP}/fcitx5-macos" \
+          FCITX5_MACOS_RUNTIME_TARBALL="${RUNNER_TEMP}/Fcitx5-arm64.tar.bz2" \
           ./scripts/package-macos.sh
 
           unsigned_pkg="dist/macos/llavon-ime-${{ steps.version.outputs.version }}-arm64.pkg"
