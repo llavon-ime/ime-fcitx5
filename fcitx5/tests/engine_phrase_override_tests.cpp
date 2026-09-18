@@ -107,5 +107,59 @@ void engine_test_phrase_overrides(fcitx::Instance* instance) {
         harness.type("m3jp6t/6ul4");
         FCITX_ASSERT(harness.preedit() == "宇文澄曜");
         harness.expect_commit("宇文澄曜");
+
+        // Marking stores the current text and pins it immediately; continuing
+        // to type keeps the forced phrase instead of washing it out.
+        harness.type("su3cl3");
+        FCITX_ASSERT(harness.preedit() == "你好");
+        for (size_t i = 0; i < 2; ++i) harness.key(fcitx::Key(FcitxKey_Left, fcitx::KeyState::Shift));
+        harness.key(fcitx::Key(FcitxKey_Return));
+        {
+            auto* state = harness.engine_state();
+            FCITX_ASSERT(state != nullptr);
+            FCITX_ASSERT(state->session.buffer.segments().size() == 2);
+            FCITX_ASSERT(state->session.buffer.segments()[0].phrase_override_chosen);
+            FCITX_ASSERT(state->session.buffer.segments()[1].phrase_override_chosen);
+        }
+        harness.type("su3");
+        {
+            auto* state = harness.engine_state();
+            FCITX_ASSERT(state != nullptr);
+            FCITX_ASSERT(state->session.buffer.segments().size() == 3);
+            FCITX_ASSERT(state->session.buffer.segments()[0].phrase_override_chosen);
+            FCITX_ASSERT(state->session.buffer.segments()[1].phrase_override_chosen);
+        }
+        FCITX_ASSERT(harness.preedit().rfind("你好", 0) == 0);
+        harness.expect_commit("你好你");
+
+        // The phrase also applies in the middle of a longer composition.
+        fcitx::RawConfig middle_overrides;
+        middle_overrides.setValueByPath("Entries/0/Phrase", "宇你");
+        middle_overrides.setValueByPath("Entries/0/Readings", "ㄋㄧˇ-ㄏㄠˇ");
+        addon->setSubConfig("phraseoverrides", middle_overrides);
+        harness.type("su3su3cl3");
+        FCITX_ASSERT(harness.preedit() == "你宇你");
+        harness.expect_commit("你宇你");
+
+        // Selecting another candidate while a phrase override is pinned
+        // releases the pin instead of being ignored.
+        fcitx::RawConfig select_overrides;
+        select_overrides.setValueByPath("Entries/0/Phrase", "宇你");
+        select_overrides.setValueByPath("Entries/0/Readings", "ㄋㄧˇ-ㄏㄠˇ");
+        addon->setSubConfig("phraseoverrides", select_overrides);
+        harness.type("su3cl3");
+        FCITX_ASSERT(harness.preedit() == "宇你");
+        harness.key(fcitx::Key(FcitxKey_Down));
+        FCITX_ASSERT(harness.has_candidates());
+        FCITX_ASSERT(harness.candidate_count() >= 2);
+        harness.key(fcitx::Key(static_cast<fcitx::KeySym>('2')));
+        {
+            auto* state = harness.engine_state();
+            FCITX_ASSERT(state != nullptr);
+            FCITX_ASSERT(state->session.buffer.segments()[1].manually_chosen);
+            FCITX_ASSERT(!state->session.buffer.segments()[1].phrase_override_chosen);
+            FCITX_ASSERT(!state->session.buffer.segments()[0].phrase_override_chosen);
+        }
+        harness.expect_commit(harness.preedit());
     });
 }

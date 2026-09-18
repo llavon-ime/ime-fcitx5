@@ -78,11 +78,31 @@ int run_buffer_tests() {
     ok = ok && buffer.segments()[0].manually_chosen && buffer.segments()[0].phrase_override_chosen;
     ok = ok && !buffer.manually_chosen_segment_at_caret().has_value();
     ok = ok && !buffer.set_segment_candidates(0, {U'你'}, true);
+    // Refreshing candidates keeps the pin: alternatives are replaced while the
+    // forced character stays selected at the front.
+    ok = ok && buffer.refresh_segment_candidates(0, {U'擬'});
+    ok = ok && buffer.segments()[0].selected_candidate() == U'歐';
+    ok = ok && buffer.segments()[0].phrase_override_chosen;
+    ok = ok && buffer.rendered_composition() == std::u16string(u"歐陽");
     ok = ok && buffer.clear_phrase_override_choices();
     ok = ok && !buffer.segments()[0].manually_chosen && !buffer.segments()[0].phrase_override_chosen;
     ok = ok && buffer.select_candidate(0, 0, false);
+    ok = ok && !buffer.refresh_segment_candidates(0, {U'你'});
     ok = ok && !buffer.apply_phrase_override(std::u32string_view(U"宇文"));
     ok = ok && buffer.rendered_composition() == std::u16string(u"歐陽");
+
+    // Range apply pins only the requested segments, so a stored phrase can
+    // sit anywhere in the composition.
+    buffer.clear();
+    ok = ok && type_keys(buffer, fallback, U"su3cl3su3");
+    ok = ok && buffer.segments().size() == 3;
+    ok = ok && buffer.apply_phrase_override(1, std::u32string_view(U"歐陽"));
+    ok = ok && !buffer.segments()[0].phrase_override_chosen;
+    ok = ok && buffer.segments()[1].phrase_override_chosen;
+    ok = ok && buffer.segments()[2].phrase_override_chosen;
+    ok = ok && buffer.rendered_composition() == std::u16string(u"你歐陽");
+    ok = ok && buffer.clear_phrase_override_choices(1, 2);
+    ok = ok && !buffer.segments()[1].phrase_override_chosen;
 
     // Marking selects a range of segments for phrase override storage: the caret
     // moves while the anchor stays, plain cursor moves and edits cancel it.

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdlib>
 
 #include "input/input_processor.hpp"
@@ -279,12 +280,18 @@ int run_input_processor_process_tests() {
     ok = ok && session.buffer.segments().size() == 1 && session.buffer.segments().front().complete();
     ok = ok && session.buffer.segment_candidates(0) != nullptr && !session.buffer.segment_candidates(0)->empty();
 
-    // A model prediction merges into the same segment.
+    // A model prediction merges into the same segment and must keep the
+    // table's homophones, otherwise the user cannot pick another character.
     session.prediction.segment_indices = {0};
     Prediction prediction;
     prediction.candidates = {{U'你', U'擬'}};
     processor.apply_prediction(session, prediction);
     ok = ok && !session.buffer.segment_candidates(0)->empty();
+    {
+        const auto* merged_candidates = session.buffer.segment_candidates(0);
+        ok = ok && merged_candidates != nullptr &&
+             std::find(merged_candidates->begin(), merged_candidates->end(), U'妳') != merged_candidates->end();
+    }
 
     // Candidate routing must work before any frontend renders the panel. The
     // processor opens the list, then selects directly from semantic state.
@@ -347,6 +354,97 @@ int run_input_processor_process_tests() {
     ok = ok && changed.pending_token.empty() && !changed.mixed_decision.active();
     ok = ok && changed.buffer.commit_text() == std::u16string(u"hello");
     ok = ok && changed.prediction.generation == config_generation + 1;
+
+    // A phrase override pins the whole composition, and the pin must survive
+    // both model predictions and further typing. Editing the pinned readings
+    // or picking another candidate releases it.
+    {
+        ok = ok && overrides.replace({});
+        const std::vector<std::u16string> readings{u"ㄋㄧˇ", u"ㄏㄠˇ"};
+        ok = ok && overrides.add(u"你好", readings);
+
+        InputSession pinned;
+        for (const char32_t symbol : std::u32string(U"su3cl3")) {
+            (void)processor.process(key(symbol), pinned, config);
+        }
+        ok = ok && pinned.buffer.segments().size() == 2;
+        processor.apply_phrase_override(pinned);
+        ok = ok && pinned.buffer.rendered_composition() == std::u16string(u"你好");
+        ok = ok && pinned.buffer.segments()[0].phrase_override_chosen;
+        ok = ok && pinned.buffer.segments()[1].phrase_override_chosen;
+
+        // Model predictions refresh alternatives without dropping the pin.
+        pinned.prediction.segment_indices = {0, 1};
+        Prediction pinned_prediction;
+        pinned_prediction.candidates = {{U'擬'}, {U'號'}};
+        processor.apply_prediction(pinned, pinned_prediction);
+        processor.apply_phrase_override(pinned);
+        ok = ok && pinned.buffer.rendered_composition().rfind(u"你好", 0) == 0;
+        {
+            // The pinned segment keeps the table's homophones, so the user
+            // can still replace the forced character by selecting another
+            // candidate.
+            const auto* forced_candidates = pinned.buffer.segment_candidates(0);
+            ok = ok && forced_candidates != nullptr &&
+                 std::find(forced_candidates->begin(), forced_candidates->end(), U'妳') != forced_candidates->end();
+        }
+
+        // Typing more syllables keeps the pinned prefix for the rest of the
+        // composition instead of reverting to model output.
+        for (const char32_t symbol : std::u32string(U"su3")) {
+            (void)processor.process(key(symbol), pinned, config);
+        }
+        ok = ok && pinned.buffer.segments().size() == 3;
+        processor.apply_phrase_override(pinned);
+        ok = ok && pinned.buffer.segments()[0].phrase_override_chosen;
+        ok = ok && pinned.buffer.segments()[1].phrase_override_chosen;
+        pinned.prediction.segment_indices = {0, 1, 2};
+        Prediction extended_prediction;
+        extended_prediction.candidates = {{U'擬'}, {U'號'}, {U'泥'}};
+        processor.apply_prediction(pinned, extended_prediction);
+        processor.apply_phrase_override(pinned);
+        ok = ok && pinned.buffer.rendered_composition().rfind(u"你好", 0) == 0;
+        ok = ok && pinned.buffer.rendered_composition().size() == 3;
+
+        // Selecting another candidate releases the whole pin.
+        ok = ok && pinned.buffer.select_candidate(0, 1, false);
+        processor.apply_phrase_override(pinned);
+        ok = ok && !pinned.buffer.segments()[1].phrase_override_chosen;
+
+        // Editing inside the pinned readings releases it as well.
+        InputSession edited;
+        for (const char32_t symbol : std::u32string(U"su3cl3")) {
+            (void)processor.process(key(symbol), edited, config);
+        }
+        processor.apply_phrase_override(edited);
+        ok = ok && edited.buffer.segments()[0].phrase_override_chosen;
+        (void)processor.process(key(ime::fcitx5::keysym::BackSpace), edited, config);
+        processor.apply_phrase_override(edited);
+        ok = ok && !edited.buffer.segments()[0].phrase_override_chosen;
+
+        // The phrase applies wherever its readings appear in the
+        // composition, not only when it covers the whole sequence.
+        InputSession middle;
+        for (const char32_t symbol : std::u32string(U"su3su3cl3")) {
+            (void)processor.process(key(symbol), middle, config);
+        }
+        ok = ok && middle.buffer.segments().size() == 3;
+        processor.apply_phrase_override(middle);
+        ok = ok && !middle.buffer.segments()[0].phrase_override_chosen;
+        ok = ok && middle.buffer.segments()[1].phrase_override_chosen;
+        ok = ok && middle.buffer.segments()[2].phrase_override_chosen;
+        ok = ok && middle.buffer.rendered_composition() == std::u16string(u"你你好");
+        middle.prediction.segment_indices = {0, 1, 2};
+        Prediction middle_prediction;
+        middle_prediction.candidates = {{U'擬'}, {U'擬'}, {U'號'}};
+        processor.apply_prediction(middle, middle_prediction);
+        processor.apply_phrase_override(middle);
+        ok = ok && middle.buffer.rendered_composition() == std::u16string(u"擬你好");
+
+        ok = ok && overrides.replace({});
+        std::error_code cleanup_error;
+        std::filesystem::remove(overrides.path(), cleanup_error);
+    }
 
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

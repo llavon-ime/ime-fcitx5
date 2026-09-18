@@ -451,9 +451,36 @@ bool CompositionBuffer::set_segment_candidates(size_t index, std::vector<char32_
     return true;
 }
 
+bool CompositionBuffer::refresh_segment_candidates(size_t index, std::vector<char32_t> candidates) {
+    if (index >= segments_.size()) return false;
+
+    auto& segment = segments_[index];
+    if (!segment.phrase_override_chosen) {
+        return set_segment_candidates(index, std::move(candidates), true);
+    }
+
+    const char32_t pinned = segment.selected_candidate();
+    segment.candidates = std::move(candidates);
+    if (pinned != 0) {
+        segment.candidates.erase(
+            std::remove(segment.candidates.begin(), segment.candidates.end(), pinned),
+            segment.candidates.end());
+        segment.candidates.insert(segment.candidates.begin(), pinned);
+    }
+    segment.selected_index = 0;
+    touch();
+    return true;
+}
+
 bool CompositionBuffer::apply_phrase_override(std::span<const char32_t> phrase) {
     if (phrase.size() != segments_.size()) return false;
-    for (const auto& segment : segments_) {
+    return apply_phrase_override(0, phrase);
+}
+
+bool CompositionBuffer::apply_phrase_override(size_t offset, std::span<const char32_t> phrase) {
+    if (phrase.empty() || offset > segments_.size() || phrase.size() > segments_.size() - offset) return false;
+    for (size_t i = offset; i < offset + phrase.size(); ++i) {
+        const auto& segment = segments_[i];
         if (!segment.complete() || segment.literal != 0 ||
             (segment.manually_chosen && !segment.phrase_override_chosen)) {
             return false;
@@ -462,7 +489,7 @@ bool CompositionBuffer::apply_phrase_override(std::span<const char32_t> phrase) 
 
     bool changed = false;
     for (size_t i = 0; i < phrase.size(); ++i) {
-        auto& segment = segments_[i];
+        auto& segment = segments_[offset + i];
         if (segment.candidates.empty() || segment.candidates.front() != phrase[i]) {
             segment.candidates.erase(
                 std::remove(segment.candidates.begin(), segment.candidates.end(), phrase[i]),
@@ -480,8 +507,14 @@ bool CompositionBuffer::apply_phrase_override(std::span<const char32_t> phrase) 
 }
 
 bool CompositionBuffer::clear_phrase_override_choices() {
+    return clear_phrase_override_choices(0, segments_.size());
+}
+
+bool CompositionBuffer::clear_phrase_override_choices(size_t offset, size_t count) {
     bool changed = false;
-    for (auto& segment : segments_) {
+    const size_t end = std::min(offset + count, segments_.size());
+    for (size_t i = offset; i < end; ++i) {
+        auto& segment = segments_[i];
         if (!segment.phrase_override_chosen) continue;
         segment.manually_chosen = false;
         segment.phrase_override_chosen = false;

@@ -637,6 +637,9 @@ void InputProcessor::process_impl(const InputKey& key) {
             // Enter in the marking state stores the phrase and keeps composing.
             if (save_marked_phrase_override()) {
                 (void)session_->buffer.clear_selection();
+                // Pin the freshly stored phrase right away so an immediate
+                // commit does not fall back to model output.
+                apply_phrase_override(*session_);
                 redraw();
             }
             consume();
@@ -1291,7 +1294,7 @@ void InputProcessor::apply_fallback_candidates(InputSession& session, std::size_
 
     const auto predictions = fallback_.predict(session.buffer);
     if (segment_index >= predictions.size()) return;
-    (void)session.buffer.set_segment_candidates(segment_index, predictions[segment_index].candidates);
+    (void)session.buffer.refresh_segment_candidates(segment_index, predictions[segment_index].candidates);
 }
 
 void InputProcessor::apply_prediction(InputSession& session, const protocol::Prediction& prediction) {
@@ -1299,9 +1302,10 @@ void InputProcessor::apply_prediction(InputSession& session, const protocol::Pre
         const auto index = session.prediction.segment_indices[i];
         if (index >= session.buffer.segments().size()) continue;
         const auto& segment = session.buffer.segments()[index];
-        (void)session.buffer.set_segment_candidates(
-            index, fallback_.append_alternative_candidates(segment, prediction.candidates[i]),
-            !segment.phrase_override_chosen);
+        // Keep the table's homophones in the candidate list so the user can
+        // always pick another character, even after a model response.
+        (void)session.buffer.refresh_segment_candidates(
+            index, fallback_.merge_model_candidates(segment, prediction.candidates[i]));
     }
 }
 
@@ -1326,36 +1330,74 @@ void InputProcessor::sync_state(InputSession& session, const Config& config) {
 }
 
 void InputProcessor::apply_phrase_override(InputSession& session) {
-    const auto phrase = matching_phrase_override(session);
-    if (!phrase) {
-        (void)session.buffer.clear_phrase_override_choices();
-        return;
-    }
+    auto& buffer = session.buffer;
+    const auto& segments = buffer.segments();
 
-    try {
-        const auto codepoints = utf8_to_u32(u16_to_utf8(*phrase));
-        if (!session.buffer.apply_phrase_override(codepoints)) {
-            (void)session.buffer.clear_phrase_override_choices();
+    // A segment can take part in a stored phrase unless it is unfinished, a
+    // literal, or was explicitly chosen by the user.
+    const auto usable = [](const Segment& segment) {
+        return segment.complete() && segment.literal == 0 && segment.visible_candidate() &&
+               !(segment.manually_chosen && !segment.phrase_override_chosen);
+    };
+
+    // Existing pins are validated on their own readings: typing more of the
+    // composition must not revert the forced text, while editing the pinned
+    // range or choosing another candidate inside it releases the pin.
+    size_t index = 0;
+    while (index < segments.size()) {
+        if (!segments[index].phrase_override_chosen) {
+            ++index;
+            continue;
         }
-    } catch (...) {
-        (void)session.buffer.clear_phrase_override_choices();
+        size_t end = index;
+        std::vector<std::u16string> readings;
+        bool valid = true;
+        while (end < segments.size() && segments[end].phrase_override_chosen) {
+            valid = valid && usable(segments[end]);
+            readings.push_back(segments[end].reading());
+            ++end;
+        }
+        if (valid) valid = static_cast<bool>(phrase_overrides_.lookup(readings));
+        if (!valid) (void)buffer.clear_phrase_override_choices(index, end - index);
+        index = end;
     }
-}
 
-std::optional<std::u16string> InputProcessor::matching_phrase_override(const InputSession& session) const {
-    if (!session.pending_token.empty()) return std::nullopt;
+    // Pin stored phrases wherever their readings appear. Leftmost-longest
+    // wins so overlapping entries cannot fight over the same readings.
+    index = 0;
+    while (index < segments.size()) {
+        if (!usable(segments[index])) {
+            ++index;
+            continue;
+        }
+        size_t usable_length = 0;
+        while (index + usable_length < segments.size() && usable(segments[index + usable_length])) {
+            ++usable_length;
+        }
+        if (usable_length < PhraseOverrideStore::kMinReadings) {
+            ++index;
+            continue;
+        }
 
-    std::vector<std::u16string> readings;
-    readings.reserve(session.buffer.segments().size());
-    for (const auto& segment : session.buffer.segments()) {
-        if (!segment.complete() || segment.literal != 0 || !segment.visible_candidate()) return std::nullopt;
-        readings.push_back(segment.reading());
+        size_t matched = 0;
+        const size_t longest = std::min(usable_length, PhraseOverrideStore::kMaxReadings);
+        for (size_t length = longest; length >= PhraseOverrideStore::kMinReadings; --length) {
+            std::vector<std::u16string> readings;
+            readings.reserve(length);
+            for (size_t i = index; i < index + length; ++i) readings.push_back(segments[i].reading());
+
+            const auto phrase = phrase_overrides_.lookup(readings);
+            if (!phrase) continue;
+
+            try {
+                const auto codepoints = utf8_to_u32(u16_to_utf8(*phrase));
+                if (buffer.apply_phrase_override(index, codepoints)) matched = length;
+            } catch (...) {
+            }
+            break;
+        }
+        index += matched != 0 ? matched : 1;
     }
-    if (readings.empty()) return std::nullopt;
-    for (const auto& segment : session.buffer.segments()) {
-        if (segment.manually_chosen && !segment.phrase_override_chosen) return std::nullopt;
-    }
-    return phrase_overrides_.lookup(readings);
 }
 
 bool InputProcessor::save_marked_phrase_override() {
