@@ -144,7 +144,8 @@ if(Fcitx5_FOUND AND NOT WIN32)
         add_test(NAME llavon_ime_engine_tests COMMAND llavon_ime_engine_tests)
         set_tests_properties(llavon_ime_engine_tests PROPERTIES
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/.."
-            ENVIRONMENT "IME_FCITX5_TABLE_PATH=${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json")
+            ENVIRONMENT "IME_FCITX5_TABLE_PATH=${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json"
+            SKIP_RETURN_CODE 77)
 
         add_executable(llavon_ime_engine_prediction_integration_tests
             engine_prediction_integration_tests.cpp)
@@ -163,6 +164,7 @@ if(Fcitx5_FOUND AND NOT WIN32)
             COMMAND llavon_ime_engine_prediction_integration_tests)
         set_tests_properties(llavon_ime_engine_prediction_integration_tests PROPERTIES
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/.."
-            ENVIRONMENT "IME_FCITX5_TABLE_PATH=${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json")
+            ENVIRONMENT "IME_FCITX5_TABLE_PATH=${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json"
+            SKIP_RETURN_CODE 77)
     endif()
 endif()
