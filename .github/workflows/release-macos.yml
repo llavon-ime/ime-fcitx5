@@ -90,8 +90,6 @@ jobs:
           set -euo pipefail
           brew update
           brew install cmake ninja pkg-config
-          # The installer app requires CMake >= 4.3.
-          brew upgrade cmake
 
       - name: Cache vcpkg binary cache
         uses: actions/cache@v4
