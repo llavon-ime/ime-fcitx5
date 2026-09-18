@@ -21,8 +21,6 @@ env:
   HOMEBREW_TAP_REPO: "llavon-ime/homebrew-llavon-ime"
   HOMEBREW_CASK_PATH: "Casks/llavon-ime.rb"
   RELEASE_REPOSITORY: ${{ github.repository }}
-  FCITX5_MACOS_INSTALLER_REPO: "https://github.com/llavon-ime/fcitx5-macos-installer.git"
-  FCITX5_MACOS_INSTALLER_REF: "llavon-ime"
 
 jobs:
   release-macos:
@@ -179,24 +177,6 @@ jobs:
           fi
           echo "pkg=${unsigned_pkg}" >> "${GITHUB_OUTPUT}"
 
-      - name: Set up Python for the installer build
-        run: |
-          set -euo pipefail
-          python3 -m venv "${RUNNER_TEMP}/installer-venv"
-          "${RUNNER_TEMP}/installer-venv/bin/pip" install --quiet --disable-pip-version-check requests
-
-      - name: Build one-click installer
-        id: installer
-        env:
-          PYTHON_BIN: ${{ runner.temp }}/installer-venv/bin/python
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          IME_FCITX5_VERSION="${{ steps.version.outputs.version }}" \
-          FCITX5_MACOS_VERSION="${FCITX5_MACOS_VERSION}" \
-          ./scripts/package-macos-installer.sh
-          echo "zip=dist/macos/llavon-ime-installer-${{ steps.version.outputs.version }}-arm64.zip" >> "${GITHUB_OUTPUT}"
-
       - name: Notarize package
         if: env.APPLE_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_APP_SPECIFIC_PASSWORD != ''
         run: |
@@ -224,12 +204,11 @@ jobs:
           tag="${{ steps.version.outputs.tag }}"
           assets=(
             "${{ steps.package.outputs.pkg }}"
-            "${{ steps.installer.outputs.zip }}"
           )
           shopt -s nullglob
           assets+=(dist/macos/plugin/*.tar.bz2)
           shopt -u nullglob
-          notes="macOS fcitx5 package, plugin tarballs, and one-click installer."
+          notes="macOS fcitx5 package and plugin tarballs."
           if gh release view "${tag}" >/dev/null 2>&1; then
             gh release upload "${tag}" "${assets[@]}" --clobber
           elif git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
