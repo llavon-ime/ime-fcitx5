@@ -31,7 +31,7 @@ void engine_test_lifecycle(fcitx::Instance* instance) {
         harness.type("su");
         harness.input_context()->focusOut();
         FCITX_ASSERT(harness.preedit().empty());
-        FCITX_ASSERT(harness.engine_state()->session.context_cache.window(100).empty());
+        FCITX_ASSERT(harness.engine_state()->session.context_text.empty());
     });
 
     // An explicit client reset never commits, even with a complete segment.
@@ -46,7 +46,7 @@ void engine_test_lifecycle(fcitx::Instance* instance) {
         FCITX_ASSERT(harness.preedit().empty());
         FCITX_ASSERT(state->session.empty());
         FCITX_ASSERT(state->session.buffer.empty());
-        FCITX_ASSERT(state->session.context_cache.window(100).empty());
+        FCITX_ASSERT(state->session.context_text.empty());
         FCITX_ASSERT(state->session.prediction.generation == generation + 1);
     });
 

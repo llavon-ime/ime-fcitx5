@@ -170,7 +170,7 @@ protocol::PredictRequest PredictionCoordinator::build_request(const fcitx::Input
     const size_t context_limit = config.context_length > static_cast<int>(reserved_tokens)
                                      ? static_cast<size_t>(config.context_length) - reserved_tokens
                                      : 0;
-    request.context = session.context_cache.window(context_limit);
+    request.context = utf16_tail(session.context_text, context_limit);
     log_context("model", request.context);
     return request;
 }

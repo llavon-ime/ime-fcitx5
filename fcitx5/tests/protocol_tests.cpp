@@ -35,7 +35,8 @@ int run_protocol_tests() {
     const auto decoded = decode(bytes);
     const auto* decoded_request = std::get_if<PredictRequest>(&decoded);
     ok = ok && decoded_request != nullptr && decoded_request->request_id == request.request_id &&
-         decoded_request->buffer_revision == request.buffer_revision && decoded_request->padding.size() == 1 &&
+         decoded_request->buffer_revision == request.buffer_revision && decoded_request->context == request.context &&
+         decoded_request->padding.size() == 1 &&
          decoded_request->padding.front().chosen && decoded_request->padding.front().chosen_char == U'好';
 
     auto trailing = bytes;

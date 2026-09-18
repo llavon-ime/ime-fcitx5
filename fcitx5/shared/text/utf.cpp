@@ -97,6 +97,17 @@ std::u16string utf8_prefix_tail(std::string_view input, size_t cursor, size_t li
     return utf8_to_u16(input.substr(start, end - start));
 }
 
+std::u16string utf16_tail(std::u16string_view input, size_t limit) {
+    if (limit == 0 || input.empty()) return {};
+    if (input.size() <= limit) return std::u16string(input);
+    size_t start = input.size() - limit;
+    if (start > 0 && input[start] >= 0xDC00 && input[start] <= 0xDFFF && input[start - 1] >= 0xD800 &&
+        input[start - 1] <= 0xDBFF) {
+        ++start;
+    }
+    return std::u16string(input.substr(start));
+}
+
 std::u16string utf8_to_u16(std::string_view input) {
     std::u16string output;
     for (char32_t codepoint : utf8_to_u32(input)) {

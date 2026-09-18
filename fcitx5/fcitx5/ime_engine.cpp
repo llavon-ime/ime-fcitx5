@@ -164,8 +164,6 @@ void ImeEngine::enter_context(fcitx::InputContext* input_context) {
     if (state == nullptr) return;
 
     session_ = state->session;
-    session_.context_cache.set_limit(static_cast<size_t>(config_.context_history_limit));
-    session_.context_cache.set_surrounding_limit(static_cast<size_t>(config_.context_length));
 }
 
 void ImeEngine::leave_context() {
@@ -198,7 +196,7 @@ ImeEngine::ImeEngine(fcitx::Instance* instance)
                    PredictionCoordinator::Callbacks{
                        [this]() -> const Config& { return config_; },
                        [this](fcitx::InputContext* input_context, InputSession& session) {
-                           resync_context_cache(input_context, session);
+                           resync_context(input_context, session);
                        },
                        [this](fcitx::InputContext* input_context, const std::function<void(InputSession&)>& body) {
                            StateScope state_scope(*this, input_context);
@@ -228,7 +226,7 @@ ImeEngine::ImeEngine(fcitx::Instance* instance)
             [this](fcitx::Event& event) {
                 const auto& capability_event = static_cast<const fcitx::CapabilityEvent&>(event);
                 if (capability_event.newFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
-                    if (auto* state = property(capability_event.inputContext())) state->session.context_cache.clear();
+                    if (auto* state = property(capability_event.inputContext())) state->session.context_text.clear();
                 }
             });
     }
@@ -290,10 +288,7 @@ void ImeEngine::reset(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& 
                                  : event.type() == fcitx::EventType::InputContextReset
                                        ? InputResetReason::Explicit
                                        : InputResetReason::Deactivate;
-    const bool sensitive =
-        event.inputContext()->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive);
-    const auto effect = processor_.reset(session_, config_, reason,
-                                         sensitive || (focus_out && config_.reset_context_on_focus_out));
+    const auto effect = processor_.reset(session_, config_, reason, true);
     if (focus_out && accessibility_context_) {
         accessibility_context_->set_active(false);
         accessibility_base_sequence_ = accessibility_context_->sequence();
@@ -362,7 +357,6 @@ void ImeEngine::setConfig(const fcitx::RawConfig& config) {
     fcitx_config_.load(config, true);
     (void)fcitx_config_.version.setValue(DisplayVersion::Current);
     config_ = to_shared_config(fcitx_config_);
-    apply_context_cache_limits();
     apply_context_sources();
     save();
     processor_.prepare_for_config_change(session_);
@@ -392,24 +386,7 @@ void ImeEngine::reload_config() {
     if (!has_fcitx_config) save();
     config_ = to_shared_config(fcitx_config_);
     (void)phrase_overrides_.load();
-    apply_context_cache_limits();
     apply_context_sources();
-}
-
-void ImeEngine::apply_context_cache_limits() {
-    const auto history_limit = static_cast<size_t>(config_.context_history_limit);
-    const auto surrounding_limit = static_cast<size_t>(config_.context_length);
-    session_.context_cache.set_limit(history_limit);
-    session_.context_cache.set_surrounding_limit(surrounding_limit);
-
-    if (instance_ == nullptr) return;
-    instance_->inputContextManager().foreach([this, history_limit, surrounding_limit](fcitx::InputContext* input_context) {
-        auto* state = property(input_context);
-        if (state == nullptr) return true;
-        state->session.context_cache.set_limit(history_limit);
-        state->session.context_cache.set_surrounding_limit(surrounding_limit);
-        return true;
-    });
 }
 
 void ImeEngine::apply_context_sources() {
@@ -451,7 +428,6 @@ void ImeEngine::update_accessibility_status() {
 void ImeEngine::apply_effect(fcitx::InputContext* input_context, const InputEffect& effect) {
     if (!effect.commit.empty()) {
         input_context->commitString(to_utf8(effect.commit));
-        record_context_commit(input_context, effect.commit);
     }
     if (effect.request_prediction) request_prediction_if_ready(input_context);
     if (effect.redraw) update_ui(input_context);
@@ -584,28 +560,22 @@ void ImeEngine::update_ui(fcitx::InputContext* input_context) {
     input_context->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
 }
 
-void ImeEngine::record_context_commit(const fcitx::InputContext* input_context, const std::u16string& text) {
-    if (input_context == nullptr ||
-        input_context->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
-        session_.context_cache.clear();
-        return;
-    }
-    if (config_.context_history_limit > 0 && !text.empty()) {
-        session_.context_cache.on_commit(text);
-    }
-}
-
 void ImeEngine::request_prediction_if_ready(fcitx::InputContext* input_context) {
     processor_.apply_phrase_override(session_);
     coordinator_.request(input_context, session_);
 }
 
-void ImeEngine::resync_context_cache(fcitx::InputContext* input_context, InputSession& session) {
+void ImeEngine::resync_context(fcitx::InputContext* input_context, InputSession& session) {
+    // Context is read fresh from the current source for every prediction; it
+    // is never accumulated or reused across requests.
+    session.context_text.clear();
     if (input_context == nullptr ||
         input_context->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
-        session.context_cache.clear();
         return;
     }
+
+    const size_t limit =
+        config_.context_length > 0 ? static_cast<size_t>(config_.context_length) : 0;
 
     // Some clients report an empty (but valid) document, notably Electron,
     // Chromium and terminals. An empty client prefix must not shadow the
@@ -615,13 +585,14 @@ void ImeEngine::resync_context_cache(fcitx::InputContext* input_context, InputSe
     if (surrounding.isValid()) {
         try {
             const size_t cursor = std::min(surrounding.cursor(), surrounding.anchor());
-            const size_t limit = session.context_cache.limit() > 0 ? session.context_cache.limit()
-                                                                   : session.context_cache.surrounding_limit();
-            const auto text = utf8_prefix_tail(surrounding.text(), cursor, limit);
+            auto text = utf8_prefix_tail(surrounding.text(), cursor, limit);
             if (!text.empty()) {
-                session.client_surrounding_authoritative = true;
-                session.context_cache.on_surrounding(text, text.size());
-                log_context("client-surrounding", text);
+                session.context_text = std::move(text);
+                log_context("client-surrounding", session.context_text);
+                return;
+            }
+            if (!surrounding.text().empty()) {
+                log_context("client-surrounding-empty-prefix", {});
                 return;
             }
             client_empty = true;
@@ -645,31 +616,22 @@ void ImeEngine::resync_context_cache(fcitx::InputContext* input_context, InputSe
             } else {
                 text = strip_accessibility_preedit(session, sample->text);
             }
-            if (text && (!text->empty() || !may_contain_preedit || !session.context_cache.valid())) {
-                session.context_cache.on_surrounding(*text, text->size());
-                log_context("accessibility", *text);
+            if (text) {
+                session.context_text = utf16_tail(*text, limit);
+                log_context("accessibility", session.context_text);
                 return;
             }
-            log_context(text ? "accessibility-empty-cache-fallback" : "accessibility-preedit-mismatch",
-                        sample->text);
+            log_context("accessibility-preedit-mismatch", sample->text);
         } else {
             log_context("accessibility-unusable", {});
         }
     }
 
     if (client_empty) {
-        if (session.client_surrounding_authoritative) {
-            session.context_cache.on_surrounding(std::u16string_view(), 0);
-            log_context("client-surrounding-empty", {});
-        } else {
-            // Some clients always expose a valid but empty document. Preserve
-            // commits until that client demonstrates usable surrounding text.
-            log_context(session.context_cache.valid() ? "client-empty-cache-fallback" : "client-surrounding-empty",
-                        {});
-        }
+        log_context("client-surrounding-empty", {});
         return;
     }
-    log_context("cache-fallback", {});
+    log_context("context-fallback", {});
 }
 
 fcitx::KeyList ImeEngine::selection_key_list() const {

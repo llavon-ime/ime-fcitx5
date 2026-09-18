@@ -11,7 +11,7 @@ namespace ime::fcitx5 {
 // truncated window), so everything before the caret is authoritative
 // regardless of how many lines it spans. The only transformation this helper
 // applies is bounding the sample to `max_code_units`, dropping the oldest
-// text first (matching the context-cache window semantics used elsewhere).
+// text first (matching the bounded context tail semantics used elsewhere).
 // An empty widget simply produces no sample. UTF-16 operations never keep a
 // half surrogate pair: a pair that does not fit is dropped whole.
 class CaretPrefixSampler {

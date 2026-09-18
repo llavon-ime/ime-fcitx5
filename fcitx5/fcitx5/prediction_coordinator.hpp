@@ -26,7 +26,7 @@ public:
     struct Callbacks {
         // Returns the configuration in effect right now.
         std::function<const Config&()> config;
-        // Re-reads the client's surrounding text into the session cache.
+        // Re-reads the current context source into the session.
         std::function<void(fcitx::InputContext*, InputSession&)> resync_context;
         // Enters the input context and runs `body` on its active session.
         std::function<void(fcitx::InputContext*, const std::function<void(InputSession&)>&)> run_in_session;

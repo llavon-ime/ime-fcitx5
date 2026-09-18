@@ -268,7 +268,7 @@ InputEffect InputProcessor::reset(InputSession& session, const Config& config, I
     session.pending_token.clear();
     session.mixed_decision.clear();
     session.symbol_menu.close();
-    if (clear_context) session.context_cache.clear();
+    if (clear_context) session.context_text.clear();
     (void)transition_to(InputStateKind::Empty);
     session.prediction.invalidate();
     redraw();
@@ -308,7 +308,6 @@ void InputProcessor::process_impl(const InputKey& key) {
                 session_->prediction.clear_pending();
                 redraw();
             }
-            if (config_->context_edit_tracking) session_->context_cache.clear();
             return;
         }
     }
@@ -330,34 +329,11 @@ void InputProcessor::process_impl(const InputKey& key) {
     // buffer the key passes through (mirrors McBopomofo's Shift+space).
     if (key.sym == U' ' && key.raw_has(InputKeyState::Shift)) {
         if (composition_empty(*session_)) {
-            if (config_->context_edit_tracking) session_->context_cache.clear();
             return;
         }
         commit_composition_with(U' ');
         consume();
         return;
-    }
-
-    // Edit tracking for clients that never push surrounding text. With an
-    // empty composition the engine cannot see the document, so it heuristically
-    // invalidates context on external edits. Even plain Backspace may delete
-    // a selection or a multi-scalar grapheme rather than one scalar.
-    // These keys always pass through to the application.
-    if (composition_empty(*session_) && config_->context_edit_tracking) {
-        const bool edit_shortcut =
-            key.has(InputKeyState::Ctrl) || key.has(InputKeyState::Super) || key.has(InputKeyState::Meta);
-        if (key.sym == keysym::BackSpace || key.sym == keysym::Delete || key.sym == keysym::Left ||
-            key.sym == keysym::Right || key.sym == keysym::Up || key.sym == keysym::Down ||
-            key.sym == keysym::Home || key.sym == keysym::End || key.sym == keysym::Page_Up ||
-            key.sym == keysym::Page_Down) {
-            session_->context_cache.clear();
-        } else if (edit_shortcut && (key.sym == U'z' || key.sym == U'Z' || key.sym == U'y' || key.sym == U'Y' ||
-                                     key.sym == U'x' || key.sym == U'X' || key.sym == U'a' || key.sym == U'A' ||
-                                     key.sym == U'v' || key.sym == U'V')) {
-            session_->context_cache.clear();
-        } else if (key.sym == keysym::Insert && key.has(InputKeyState::Shift)) {
-            session_->context_cache.clear();
-        }
     }
 
     const auto chewing_punctuation = chewing_punctuation_for_key(key, layout);
