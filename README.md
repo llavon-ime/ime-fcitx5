@@ -34,22 +34,19 @@ Ubuntu 26.04）。
 
 ### macOS
 
-從 [Releases](https://github.com/llavon-ime/ime-fcitx5/releases/latest) 下載
-`llavon-ime-installer-<版本>-arm64.zip`（Release 頁面若尚無 installer 檔案，
-請改用下方 `.pkg` 或原始碼建置），解壓縮後執行 `Fcitx5Installer.app`。
-安裝程式會一併安裝小企鵝輸入法（Fcitx5）、拉風輸入法與模型，並自動啟用輸入法
-及加入 macOS 輸入來源。首次安裝需登出再登入（或重開機），候選窗才能在全螢幕
-應用程式中顯示。首次開啟若被 Gatekeeper 阻擋，請對 `Fcitx5Installer.app`
-按右鍵選擇「打開」，或執行
-`xattr -dr com.apple.quarantine <解壓後的 Fcitx5Installer.app>`。
-
-也可以使用 Homebrew 或 `.pkg` 安裝，兩者都會一併安裝 Fcitx5 與拉風輸入法：
-
 ```bash
 brew tap llavon-ime/llavon-ime
 brew trust --cask llavon-ime/llavon-ime/llavon-ime
 brew install --cask llavon-ime
 ```
+
+安裝過程會要求管理員密碼，會一併安裝小企鵝輸入法（Fcitx5）、拉風輸入法與模型，
+並自動啟用輸入法及加入 macOS 輸入來源。首次安裝需登出再登入（或重開機），
+候選窗才能在全螢幕應用程式中顯示。
+
+也可以從 [Releases](https://github.com/llavon-ime/ime-fcitx5/releases/latest)
+下載 `llavon-ime-<版本>-arm64.pkg` 安裝；未簽名，若被 Gatekeeper 阻擋請右鍵
+選擇「打開」。
 
 開發者可直接從原始碼建置：
 
