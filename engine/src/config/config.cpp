@@ -9,8 +9,9 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include "util/env.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 namespace {
 
@@ -219,8 +220,8 @@ std::string shift_letter_keys_from_config(std::string_view value, const std::str
 }
 
 std::string installed_default_model_path() {
-#ifdef IME_FCITX5_INSTALLED_MODEL_PATH
-    const std::filesystem::path path(IME_FCITX5_INSTALLED_MODEL_PATH);
+#ifdef LLAVON_IME_INSTALLED_MODEL_PATH
+    const std::filesystem::path path(LLAVON_IME_INSTALLED_MODEL_PATH);
     if (!path.empty() && std::filesystem::exists(path)) return path.string();
 #endif
     return {};
@@ -318,7 +319,7 @@ std::vector<std::filesystem::path> fcitx_config_paths() {
     std::vector<std::filesystem::path> paths;
     append_unique_path(paths, config_path());
 #ifdef __APPLE__
-    if (!non_empty_env("IME_FCITX5_CONFIG_PATH")) {
+    if (!env_with_legacy("LLAVON_IME_CONFIG_PATH", "IME_FCITX5_CONFIG_PATH")) {
         append_unique_path(paths, macos_fcitx_config_path("llavon-ime.conf"));
     }
 #endif
@@ -401,7 +402,7 @@ Config config_from_json(const nlohmann::json& json) {
 }
 
 std::filesystem::path config_path() {
-    if (const char* override = non_empty_env("IME_FCITX5_CONFIG_PATH")) {
+    if (const char* override = env_with_legacy("LLAVON_IME_CONFIG_PATH", "IME_FCITX5_CONFIG_PATH")) {
         return override;
     }
     return fcitx_config_path_for("llavon-ime.conf");
@@ -412,7 +413,10 @@ std::filesystem::path legacy_config_path() {
 }
 
 std::filesystem::path phrase_overrides_path() {
-    if (const char* override = non_empty_env("IME_FCITX5_PHRASE_OVERRIDES_PATH")) return override;
+    if (const char* override = env_with_legacy("LLAVON_IME_PHRASE_OVERRIDES_PATH",
+                                                "IME_FCITX5_PHRASE_OVERRIDES_PATH")) {
+        return override;
+    }
     return legacy_config_path().parent_path() / "phrase_overrides.txt";
 }
 
@@ -431,4 +435,4 @@ std::filesystem::path pid_path() {
     return runtime_dir() / "service.pid";
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

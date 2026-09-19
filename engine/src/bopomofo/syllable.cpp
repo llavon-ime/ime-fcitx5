@@ -2,7 +2,7 @@
 
 #include <unordered_set>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 namespace {
 
@@ -175,4 +175,4 @@ std::u16string Syllable::text() const {
     return result;
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

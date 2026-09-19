@@ -10,7 +10,7 @@
 #include "input/punctuation.hpp"
 #include "text/utf.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 namespace {
 
@@ -1481,4 +1481,4 @@ std::u16string InputProcessor::marking_hint_text(const InputSession& session) {
     return hint;
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

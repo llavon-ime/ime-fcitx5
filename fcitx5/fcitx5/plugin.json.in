@@ -1,6 +1,6 @@
 {
   "files": [
-    "bin/@IME_FCITX5_UNIX_SERVICE_NAME@",
+    "bin/@LLAVON_IME_UNIX_SERVICE_NAME@",
     "lib/fcitx5/llavon-ime-addon.so",
     "share/fcitx5/addon/llavon-ime.conf",
     "share/fcitx5/inputmethod/llavon-ime.conf",
@@ -10,7 +10,7 @@
     "share/llavon-ime/tables/tokens/latin.json",
     "share/llavon-ime/tables/tokens/special_tokens.json"
   ],
-  "data_version": "@IME_FCITX5_DISPLAY_VERSION@",
-  "version": "@IME_FCITX5_DISPLAY_VERSION@",
+  "data_version": "@LLAVON_IME_DISPLAY_VERSION@",
+  "version": "@LLAVON_IME_DISPLAY_VERSION@",
   "input_methods": ["llavon-ime"]
 }

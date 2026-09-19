@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 namespace {
 
@@ -147,8 +147,8 @@ bool run_ascii_tokenizer_tests() {
 
 }  // namespace
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime
 
 int run_ascii_tokenizer_tests() {
-    return ime::fcitx5::run_ascii_tokenizer_tests() ? EXIT_SUCCESS : EXIT_FAILURE;
+    return llavon::ime::run_ascii_tokenizer_tests() ? EXIT_SUCCESS : EXIT_FAILURE;
 }

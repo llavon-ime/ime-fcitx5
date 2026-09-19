@@ -10,14 +10,14 @@
 #include <string>
 #include <string_view>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 namespace {
 
-const ime::fcitx5::ImeFcitxConfig* engine_config(fcitx::Instance* instance) {
+const llavon::ime::ImeFcitxConfig* engine_config(fcitx::Instance* instance) {
     auto* addon = instance->addonManager().addon("llavon-ime");
     if (addon == nullptr) return nullptr;
-    return static_cast<const ime::fcitx5::ImeFcitxConfig*>(addon->getConfig());
+    return static_cast<const llavon::ime::ImeFcitxConfig*>(addon->getConfig());
 }
 
 std::string accessibility_status(fcitx::Instance* instance) {
@@ -33,10 +33,10 @@ bool status_contains(const std::string& status, std::string_view needle) {
 
 // The engine uses an accessibility caret sample when the client never pushes
 // surrounding text. The engine tests run
-// with IME_FCITX5_CONTEXT_SAMPLE_FILE, which backs the provider with a file
+// with LLAVON_IME_CONTEXT_SAMPLE_FILE, which backs the provider with a file
 // instead of the accessibility bus: writing the file publishes a sample.
 void engine_test_context_source(fcitx::Instance* instance) {
-    const char* sample_path = std::getenv("IME_FCITX5_CONTEXT_SAMPLE_FILE");
+    const char* sample_path = std::getenv("LLAVON_IME_CONTEXT_SAMPLE_FILE");
     FCITX_ASSERT(sample_path != nullptr && sample_path[0] != '\0');
     const std::filesystem::path path(sample_path);
 
@@ -50,7 +50,7 @@ void engine_test_context_source(fcitx::Instance* instance) {
         EngineHarness harness(instance);
         harness.set_configs({{"SmartEnglish", "False"}});
         harness.type("su3");
-        FCITX_ASSERT(harness.engine_state()->session.context_text == u"早安，今天天氣很好。");
+        FCITX_ASSERT(harness.engine_state()->session->context_text == u"早安，今天天氣很好。");
         std::filesystem::remove(path);
     });
 #endif
@@ -62,10 +62,10 @@ void engine_test_context_source(fcitx::Instance* instance) {
         harness.set_configs({{"SmartEnglish", "False"}});
         harness.set_surrounding("客戶端文字", 5, 5);
         harness.type("su3");
-        FCITX_ASSERT(harness.engine_state()->session.context_text == u"客戶端文字");
+        FCITX_ASSERT(harness.engine_state()->session->context_text == u"客戶端文字");
         harness.set_surrounding("", 0, 0);
         harness.type("cl3");
-        FCITX_ASSERT(harness.engine_state()->session.context_text.empty());
+        FCITX_ASSERT(harness.engine_state()->session->context_text.empty());
     });
 
     // The config UI shows whether accessibility context can be obtained, and
@@ -96,7 +96,7 @@ void engine_test_context_source(fcitx::Instance* instance) {
         harness.set_configs({{"SmartEnglish", "False"}});
         harness.set_surrounding("", 0, 0);
         harness.type("su3");
-        FCITX_ASSERT(harness.engine_state()->session.context_text == u"空字串不吃樣本");
+        FCITX_ASSERT(harness.engine_state()->session->context_text == u"空字串不吃樣本");
         std::filesystem::remove(path);
     });
 #endif
@@ -112,7 +112,7 @@ void engine_test_context_source(fcitx::Instance* instance) {
         harness.set_configs({{"SmartEnglish", "False"}});
         harness.set_surrounding("客戶端文字", 5, 5);
         harness.type("su3");
-        FCITX_ASSERT(harness.engine_state()->session.context_text == u"客戶端文字");
+        FCITX_ASSERT(harness.engine_state()->session->context_text == u"客戶端文字");
         std::filesystem::remove(path);
     });
 
@@ -127,7 +127,7 @@ void engine_test_context_source(fcitx::Instance* instance) {
         EngineHarness harness(instance);
         harness.set_configs({{"SmartEnglish", "False"}});
         harness.type("su3");
-        FCITX_ASSERT(harness.engine_state()->session.context_text == u"自動採用");
+        FCITX_ASSERT(harness.engine_state()->session->context_text == u"自動採用");
         FCITX_ASSERT(status_contains(accessibility_status(instance), "可取得"));
         std::filesystem::remove(path);
     });

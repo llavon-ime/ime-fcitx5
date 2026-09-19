@@ -5,7 +5,7 @@
 #include <span>
 #include <vector>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 class UnixSocketConnection {
 public:
@@ -50,4 +50,4 @@ private:
     std::filesystem::path path_;
 };
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <mutex>
 #include <string>
+#include "util/env.hpp"
 #include <string_view>
 #include <thread>
 #include <utility>
@@ -25,12 +26,12 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 // libatspi is optional at runtime: it is loaded with dlopen so the addon still
 // loads on systems without at-spi2-core. When the library is missing the
 // provider reports itself unavailable and the engine simply has no
-// accessibility context. IME_FCITX5_ATSPI_LIBRARY overrides the library name
+// accessibility context. LLAVON_IME_ATSPI_LIBRARY overrides the library name
 // for tests.
 struct AtspiLibrary {
     using Init = void (*)();
@@ -52,34 +53,34 @@ struct AtspiLibrary {
 
     bool open() {
         if (handle != nullptr) return true;
-        const char* override = std::getenv("IME_FCITX5_ATSPI_LIBRARY");
+        const char* override = env_with_legacy("LLAVON_IME_ATSPI_LIBRARY", "IME_FCITX5_ATSPI_LIBRARY");
         const char* name = override != nullptr && override[0] != '\0' ? override : "libatspi.so.0";
         handle = ::dlopen(name, RTLD_NOW | RTLD_LOCAL);
         if (handle == nullptr) return false;
 
-#define IME_FCITX5_LOAD_ATSPI(field, symbol)                                  \
+#define LLAVON_IME_LOAD_ATSPI(field, symbol)                                  \
     field = reinterpret_cast<decltype(field)>(::dlsym(handle, #symbol));      \
     if (field == nullptr) {                                                   \
         close();                                                              \
         return false;                                                         \
     }
-        IME_FCITX5_LOAD_ATSPI(init, atspi_init)
-        IME_FCITX5_LOAD_ATSPI(is_initialized, atspi_is_initialized)
-        IME_FCITX5_LOAD_ATSPI(set_timeout, atspi_set_timeout)
-        IME_FCITX5_LOAD_ATSPI(exit, atspi_exit)
-        IME_FCITX5_LOAD_ATSPI(get_desktop_count, atspi_get_desktop_count)
-        IME_FCITX5_LOAD_ATSPI(get_desktop, atspi_get_desktop)
-        IME_FCITX5_LOAD_ATSPI(get_text_iface, atspi_accessible_get_text_iface)
-        IME_FCITX5_LOAD_ATSPI(get_role, atspi_accessible_get_role)
-        IME_FCITX5_LOAD_ATSPI(get_child_count, atspi_accessible_get_child_count)
-        IME_FCITX5_LOAD_ATSPI(get_child_at_index, atspi_accessible_get_child_at_index)
-        IME_FCITX5_LOAD_ATSPI(get_state_set, atspi_accessible_get_state_set)
-        IME_FCITX5_LOAD_ATSPI(state_set_contains, atspi_state_set_contains)
-        IME_FCITX5_LOAD_ATSPI(text_get_caret_offset, atspi_text_get_caret_offset)
-        IME_FCITX5_LOAD_ATSPI(text_get_text, atspi_text_get_text)
-        IME_FCITX5_LOAD_ATSPI(listener_new_simple, atspi_event_listener_new_simple)
-        IME_FCITX5_LOAD_ATSPI(listener_register, atspi_event_listener_register)
-#undef IME_FCITX5_LOAD_ATSPI
+        LLAVON_IME_LOAD_ATSPI(init, atspi_init)
+        LLAVON_IME_LOAD_ATSPI(is_initialized, atspi_is_initialized)
+        LLAVON_IME_LOAD_ATSPI(set_timeout, atspi_set_timeout)
+        LLAVON_IME_LOAD_ATSPI(exit, atspi_exit)
+        LLAVON_IME_LOAD_ATSPI(get_desktop_count, atspi_get_desktop_count)
+        LLAVON_IME_LOAD_ATSPI(get_desktop, atspi_get_desktop)
+        LLAVON_IME_LOAD_ATSPI(get_text_iface, atspi_accessible_get_text_iface)
+        LLAVON_IME_LOAD_ATSPI(get_role, atspi_accessible_get_role)
+        LLAVON_IME_LOAD_ATSPI(get_child_count, atspi_accessible_get_child_count)
+        LLAVON_IME_LOAD_ATSPI(get_child_at_index, atspi_accessible_get_child_at_index)
+        LLAVON_IME_LOAD_ATSPI(get_state_set, atspi_accessible_get_state_set)
+        LLAVON_IME_LOAD_ATSPI(state_set_contains, atspi_state_set_contains)
+        LLAVON_IME_LOAD_ATSPI(text_get_caret_offset, atspi_text_get_caret_offset)
+        LLAVON_IME_LOAD_ATSPI(text_get_text, atspi_text_get_text)
+        LLAVON_IME_LOAD_ATSPI(listener_new_simple, atspi_event_listener_new_simple)
+        LLAVON_IME_LOAD_ATSPI(listener_register, atspi_event_listener_register)
+#undef LLAVON_IME_LOAD_ATSPI
         return true;
     }
 
@@ -544,4 +545,4 @@ bool AtspiContextProvider::running() const noexcept { return impl_->running(); }
 
 void AtspiContextProvider::refresh() { impl_->refresh(); }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

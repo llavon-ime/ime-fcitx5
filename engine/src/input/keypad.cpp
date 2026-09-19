@@ -1,6 +1,6 @@
 #include "input/keypad.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 namespace {
 
@@ -48,4 +48,4 @@ bool is_return_keysym(std::uint32_t keysym) {
     return keysym == kReturn || keysym == kKeypadEnter;
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

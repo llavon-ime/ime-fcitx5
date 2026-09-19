@@ -4,23 +4,23 @@
 #include "input/input_processor.hpp"
 
 int run_input_processor_tests() {
-    using ime::fcitx5::CandidateKeyAction;
-    using ime::fcitx5::CandidateKeyConfig;
-    using ime::fcitx5::CandidateView;
-    using ime::fcitx5::handle_candidate_key;
-    using ime::fcitx5::input_key_state;
-    using ime::fcitx5::InputKey;
-    using ime::fcitx5::InputKeyState;
-    using ime::fcitx5::selection_index_for_key;
+    using llavon::ime::CandidateKeyAction;
+    using llavon::ime::CandidateKeyConfig;
+    using llavon::ime::CandidateView;
+    using llavon::ime::handle_candidate_key;
+    using llavon::ime::input_key_state;
+    using llavon::ime::InputKey;
+    using llavon::ime::InputKeyState;
+    using llavon::ime::selection_index_for_key;
 
     bool ok = true;
 
-    constexpr auto kUp = ime::fcitx5::keysym::Up;
-    constexpr auto kDown = ime::fcitx5::keysym::Down;
-    constexpr auto kLeft = ime::fcitx5::keysym::Left;
-    constexpr auto kRight = ime::fcitx5::keysym::Right;
-    constexpr auto kHome = ime::fcitx5::keysym::Home;
-    constexpr auto kEnd = ime::fcitx5::keysym::End;
+    constexpr auto kUp = llavon::ime::keysym::Up;
+    constexpr auto kDown = llavon::ime::keysym::Down;
+    constexpr auto kLeft = llavon::ime::keysym::Left;
+    constexpr auto kRight = llavon::ime::keysym::Right;
+    constexpr auto kHome = llavon::ime::keysym::Home;
+    constexpr auto kEnd = llavon::ime::keysym::End;
 
     const auto key = [](char32_t symbol, std::uint32_t states = 0) {
         InputKey value;
@@ -141,9 +141,9 @@ int run_input_processor_tests() {
     ok = ok && handle_candidate_key(key(U','), home_row, view, 25, true, true).action ==
                    CandidateKeyAction::Unhandled;
 
-    using ime::fcitx5::handle_symbol_menu_key;
-    using ime::fcitx5::SymbolMenuKeyAction;
-    using ime::fcitx5::SymbolMenuState;
+    using llavon::ime::handle_symbol_menu_key;
+    using llavon::ime::SymbolMenuKeyAction;
+    using llavon::ime::SymbolMenuState;
 
     const auto menu_outcome = [](SymbolMenuState& menu, CandidateView& menu_view, const InputKey& pressed,
                                  std::size_t count = 13, const CandidateKeyConfig& config = CandidateKeyConfig{}) {
@@ -155,18 +155,18 @@ int run_input_processor_tests() {
     CandidateView menu_view;
 
     // Escape and the menu key close the menu.
-    ok = ok && menu_outcome(menu, menu_view, key(ime::fcitx5::keysym::Escape)).action ==
+    ok = ok && menu_outcome(menu, menu_view, key(llavon::ime::keysym::Escape)).action ==
                    SymbolMenuKeyAction::CloseMenu;
-    ok = ok && menu_outcome(menu, menu_view, key(ime::fcitx5::keysym::grave)).action ==
+    ok = ok && menu_outcome(menu, menu_view, key(llavon::ime::keysym::grave)).action ==
                    SymbolMenuKeyAction::CloseMenu;
 
     // Backspace leaves a category level and closes from the root.
-    ok = ok && menu_outcome(menu, menu_view, key(ime::fcitx5::keysym::BackSpace)).action ==
+    ok = ok && menu_outcome(menu, menu_view, key(llavon::ime::keysym::BackSpace)).action ==
                    SymbolMenuKeyAction::CloseMenu;
     char32_t ignored = 0;
     ok = ok && !menu.select(2, ignored);
     menu_view.cursor = 5;
-    ok = ok && menu_outcome(menu, menu_view, key(ime::fcitx5::keysym::BackSpace)).action ==
+    ok = ok && menu_outcome(menu, menu_view, key(llavon::ime::keysym::BackSpace)).action ==
                    SymbolMenuKeyAction::Redraw &&
          !menu.in_category() && menu_view.cursor == 0;
 
@@ -184,26 +184,26 @@ int run_input_processor_tests() {
          menu_view.cursor == 12;
     ok = ok && menu_outcome(menu, menu_view, key(kEnd)).action == SymbolMenuKeyAction::Handled;
     menu_view.reset();
-    ok = ok && menu_outcome(menu, menu_view, key(ime::fcitx5::keysym::Page_Down)).action ==
+    ok = ok && menu_outcome(menu, menu_view, key(llavon::ime::keysym::Page_Down)).action ==
                    SymbolMenuKeyAction::Redraw &&
          menu_view.page == 1 && menu_view.cursor == 10;
-    ok = ok && menu_outcome(menu, menu_view, key(ime::fcitx5::keysym::Page_Down)).action ==
+    ok = ok && menu_outcome(menu, menu_view, key(llavon::ime::keysym::Page_Down)).action ==
                    SymbolMenuKeyAction::Handled;
-    ok = ok && menu_outcome(menu, menu_view, key(ime::fcitx5::keysym::Page_Up)).action ==
+    ok = ok && menu_outcome(menu, menu_view, key(llavon::ime::keysym::Page_Up)).action ==
                    SymbolMenuKeyAction::Redraw &&
          menu_view.page == 0 && menu_view.cursor == 0;
 
     // Tab toggles the expanded page and redraws.
-    ok = ok && menu_outcome(menu, menu_view, key(ime::fcitx5::keysym::Tab)).action ==
+    ok = ok && menu_outcome(menu, menu_view, key(llavon::ime::keysym::Tab)).action ==
                    SymbolMenuKeyAction::Redraw &&
          menu_view.expanded;
-    ok = ok && menu_outcome(menu, menu_view, key(ime::fcitx5::keysym::Tab)).action ==
+    ok = ok && menu_outcome(menu, menu_view, key(llavon::ime::keysym::Tab)).action ==
                    SymbolMenuKeyAction::Redraw &&
          !menu_view.expanded;
 
     // Return, keypad enter, and Space activate the cursor row.
     menu_view.reset();
-    ok = ok && menu_outcome(menu, menu_view, key(ime::fcitx5::keysym::Return)).action ==
+    ok = ok && menu_outcome(menu, menu_view, key(llavon::ime::keysym::Return)).action ==
                    SymbolMenuKeyAction::ActivateCursor;
     ok = ok && menu_outcome(menu, menu_view, key(0xff8d)).action == SymbolMenuKeyAction::ActivateCursor;
     ok = ok && menu_outcome(menu, menu_view, key(U' ')).action == SymbolMenuKeyAction::ActivateCursor;
@@ -237,23 +237,23 @@ int run_input_processor_tests() {
 #include "input/input_processor.hpp"
 
 int run_input_processor_process_tests() {
-    using ime::fcitx5::Config;
-    using ime::fcitx5::default_config;
-    using ime::fcitx5::FallbackEngine;
-    using ime::fcitx5::InputKey;
-    using ime::fcitx5::InputProcessor;
-    using ime::fcitx5::InputResetReason;
-    using ime::fcitx5::InputSession;
-    using ime::fcitx5::MixedInputDecoder;
-    using ime::fcitx5::PhraseOverrideStore;
-    using ime::fcitx5::protocol::Prediction;
+    using llavon::ime::Config;
+    using llavon::ime::default_config;
+    using llavon::ime::FallbackEngine;
+    using llavon::ime::InputKey;
+    using llavon::ime::InputProcessor;
+    using llavon::ime::InputResetReason;
+    using llavon::ime::InputSession;
+    using llavon::ime::MixedInputDecoder;
+    using llavon::ime::PhraseOverrideStore;
+    using llavon::ime::protocol::Prediction;
 
     bool ok = true;
 
-    FallbackEngine fallback(std::filesystem::path(IME_FCITX5_TEST_TABLE_PATH));
+    FallbackEngine fallback(std::filesystem::path(LLAVON_IME_TEST_TABLE_PATH));
     MixedInputDecoder decoder([&fallback](std::u16string_view reading) { return fallback.lookup(reading); },
                               [&fallback](std::u16string_view word) { return fallback.latin_frequency(word); });
-    PhraseOverrideStore overrides(std::filesystem::path(IME_FCITX5_TEST_TABLE_PATH).parent_path() /
+    PhraseOverrideStore overrides(std::filesystem::path(LLAVON_IME_TEST_TABLE_PATH).parent_path() /
                                   "unused_phrase_overrides.txt");
     InputProcessor processor(fallback, decoder, overrides);
 
@@ -302,12 +302,12 @@ int run_input_processor_process_tests() {
     ok = ok && select.handled && select.redraw && !session.choosing_candidate();
 
     // Return commits the selected candidate.
-    const auto commit = processor.process(key(ime::fcitx5::keysym::Return), session, config);
+    const auto commit = processor.process(key(llavon::ime::keysym::Return), session, config);
     ok = ok && commit.handled && commit.commit == std::u16string(u"你");
     ok = ok && session.buffer.empty() && !session.prediction.pending;
 
     // Escape with an empty composition is not claimed by the rules.
-    const auto escape = processor.process(key(ime::fcitx5::keysym::Escape), session, config);
+    const auto escape = processor.process(key(llavon::ime::keysym::Escape), session, config);
     ok = ok && !escape.handled;
 
     // CapsLock pass-through resets the composition without consuming the key.
@@ -418,7 +418,7 @@ int run_input_processor_process_tests() {
         }
         processor.apply_phrase_override(edited);
         ok = ok && edited.buffer.segments()[0].phrase_override_chosen;
-        (void)processor.process(key(ime::fcitx5::keysym::BackSpace), edited, config);
+        (void)processor.process(key(llavon::ime::keysym::BackSpace), edited, config);
         processor.apply_phrase_override(edited);
         ok = ok && !edited.buffer.segments()[0].phrase_override_chosen;
 

@@ -15,7 +15,7 @@
 
 namespace {
 
-ime::fcitx5::protocol::ByteVector receive_frame(const ime::fcitx5::UnixSocketConnection& connection) {
+llavon::ime::protocol::ByteVector receive_frame(const llavon::ime::UnixSocketConnection& connection) {
     auto header = connection.recv_exact(4);
     std::uint32_t length = 0;
     std::memcpy(&length, header.data(), sizeof(length));
@@ -27,7 +27,7 @@ ime::fcitx5::protocol::ByteVector receive_frame(const ime::fcitx5::UnixSocketCon
 }  // namespace
 
 int run_service_transport_tests() {
-    using namespace ime::fcitx5;
+    using namespace llavon::ime;
     const auto socket_path = std::filesystem::temp_directory_path() /
                              ("llavon-ime-transport-test-" + std::to_string(getpid()) + ".sock");
     std::error_code error;

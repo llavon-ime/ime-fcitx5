@@ -9,7 +9,7 @@
 
 #include "bopomofo/keymap.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 enum class MixedSegmentKind {
     Latin,
@@ -84,4 +84,4 @@ private:
     FrequencyFn frequency_;
 };
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

@@ -1,6 +1,6 @@
 #include "symbol/symbol_menu.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 namespace {
 
@@ -106,4 +106,4 @@ bool SymbolMenuState::select(std::size_t n, char32_t& symbol) noexcept {
     return true;
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

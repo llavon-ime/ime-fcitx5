@@ -3,10 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FORMAT="${1:-}"
-VERSION="${IME_FCITX5_VERSION:-}"
-MODEL_PATH="${IME_FCITX5_PACKAGE_MODEL_PATH:-}"
+VERSION="${LLAVON_IME_VERSION:-}"
+MODEL_PATH="${LLAVON_IME_PACKAGE_MODEL_PATH:-}"
 TRIPLET="x64-linux-llavon-prebuilt"
-DIST_DIR="${IME_FCITX5_DIST_DIR:-${ROOT_DIR}/dist/linux}"
+DIST_DIR="${LLAVON_IME_DIST_DIR:-${ROOT_DIR}/dist/linux}"
 
 case "${FORMAT}" in
     deb)
@@ -20,13 +20,13 @@ case "${FORMAT}" in
         LICENSE_DIR="/usr/share/licenses/llavon-ime-fcitx5"
         ;;
     *)
-        echo "Usage: IME_FCITX5_VERSION=<version> $0 deb|rpm" >&2
+        echo "Usage: LLAVON_IME_VERSION=<version> $0 deb|rpm" >&2
         exit 2
         ;;
 esac
 
 if [[ -z "${VERSION}" || ! "${VERSION}" =~ ^[0-9][0-9A-Za-z._+~]*$ ]]; then
-    echo "IME_FCITX5_VERSION must be a package-safe version without a leading v." >&2
+    echo "LLAVON_IME_VERSION must be a package-safe version without a leading v." >&2
     exit 2
 fi
 
@@ -39,7 +39,7 @@ if [[ -z "${MODEL_PATH}" ]]; then
     fi
 fi
 if [[ ! -f "${MODEL_PATH}" || "${MODEL_PATH}" != *.gguf ]]; then
-    echo "IME_FCITX5_PACKAGE_MODEL_PATH must point to one bundled .gguf model." >&2
+    echo "LLAVON_IME_PACKAGE_MODEL_PATH must point to one bundled .gguf model." >&2
     exit 2
 fi
 
@@ -100,10 +100,10 @@ cmake \
     -DCMAKE_TOOLCHAIN_FILE="${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
     -DVCPKG_TARGET_TRIPLET="${TRIPLET}" \
     -DVCPKG_OVERLAY_TRIPLETS="${ROOT_DIR}/ime-unix-service/triplets" \
-    -DIME_FCITX5_BUILD_TESTS=ON \
-    -DIME_FCITX5_REQUIRE_ATSPI=ON \
-    -DIME_FCITX5_INSTALLED_MODEL_PATH="${MODEL_INSTALL_PATH}" \
-    -DIME_FCITX5_DISPLAY_VERSION="${VERSION}"
+    -DLLAVON_IME_BUILD_TESTS=ON \
+    -DLLAVON_IME_REQUIRE_ATSPI=ON \
+    -DLLAVON_IME_INSTALLED_MODEL_PATH="${MODEL_INSTALL_PATH}" \
+    -DLLAVON_IME_DISPLAY_VERSION="${VERSION}"
 cmake --build "${ADDON_BUILD_DIR}"
 # Some distro devel packages expose TestFrontend headers/CMake metadata but
 # omit the runtime test addon. The engine tests detect that and report

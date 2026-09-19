@@ -3,7 +3,7 @@
 #include "input/candidate_view.hpp"
 
 int run_candidate_view_tests() {
-    using ime::fcitx5::CandidateView;
+    using llavon::ime::CandidateView;
 
     bool ok = true;
 

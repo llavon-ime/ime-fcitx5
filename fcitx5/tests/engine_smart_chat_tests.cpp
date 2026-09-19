@@ -5,7 +5,7 @@
 
 #include <string>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 // 聊天情境: realistic chat messages mixing Chinese and English with
 // SmartEnglish on. Pending English words are held raw in the preedit; space

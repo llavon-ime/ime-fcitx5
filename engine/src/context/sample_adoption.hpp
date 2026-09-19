@@ -7,7 +7,7 @@
 #include <string_view>
 #include <vector>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 // One composing segment as the focused widget can show it. `rendered` is what
 // the widget displays once a candidate is visible (for a segment still being
@@ -80,4 +80,4 @@ inline std::optional<std::u16string> strip_preedit_suffix(std::u16string_view sa
     return std::nullopt;
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

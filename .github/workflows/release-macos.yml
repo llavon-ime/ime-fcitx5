@@ -163,7 +163,7 @@ jobs:
         id: package
         run: |
           set -euo pipefail
-          IME_FCITX5_VERSION="${{ steps.version.outputs.version }}" \
+          LLAVON_IME_VERSION="${{ steps.version.outputs.version }}" \
           FCITX5_MACOS_SOURCE_DIR="${RUNNER_TEMP}/fcitx5-macos" \
           FCITX5_MACOS_RUNTIME_TARBALL="${RUNNER_TEMP}/Fcitx5-arm64.tar.bz2" \
           ./scripts/package-macos.sh

@@ -5,7 +5,7 @@
 
 #include "bopomofo/keymap.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 // Pure input facts. All language decisions live in the mixed-input decoder;
 // this struct never guesses a language.
@@ -32,4 +32,4 @@ struct PendingInput {
     }
 };
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

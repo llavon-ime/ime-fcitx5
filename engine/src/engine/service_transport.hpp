@@ -13,7 +13,7 @@
 #include <queue>
 #include <thread>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 struct ServiceTransportOptions {
     std::filesystem::path socket_path;
@@ -85,4 +85,4 @@ private:
     std::chrono::steady_clock::time_point spawn_backoff_until_{};
 };
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

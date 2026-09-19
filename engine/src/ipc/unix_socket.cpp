@@ -15,7 +15,7 @@
 #define MSG_NOSIGNAL 0
 #endif
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 namespace {
 
@@ -183,4 +183,4 @@ int UnixSocketServer::native_handle() const noexcept {
     return fd_;
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

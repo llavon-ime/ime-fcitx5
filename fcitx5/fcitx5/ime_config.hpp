@@ -8,16 +8,16 @@
 
 #include "bopomofo/keymap.hpp"
 
-#ifndef IME_FCITX5_DISPLAY_VERSION
-#define IME_FCITX5_DISPLAY_VERSION "unknown"
+#ifndef LLAVON_IME_DISPLAY_VERSION
+#define LLAVON_IME_DISPLAY_VERSION "unknown"
 #endif
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 inline constexpr const char* kFcitxConfigFile = "conf/llavon-ime.conf";
 
 enum class DisplayVersion { Current };
-FCITX_CONFIG_ENUM_NAME(DisplayVersion, IME_FCITX5_DISPLAY_VERSION);
+FCITX_CONFIG_ENUM_NAME(DisplayVersion, LLAVON_IME_DISPLAY_VERSION);
 
 FCITX_CONFIG_ENUM_NAME(BopomofoKeyboardLayout, "標準", "許氏");
 
@@ -108,4 +108,4 @@ FCITX_CONFIGURATION(ImeFcitxConfig,
 Config to_shared_config(const ImeFcitxConfig& config);
 void apply_shared_config(ImeFcitxConfig& target, const Config& source);
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

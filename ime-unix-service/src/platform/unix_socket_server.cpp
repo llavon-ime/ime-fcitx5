@@ -480,6 +480,11 @@ void UnixSocketServer::accept_connections() {
         throw std::system_error(errno, std::generic_category(), "accept Unix socket");
     }
     try {
+#ifdef SO_NOSIGPIPE
+        // macOS has no MSG_NOSIGNAL; ask the socket itself not to raise SIGPIPE.
+        const int enabled = 1;
+        (void)::setsockopt(connection_fd, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled));
+#endif
         const auto uid = peer_uid(connection_fd);
         if (uid != static_cast<std::uint64_t>(::getuid())) {
             ::close(connection_fd);

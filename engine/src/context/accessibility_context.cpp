@@ -1,6 +1,7 @@
 #include "context/accessibility_context.hpp"
 
 #include "text/utf.hpp"
+#include "util/env.hpp"
 
 #include <atomic>
 #include <cstdlib>
@@ -9,11 +10,11 @@
 #include <string>
 #include <utility>
 
-#ifdef IME_FCITX5_HAVE_ATSPI
+#ifdef LLAVON_IME_HAVE_ATSPI
 #include "atspi/atspi_context_provider.hpp"
 #endif
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 AccessibilityContextProvider::AccessibilityContextProvider(size_t max_code_units)
     : max_code_units_(max_code_units) {}
@@ -121,25 +122,24 @@ private:
     std::string path_;
 };
 
-const char* non_empty_env(const char* name) {
-    const char* value = std::getenv(name);
-    return value != nullptr && value[0] != '\0' ? value : nullptr;
-}
-
 }  // namespace
 
 std::unique_ptr<AccessibilityContextProvider> create_accessibility_context_provider(size_t max_code_units) {
-    if (non_empty_env("IME_FCITX5_DISABLE_ATSPI") != nullptr) {
+    if (env_with_legacy("LLAVON_IME_DISABLE_ATSPI", "IME_FCITX5_DISABLE_ATSPI") != nullptr) {
         return std::make_unique<UnavailableContextProvider>(max_code_units, AccessibilityAvailability::Disabled,
                                                             "configured");
     }
-    if (const char* file = non_empty_env("IME_FCITX5_CONTEXT_SAMPLE_FILE"); file != nullptr) {
+    if (const char* file = env_with_legacy("LLAVON_IME_CONTEXT_SAMPLE_FILE",
+                                           "IME_FCITX5_CONTEXT_SAMPLE_FILE");
+        file != nullptr) {
         return std::make_unique<FileContextProvider>(max_code_units, file);
     }
-    if (const char* file = non_empty_env("IME_FCITX5_ATSPI_SAMPLE_FILE"); file != nullptr) {
+    if (const char* file = env_with_legacy("LLAVON_IME_ATSPI_SAMPLE_FILE",
+                                           "IME_FCITX5_ATSPI_SAMPLE_FILE");
+        file != nullptr) {
         return std::make_unique<FileContextProvider>(max_code_units, file);
     }
-#ifdef IME_FCITX5_HAVE_ATSPI
+#ifdef LLAVON_IME_HAVE_ATSPI
     return std::make_unique<AtspiContextProvider>(max_code_units);
 #else
     return std::make_unique<UnavailableContextProvider>(max_code_units, AccessibilityAvailability::Unsupported,
@@ -147,4 +147,4 @@ std::unique_ptr<AccessibilityContextProvider> create_accessibility_context_provi
 #endif
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

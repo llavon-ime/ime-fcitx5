@@ -7,7 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 TableEngine::TableEngine(std::filesystem::path table_path) {
     std::ifstream input(table_path);
@@ -29,4 +29,4 @@ std::vector<char32_t> TableEngine::lookup(std::u16string_view bopomofo) const {
     return it->second;
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

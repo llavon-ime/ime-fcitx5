@@ -16,7 +16,7 @@
 
 namespace {
 
-using namespace ime::fcitx5;
+using namespace llavon::ime;
 
 class Waiter {
 public:
@@ -58,11 +58,11 @@ bool candidates_non_empty(const protocol::Prediction& prediction, size_t index) 
 
 }  // namespace
 
-// Runs only when IME_FCITX5_REAL_SERVICE is set. The transport starts an
+// Runs only when LLAVON_IME_REAL_SERVICE is set. The transport starts an
 // isolated backend on the test socket, using the same model and runtime values
 // as the configured frontend, then shuts down only that backend.
 int run_real_service_tests() {
-    const char* enabled = std::getenv("IME_FCITX5_REAL_SERVICE");
+    const char* enabled = std::getenv("LLAVON_IME_REAL_SERVICE");
     if (enabled == nullptr || enabled[0] == '\0') return EXIT_SUCCESS;
 
     const auto config = load_config();
@@ -77,7 +77,7 @@ int run_real_service_tests() {
                               ("llavon-ime-real-service-" + std::to_string(getpid()) + ".sock");
     }
     options.model_path = config.model_path;
-    options.tables_dir = std::filesystem::path(IME_FCITX5_TEST_TABLE_PATH).parent_path();
+    options.tables_dir = std::filesystem::path(LLAVON_IME_TEST_TABLE_PATH).parent_path();
     options.context_length = static_cast<std::uint32_t>(config.context_length);
     options.threads = static_cast<std::uint32_t>(config.thread_count);
     options.gpu_layers = config.gpu_layers;

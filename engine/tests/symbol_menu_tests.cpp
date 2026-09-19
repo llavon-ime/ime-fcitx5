@@ -6,7 +6,7 @@
 int run_symbol_menu_tests() {
     bool ok = true;
 
-    const auto symbols = ime::fcitx5::mcbopomofo_symbols();
+    const auto symbols = llavon::ime::mcbopomofo_symbols();
     ok = ok && symbols.size() == 217;
     ok = ok && symbols.front() == U'　';
     ok = ok && symbols[1] == U'，';
@@ -22,7 +22,7 @@ int run_symbol_menu_tests() {
         ok = ok && unique.insert(symbol).second;
     }
 
-    ime::fcitx5::SymbolMenuState state;
+    llavon::ime::SymbolMenuState state;
     ok = ok && !state.active();
     const auto initial_epoch = state.epoch();
     state.open();

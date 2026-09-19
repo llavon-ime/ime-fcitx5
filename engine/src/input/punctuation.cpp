@@ -1,6 +1,6 @@
 #include "input/punctuation.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 std::optional<char32_t> chewing_punctuation_for_key(const InputKey& key, BopomofoKeyboardLayout layout) {
     if (key.has(InputKeyState::Alt) || key.has(InputKeyState::Super) || key.has(InputKeyState::Meta)) {
@@ -26,4 +26,4 @@ std::optional<char32_t> chewing_punctuation_for_key(const InputKey& key, Bopomof
     return lookup_chewing_punctuation_key(symbol);
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

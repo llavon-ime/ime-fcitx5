@@ -5,11 +5,11 @@
 #include "input/prediction_state.hpp"
 
 int run_prediction_state_tests() {
-    using ime::fcitx5::PredictionState;
-    using ime::fcitx5::protocol::Error;
-    using ime::fcitx5::protocol::ErrorCode;
-    using ime::fcitx5::protocol::Prediction;
-    using ime::fcitx5::protocol::SessionId;
+    using llavon::ime::PredictionState;
+    using llavon::ime::protocol::Error;
+    using llavon::ime::protocol::ErrorCode;
+    using llavon::ime::protocol::Prediction;
+    using llavon::ime::protocol::SessionId;
 
     bool ok = true;
 

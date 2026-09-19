@@ -8,7 +8,7 @@
 #include <variant>
 #include <vector>
 
-namespace ime::fcitx5::protocol {
+namespace llavon::ime::protocol {
 
 inline constexpr std::uint32_t kMaxFramePayloadBytes = 1024U * 1024U;
 inline constexpr std::uint32_t kMaxRepeatedFields = 65536U;
@@ -108,4 +108,4 @@ bool valid_scalar(char32_t value) noexcept;
 bool valid_utf16(const std::u16string& value) noexcept;
 bool is_zero(const SessionId& id) noexcept;
 
-}  // namespace ime::fcitx5::protocol
+}  // namespace llavon::ime::protocol

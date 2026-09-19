@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 // X11 keysyms the input rules route on.
 namespace keysym {
@@ -191,4 +191,4 @@ struct InputKey {
     }
 };
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

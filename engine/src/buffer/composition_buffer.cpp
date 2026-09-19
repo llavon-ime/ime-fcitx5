@@ -5,7 +5,7 @@
 #include <iterator>
 #include <utility>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 namespace {
 
@@ -572,4 +572,4 @@ void CompositionBuffer::touch() {
     ++revision_;
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

@@ -31,7 +31,7 @@ private:
 
 int run_config_tests() {
     bool ok = true;
-    auto cfg = ime::fcitx5::default_config();
+    auto cfg = llavon::ime::default_config();
     ok = ok && cfg.context_length == 512;
     ok = ok && cfg.thread_count >= 1;
     ok = ok && cfg.gpu_layers == 999;
@@ -48,8 +48,8 @@ int run_config_tests() {
     ok = ok && cfg.caps_lock_inputs_bopomofo;
     ok = ok && cfg.shift_letter_keys == "directly_output_uppercase";
 
-    auto json = ime::fcitx5::to_json(cfg);
-    auto roundtrip = ime::fcitx5::config_from_json(json);
+    auto json = llavon::ime::to_json(cfg);
+    auto roundtrip = llavon::ime::config_from_json(json);
     ok = ok && roundtrip.context_length == cfg.context_length;
     ok = ok && roundtrip.idle_timeout_seconds == cfg.idle_timeout_seconds;
     ok = ok && roundtrip.selection_keys == cfg.selection_keys;
@@ -57,38 +57,50 @@ int run_config_tests() {
     ok = ok && roundtrip.caps_lock_inputs_bopomofo == cfg.caps_lock_inputs_bopomofo;
     ok = ok && roundtrip.shift_letter_keys == cfg.shift_letter_keys;
     ok = ok && roundtrip.keyboard_layout == cfg.keyboard_layout;
-    ok = ok && ime::fcitx5::socket_path().filename() == "ime.sock";
-    ok = ok && ime::fcitx5::pid_path().filename() == "service.pid";
+    ok = ok && llavon::ime::socket_path().filename() == "ime.sock";
+    ok = ok && llavon::ime::pid_path().filename() == "service.pid";
 
     // JSON round-trip preserves the Hsu layout.
     cfg.keyboard_layout = "hsu";
-    const auto hsu_json = ime::fcitx5::to_json(cfg);
+    const auto hsu_json = llavon::ime::to_json(cfg);
     ok = ok && hsu_json.at("keyboard_layout").get<std::string>() == "hsu";
-    const auto hsu_roundtrip = ime::fcitx5::config_from_json(hsu_json);
+    const auto hsu_roundtrip = llavon::ime::config_from_json(hsu_json);
     ok = ok && hsu_roundtrip.keyboard_layout == "hsu";
     cfg.keyboard_layout = "standard";
 
     ScopedEnv xdg_config("XDG_CONFIG_HOME");
     ScopedEnv xdg_runtime("XDG_RUNTIME_DIR");
     ScopedEnv home("HOME");
-    ScopedEnv config_override("IME_FCITX5_CONFIG_PATH");
-    ScopedEnv phrase_overrides_override("IME_FCITX5_PHRASE_OVERRIDES_PATH");
+    ScopedEnv config_override("LLAVON_IME_CONFIG_PATH");
+    ScopedEnv phrase_overrides_override("LLAVON_IME_PHRASE_OVERRIDES_PATH");
     setenv("XDG_CONFIG_HOME", "", 1);
     setenv("XDG_RUNTIME_DIR", "", 1);
     setenv("HOME", "/tmp/ime-home", 1);
-    unsetenv("IME_FCITX5_CONFIG_PATH");
-    unsetenv("IME_FCITX5_PHRASE_OVERRIDES_PATH");
-    ok = ok && ime::fcitx5::config_path() == "/tmp/ime-home/.config/fcitx5/conf/llavon-ime.conf";
-    ok = ok && ime::fcitx5::legacy_config_path() == "/tmp/ime-home/.config/llavon-ime/config.json";
-    ok = ok && ime::fcitx5::phrase_overrides_path() == "/tmp/ime-home/.config/llavon-ime/phrase_overrides.txt";
-    ok = ok && ime::fcitx5::runtime_dir() == std::filesystem::temp_directory_path() / "llavon-ime";
+    unsetenv("LLAVON_IME_CONFIG_PATH");
+    unsetenv("LLAVON_IME_PHRASE_OVERRIDES_PATH");
+    ok = ok && llavon::ime::config_path() == "/tmp/ime-home/.config/fcitx5/conf/llavon-ime.conf";
+    ok = ok && llavon::ime::legacy_config_path() == "/tmp/ime-home/.config/llavon-ime/config.json";
+    ok = ok && llavon::ime::phrase_overrides_path() == "/tmp/ime-home/.config/llavon-ime/phrase_overrides.txt";
+
+    // The pre-rename environment variable names keep working.
+    {
+        ScopedEnv legacy_config_override("IME_FCITX5_CONFIG_PATH");
+        ScopedEnv legacy_phrase_overrides_override("IME_FCITX5_PHRASE_OVERRIDES_PATH");
+        setenv("IME_FCITX5_CONFIG_PATH", "/tmp/ime-legacy/llavon-ime.conf", 1);
+        setenv("IME_FCITX5_PHRASE_OVERRIDES_PATH", "/tmp/ime-legacy/phrase_overrides.txt", 1);
+        ok = ok && llavon::ime::config_path() == "/tmp/ime-legacy/llavon-ime.conf";
+        ok = ok && llavon::ime::phrase_overrides_path() == "/tmp/ime-legacy/phrase_overrides.txt";
+        unsetenv("IME_FCITX5_CONFIG_PATH");
+        unsetenv("IME_FCITX5_PHRASE_OVERRIDES_PATH");
+    }
+    ok = ok && llavon::ime::runtime_dir() == std::filesystem::temp_directory_path() / "llavon-ime";
 
     const auto config_root = std::filesystem::temp_directory_path() / "llavon-ime-config-test";
     std::filesystem::remove_all(config_root);
     setenv("XDG_CONFIG_HOME", config_root.c_str(), 1);
-    std::filesystem::create_directories(ime::fcitx5::config_path().parent_path());
+    std::filesystem::create_directories(llavon::ime::config_path().parent_path());
     {
-        std::ofstream output(ime::fcitx5::config_path());
+        std::ofstream output(llavon::ime::config_path());
         output << "ModelPath=/tmp/model.gguf\n"
                << "ContextLength=1024\n"
                << "ThreadCount=2\n"
@@ -106,7 +118,7 @@ int run_config_tests() {
                << "CapsLockInputsBopomofo=False\n"
                << "ShiftLetterKeys=直接放入組字區\n";
     }
-    const auto loaded = ime::fcitx5::load_config();
+    const auto loaded = llavon::ime::load_config();
     ok = ok && loaded.model_path == "/tmp/model.gguf";
     ok = ok && loaded.context_length == 1024;
     ok = ok && loaded.thread_count == 2;
@@ -125,28 +137,28 @@ int run_config_tests() {
     ok = ok && loaded.shift_letter_keys == "directly_put_to_buffer";
 
     {
-        std::ofstream output(ime::fcitx5::config_path());
+        std::ofstream output(llavon::ime::config_path());
         output << "ModelPath=\"/Library/Application Support/llavon-ime/models/model.gguf\"\n";
     }
-    const auto quoted_space_loaded = ime::fcitx5::load_config();
+    const auto quoted_space_loaded = llavon::ime::load_config();
     ok = ok && quoted_space_loaded.model_path == "/Library/Application Support/llavon-ime/models/model.gguf";
 
     {
-        std::ofstream output(ime::fcitx5::config_path());
+        std::ofstream output(llavon::ime::config_path());
         output << "ModelPath=/Library/Application\\ Support/llavon-ime/models/model.gguf\n";
     }
-    const auto escaped_space_loaded = ime::fcitx5::load_config();
+    const auto escaped_space_loaded = llavon::ime::load_config();
     ok = ok && escaped_space_loaded.model_path == "/Library/Application Support/llavon-ime/models/model.gguf";
 
     {
-        std::ofstream output(ime::fcitx5::config_path());
+        std::ofstream output(llavon::ime::config_path());
         output << "BopomofoKeyboardLayout=標準\n"
                << "SelectionKeys=左手鍵\n"
                << "CandidateLayout=垂直\n"
                << "SelectPhrase=游標後\n"
                << "CapsLockInputsBopomofo=True\n";
     }
-    const auto chinese_loaded = ime::fcitx5::load_config();
+    const auto chinese_loaded = llavon::ime::load_config();
     ok = ok && chinese_loaded.keyboard_layout == "standard";
     ok = ok && chinese_loaded.selection_keys == "asdfzxcvb";
     ok = ok && chinese_loaded.candidate_layout == "vertical";
@@ -155,69 +167,69 @@ int run_config_tests() {
 
     // Legacy ShiftLetterKeys value aliases normalize to the new name.
     {
-        std::ofstream output(ime::fcitx5::config_path());
+        std::ofstream output(llavon::ime::config_path());
         output << "ShiftLetterKeys=小寫放入組字區\n";
     }
-    const auto legacy_shift_keys_loaded = ime::fcitx5::load_config();
+    const auto legacy_shift_keys_loaded = llavon::ime::load_config();
     ok = ok && legacy_shift_keys_loaded.shift_letter_keys == "directly_put_to_buffer";
 
     // Legacy nine-key digit configuration normalizes to Chewing's 1..9,0 order.
     {
-        std::ofstream output(ime::fcitx5::config_path());
+        std::ofstream output(llavon::ime::config_path());
         output << "SelectionKeys=123456789\n";
     }
-    const auto legacy_digit_keys_loaded = ime::fcitx5::load_config();
+    const auto legacy_digit_keys_loaded = llavon::ime::load_config();
     ok = ok && legacy_digit_keys_loaded.selection_keys == "1234567890";
 
     // Hsu layout aliases normalize to "hsu"; invalid values fall back.
     for (const char* value : {"hsu", "Hsu", "許氏", "許氏鍵盤"}) {
         {
-            std::ofstream output(ime::fcitx5::config_path());
+            std::ofstream output(llavon::ime::config_path());
             output << "BopomofoKeyboardLayout=" << value << "\n";
         }
-        const auto loaded = ime::fcitx5::load_config();
+        const auto loaded = llavon::ime::load_config();
         ok = ok && loaded.keyboard_layout == "hsu";
     }
     {
-        std::ofstream output(ime::fcitx5::config_path());
+        std::ofstream output(llavon::ime::config_path());
         output << "BopomofoKeyboardLayout=diagonal\n";
     }
-    const auto invalid_layout_loaded = ime::fcitx5::load_config();
-    ok = ok && invalid_layout_loaded.keyboard_layout == ime::fcitx5::default_config().keyboard_layout;
+    const auto invalid_layout_loaded = llavon::ime::load_config();
+    ok = ok && invalid_layout_loaded.keyboard_layout == llavon::ime::default_config().keyboard_layout;
 
-    const auto invalid = ime::fcitx5::config_from_json(nlohmann::json::parse(
+    const auto invalid = llavon::ime::config_from_json(nlohmann::json::parse(
         R"({"model_path":"/tmp/valid.gguf","keyboard_layout":"diagonal","selection_keys":"bad","selection_key_count":99,"candidate_page_size":0,"candidate_layout":"diagonal","space_selects_candidate":"yes","select_phrase":"near_cursor","move_cursor_after_selection":true,"shift_letter_keys":"diagonal"})"));
     ok = ok && invalid.model_path == "/tmp/valid.gguf";
-    ok = ok && invalid.keyboard_layout == ime::fcitx5::default_config().keyboard_layout;
-    ok = ok && invalid.selection_keys == ime::fcitx5::default_config().selection_keys;
-    ok = ok && invalid.selection_key_count == ime::fcitx5::default_config().selection_key_count;
-    ok = ok && invalid.candidate_page_size == ime::fcitx5::default_config().candidate_page_size;
-    ok = ok && invalid.candidate_layout == ime::fcitx5::default_config().candidate_layout;
-    ok = ok && invalid.space_selects_candidate == ime::fcitx5::default_config().space_selects_candidate;
-    ok = ok && invalid.select_phrase == ime::fcitx5::default_config().select_phrase;
+    ok = ok && invalid.keyboard_layout == llavon::ime::default_config().keyboard_layout;
+    ok = ok && invalid.selection_keys == llavon::ime::default_config().selection_keys;
+    ok = ok && invalid.selection_key_count == llavon::ime::default_config().selection_key_count;
+    ok = ok && invalid.candidate_page_size == llavon::ime::default_config().candidate_page_size;
+    ok = ok && invalid.candidate_layout == llavon::ime::default_config().candidate_layout;
+    ok = ok && invalid.space_selects_candidate == llavon::ime::default_config().space_selects_candidate;
+    ok = ok && invalid.select_phrase == llavon::ime::default_config().select_phrase;
     ok = ok && invalid.move_cursor_after_selection;
-    ok = ok && invalid.caps_lock_inputs_bopomofo == ime::fcitx5::default_config().caps_lock_inputs_bopomofo;
-    ok = ok && invalid.shift_letter_keys == ime::fcitx5::default_config().shift_letter_keys;
+    ok = ok && invalid.caps_lock_inputs_bopomofo == llavon::ime::default_config().caps_lock_inputs_bopomofo;
+    ok = ok && invalid.shift_letter_keys == llavon::ime::default_config().shift_letter_keys;
 
-    std::filesystem::remove(ime::fcitx5::config_path());
-    std::filesystem::create_directories(ime::fcitx5::legacy_config_path().parent_path());
+    std::filesystem::remove(llavon::ime::config_path());
+    std::filesystem::create_directories(llavon::ime::legacy_config_path().parent_path());
     {
-        std::ofstream output(ime::fcitx5::legacy_config_path());
+        std::ofstream output(llavon::ime::legacy_config_path());
         output << R"({"model_path":"/tmp/legacy.gguf","gpu_layers":7})";
     }
-    const auto legacy_loaded = ime::fcitx5::load_config();
+    const auto legacy_loaded = llavon::ime::load_config();
     ok = ok && legacy_loaded.model_path == "/tmp/legacy.gguf";
     ok = ok && legacy_loaded.gpu_layers == 7;
 
     bool malformed_uses_default = false;
     {
-        std::ofstream output(ime::fcitx5::config_path());
+        std::ofstream output(llavon::ime::config_path());
         output << "not json";
     }
     try {
-        const auto malformed = ime::fcitx5::load_config();
-        malformed_uses_default = malformed.model_path == ime::fcitx5::default_config().model_path &&
-                                 malformed.context_length == ime::fcitx5::default_config().context_length;
+        const auto malformed = llavon::ime::load_config();
+        malformed_uses_default = malformed.model_path == llavon::ime::default_config().model_path &&
+                                 malformed.context_length == llavon::ime::default_config().context_length;
     } catch (...) {
         malformed_uses_default = false;
     }

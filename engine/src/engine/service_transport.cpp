@@ -20,7 +20,7 @@
 #include <system_error>
 #include <utility>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 namespace {
 
@@ -86,6 +86,11 @@ int connect_socket(const std::filesystem::path& path) {
         ::close(fd);
         return -1;
     }
+#ifdef SO_NOSIGPIPE
+    // macOS has no MSG_NOSIGNAL; ask the socket itself not to raise SIGPIPE.
+    const int enabled = 1;
+    (void)::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled));
+#endif
     return fd;
 }
 
@@ -172,9 +177,9 @@ std::filesystem::path ServiceTransport::default_socket_path() {
 
 std::filesystem::path ServiceTransport::default_service_path() {
     if (auto value = env_path("LLAVON_IME_UNIX_SERVICE_PATH"); !value.empty()) return value;
-#ifdef IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH
-    if (std::filesystem::exists(IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH)) {
-        return IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH;
+#ifdef LLAVON_IME_INSTALLED_UNIX_SERVICE_PATH
+    if (std::filesystem::exists(LLAVON_IME_INSTALLED_UNIX_SERVICE_PATH)) {
+        return LLAVON_IME_INSTALLED_UNIX_SERVICE_PATH;
     }
 #endif
 #ifdef __APPLE__
@@ -410,6 +415,6 @@ void ServiceTransport::observe_response(const protocol::Message& response) {
     }
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime
 
 #endif

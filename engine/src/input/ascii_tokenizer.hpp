@@ -4,7 +4,7 @@
 #include <string_view>
 #include <vector>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 // Generic ASCII grammar classification. The tokenizer knows nothing about
 // specific websites, domains, or English words; it only classifies spans of
@@ -43,4 +43,4 @@ struct AsciiToken {
 //   OperatorOrSymbol everything else, one character at a time
 std::vector<AsciiToken> tokenize_ascii(std::u16string_view raw, size_t begin);
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

@@ -7,7 +7,7 @@
 #include <nlohmann/json.hpp>
 #include <utility>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 FallbackEngine::FallbackEngine(std::filesystem::path table_path) : table_(table_path) {
     std::ifstream input(table_path.parent_path() / "tokens" / "latin.json");
@@ -111,4 +111,4 @@ std::vector<char32_t> FallbackEngine::append_alternative_candidates(
     return merged;
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

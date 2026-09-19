@@ -7,7 +7,7 @@
 #include "phrase_override/phrase_override_store.hpp"
 
 int run_phrase_override_store_tests() {
-    using ime::fcitx5::PhraseOverrideStore;
+    using llavon::ime::PhraseOverrideStore;
 
     bool ok = true;
     const auto root = std::filesystem::temp_directory_path() / "llavon-ime-user-phrase-test";
@@ -39,12 +39,12 @@ int run_phrase_override_store_tests() {
     const std::vector<std::u16string> test_readings{u"ㄩˇ", u"ㄨㄣˊ", u"ㄔㄥˊ", u"ㄧㄠˋ"};
     ok = ok && reloaded.lookup(test_readings) == std::optional<std::u16string>(u"宇文澄曜");
 
-    const std::vector<ime::fcitx5::PhraseOverrideRecord> replacement{
+    const std::vector<llavon::ime::PhraseOverrideRecord> replacement{
         {u"歐陽芷珩", readings}, {u"宇文澄曜", test_readings}};
     ok = ok && reloaded.replace(replacement);
     ok = ok && reloaded.entries().size() == 2;
     ok = ok && reloaded.lookup(normalized_readings) == std::optional<std::u16string>(u"歐陽芷珩");
-    const std::vector<ime::fcitx5::PhraseOverrideRecord> invalid_replacement{{u"宇文澄", test_readings}};
+    const std::vector<llavon::ime::PhraseOverrideRecord> invalid_replacement{{u"宇文澄", test_readings}};
     ok = ok && !reloaded.replace(invalid_replacement);
     ok = ok && reloaded.entries().size() == 2;
 

@@ -3,11 +3,11 @@
 #include "input/input_key.hpp"
 
 int run_input_key_tests() {
-    using ime::fcitx5::input_key_state;
-    using ime::fcitx5::InputKey;
-    using ime::fcitx5::InputKeyState;
-    using ime::fcitx5::is_shifted_ascii_symbol;
-    using ime::fcitx5::shifted_ascii_symbol;
+    using llavon::ime::input_key_state;
+    using llavon::ime::InputKey;
+    using llavon::ime::InputKeyState;
+    using llavon::ime::is_shifted_ascii_symbol;
+    using llavon::ime::shifted_ascii_symbol;
 
     bool ok = true;
 

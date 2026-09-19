@@ -178,7 +178,7 @@ void print_snapshot(AtspiAccessible* obj, const char* why) {
     std::u16string utf16;
     if (raw != nullptr) {
         try {
-            utf16 = ime::fcitx5::utf8_prefix_tail(raw, request_end - request_start, kWindowCodeUnits);
+            utf16 = llavon::ime::utf8_prefix_tail(raw, request_end - request_start, kWindowCodeUnits);
         } catch (const std::runtime_error&) {
             std::printf("[%s] malformed UTF-8 from the accessibility bus\n", why);
         }
@@ -188,13 +188,13 @@ void print_snapshot(AtspiAccessible* obj, const char* why) {
     g_free(name);
     g_free(role);
 
-    ime::fcitx5::CaretPrefixSampler sampler(kWindowCodeUnits);
+    llavon::ime::CaretPrefixSampler sampler(kWindowCodeUnits);
     sampler.set_text(std::move(utf16), kWindowCodeUnits);
 
     const std::u16string& prefix = sampler.text_before_caret();
     std::string printable;
     try {
-        printable = ime::fcitx5::u16_to_utf8(prefix);
+        printable = llavon::ime::u16_to_utf8(prefix);
     } catch (const std::runtime_error&) {
     }
     const size_t show = printable.size() < 240 ? printable.size() : 240;

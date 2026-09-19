@@ -2,7 +2,7 @@
 
 #include <unordered_map>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 namespace {
 
@@ -309,4 +309,4 @@ BopomofoKeyResult apply_bopomofo_key(Syllable& syllable, BopomofoKeyboardLayout 
     return result;
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

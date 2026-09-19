@@ -5,7 +5,7 @@
 #include <string>
 #include <utility>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 namespace {
 
@@ -250,4 +250,4 @@ std::vector<AsciiToken> tokenize_ascii(std::u16string_view raw, size_t begin) {
     return tokens;
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

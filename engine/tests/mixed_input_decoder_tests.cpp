@@ -11,7 +11,7 @@
 #include "engine/fallback_engine.hpp"
 #include "text/utf.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 namespace {
 
@@ -464,9 +464,9 @@ private:
 
 }  // namespace
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime
 
 int run_mixed_input_decoder_tests() {
-    ime::fcitx5::DecoderTest test(IME_FCITX5_TEST_TABLE_PATH);
+    llavon::ime::DecoderTest test(LLAVON_IME_TEST_TABLE_PATH);
     return test.run() ? EXIT_SUCCESS : EXIT_FAILURE;
 }

@@ -87,7 +87,7 @@ jobs:
           set -euo pipefail
           cmake -S fcitx5 -B build/fcitx5 -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DIME_FCITX5_BUILD_TESTS=ON
+            -DLLAVON_IME_BUILD_TESTS=ON
           cmake --build build/fcitx5
           ctest --test-dir build/fcitx5 --output-on-failure
 

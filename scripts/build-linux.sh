@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODEL_FILE="llavon-ime-llama-250m-Q4_K_M.gguf"
-MODEL_URL="${IME_FCITX5_MODEL_URL:-https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF/resolve/main/${MODEL_FILE}}"
-MODEL_DIR="${IME_FCITX5_MODEL_DIR:-${ROOT_DIR}/models}"
+MODEL_URL="${LLAVON_IME_MODEL_URL:-https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF/resolve/main/${MODEL_FILE}}"
+MODEL_DIR="${LLAVON_IME_MODEL_DIR:-${ROOT_DIR}/models}"
 MODEL_PATH="${MODEL_DIR}/${MODEL_FILE}"
 MODEL_INSTALL_PATH="/usr/share/llavon-ime/models/${MODEL_FILE}"
 
@@ -33,7 +33,7 @@ if ! pkg-config --exists atspi-2; then
     echo "      Install them (e.g. at-spi2-core-devel / libatspi2.0-dev / at-spi2-core) to enable it." >&2
 fi
 
-DISPLAY_VERSION="${IME_FCITX5_VERSION:-}"
+DISPLAY_VERSION="${LLAVON_IME_VERSION:-}"
 if [[ -z "${DISPLAY_VERSION}" ]]; then
     describe="$(git -C "${ROOT_DIR}" describe --long --tags --abbrev=7 2>/dev/null || true)"
     if [[ -n "${describe}" ]]; then
@@ -97,8 +97,8 @@ echo "Building and testing fcitx5 addon..."
 (
     cd "${ROOT_DIR}/fcitx5"
     cmake --preset linux \
-        -DIME_FCITX5_INSTALLED_MODEL_PATH="${MODEL_INSTALL_PATH}" \
-        -DIME_FCITX5_DISPLAY_VERSION="${DISPLAY_VERSION}" \
+        -DLLAVON_IME_INSTALLED_MODEL_PATH="${MODEL_INSTALL_PATH}" \
+        -DLLAVON_IME_DISPLAY_VERSION="${DISPLAY_VERSION}" \
         ${LLAVON_DEBUG_FLAG}
     cmake --build --preset linux --parallel
     ctest --preset linux

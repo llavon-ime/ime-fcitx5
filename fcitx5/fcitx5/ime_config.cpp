@@ -1,6 +1,6 @@
 #include "fcitx5/ime_config.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 namespace {
 
@@ -134,4 +134,4 @@ void apply_shared_config(ImeFcitxConfig& target, const Config& source) {
     (void)target.smartEnglish.setValue(source.smart_english);
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

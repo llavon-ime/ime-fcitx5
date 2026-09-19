@@ -8,7 +8,7 @@
 #include "debug/debug_log.hpp"
 #include "text/utf.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 // Debug logging for the prediction context: the text handed to and taken from
 // the model, truncated to keep the log readable.
@@ -31,4 +31,4 @@ inline void log_context(const char* source, std::u16string_view text) {
 inline void log_context(const char*, std::u16string_view) {}
 #endif
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

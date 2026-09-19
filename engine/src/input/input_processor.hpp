@@ -18,7 +18,7 @@
 #include "protocol/protocol.hpp"
 #include "symbol/symbol_menu.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 // Config values the candidate-list key rules depend on.
 struct CandidateKeyConfig {
@@ -199,4 +199,4 @@ private:
     StateObserver state_observer_;
 };
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

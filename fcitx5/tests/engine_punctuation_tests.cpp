@@ -4,7 +4,7 @@
 
 #include <string>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 void engine_test_punctuation_tests(fcitx::Instance* instance) {
     instance->eventDispatcher().schedule([instance]() {

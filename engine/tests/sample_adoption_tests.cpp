@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 namespace {
 
 bool check(bool condition, const char* message) {
@@ -107,10 +107,10 @@ bool test_surrogate_pair_preedit() {
 }
 
 }  // namespace
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime
 
 int run_sample_adoption_tests() {
-    using namespace ime::fcitx5;
+    using namespace llavon::ime;
     bool ok = true;
     ok &= test_no_segments_keeps_sample();
     ok &= test_strips_current_rendered_preedit();

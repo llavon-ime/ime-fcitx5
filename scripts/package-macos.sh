@@ -3,19 +3,19 @@ set -euo pipefail
 export COPYFILE_DISABLE=1
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${IME_FCITX5_VERSION:-0.2.1}"
+VERSION="${LLAVON_IME_VERSION:-0.2.1}"
 ARCH="$(uname -m)"
-PAYLOAD_PREFIX="${IME_FCITX5_MACOS_PAYLOAD_PREFIX:-/Library/Application Support/llavon-ime/payload}"
-BUILD_DIR="${IME_FCITX5_BUILD_DIR:-${ROOT_DIR}/build/package-llavon-ime-macos-${ARCH}}"
-UNIX_SERVICE_BUILD_DIR="${IME_FCITX5_UNIX_SERVICE_BUILD_DIR:-${ROOT_DIR}/build/package-llavon-ime-unix-service-macos-${ARCH}}"
-DIST_DIR="${IME_FCITX5_DIST_DIR:-${ROOT_DIR}/dist/macos}"
+PAYLOAD_PREFIX="${LLAVON_IME_MACOS_PAYLOAD_PREFIX:-/Library/Application Support/llavon-ime/payload}"
+BUILD_DIR="${LLAVON_IME_BUILD_DIR:-${ROOT_DIR}/build/package-llavon-ime-macos-${ARCH}}"
+UNIX_SERVICE_BUILD_DIR="${LLAVON_IME_UNIX_SERVICE_BUILD_DIR:-${ROOT_DIR}/build/package-llavon-ime-unix-service-macos-${ARCH}}"
+DIST_DIR="${LLAVON_IME_DIST_DIR:-${ROOT_DIR}/dist/macos}"
 PKGROOT="${DIST_DIR}/pkgroot"
-PKG_IDENTIFIER="${IME_FCITX5_PKG_IDENTIFIER:-llavon-ime}"
-VCPKG_FEATURES="${IME_FCITX5_VCPKG_FEATURES:-llama-metal}"
+PKG_IDENTIFIER="${LLAVON_IME_PKG_IDENTIFIER:-llavon-ime}"
+VCPKG_FEATURES="${LLAVON_IME_VCPKG_FEATURES:-llama-metal}"
 FCITX5_MACOS_SOURCE_DIR="${FCITX5_MACOS_SOURCE_DIR:-${1:-}}"
 FCITX5_MACOS_VERSION="${FCITX5_MACOS_VERSION:-0.3.7}"
 FCITX5_MACOS_RUNTIME_TARBALL="${FCITX5_MACOS_RUNTIME_TARBALL:-}"
-MODEL_PATH="${IME_FCITX5_PACKAGE_MODEL_PATH:-}"
+MODEL_PATH="${LLAVON_IME_PACKAGE_MODEL_PATH:-}"
 MODEL_INSTALL_DIR="/Library/Application Support/llavon-ime/models"
 MODEL_INSTALL_PATH=""
 
@@ -61,21 +61,21 @@ if [[ -z "${MODEL_PATH}" ]]; then
         cat >&2 <<'EOF'
 No .gguf model was found under models/.
 
-Set IME_FCITX5_PACKAGE_MODEL_PATH=/path/to/model.gguf to build the installer with a bundled model.
+Set LLAVON_IME_PACKAGE_MODEL_PATH=/path/to/model.gguf to build the installer with a bundled model.
 EOF
         exit 2
     else
         cat >&2 <<'EOF'
 Multiple .gguf models were found under models/.
 
-Set IME_FCITX5_PACKAGE_MODEL_PATH=/path/to/model.gguf to choose the model bundled in the installer.
+Set LLAVON_IME_PACKAGE_MODEL_PATH=/path/to/model.gguf to choose the model bundled in the installer.
 EOF
         exit 2
     fi
 fi
 
 if [[ ! -f "${MODEL_PATH}" || "${MODEL_PATH}" != *.gguf ]]; then
-    echo "IME_FCITX5_PACKAGE_MODEL_PATH must point to a .gguf file: ${MODEL_PATH}" >&2
+    echo "LLAVON_IME_PACKAGE_MODEL_PATH must point to a .gguf file: ${MODEL_PATH}" >&2
     exit 2
 fi
 
@@ -123,14 +123,14 @@ cmake_args=(
     -G Ninja
     -DCMAKE_BUILD_TYPE=Release
     -DCMAKE_TOOLCHAIN_FILE="${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake"
-    -DIME_FCITX5_BUILD_TESTS=ON
+    -DLLAVON_IME_BUILD_TESTS=ON
     -DFCITX5_MACOS_SOURCE_DIR="${FCITX5_MACOS_SOURCE_DIR}"
     -DCMAKE_INSTALL_PREFIX="${PAYLOAD_PREFIX}"
     -DFCITX_INSTALL_ADDONDIR=lib/fcitx5
     -DFCITX_INSTALL_PKGDATADIR=share/fcitx5
-    -DIME_FCITX5_FCITX_PLUGIN_DIR=plugin
-    -DIME_FCITX5_INSTALLED_MODEL_PATH="${MODEL_INSTALL_PATH}"
-    -DIME_FCITX5_DISPLAY_VERSION="${VERSION}"
+    -DLLAVON_IME_FCITX_PLUGIN_DIR=plugin
+    -DLLAVON_IME_INSTALLED_MODEL_PATH="${MODEL_INSTALL_PATH}"
+    -DLLAVON_IME_DISPLAY_VERSION="${VERSION}"
 )
 
 cmake "${cmake_args[@]}"

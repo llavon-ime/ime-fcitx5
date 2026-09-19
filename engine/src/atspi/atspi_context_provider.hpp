@@ -4,7 +4,7 @@
 
 #include <memory>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 // AT-SPI2 backend: samples the focused editable widget through the
 // accessibility bus with a worker thread running its own GLib main loop.
@@ -26,4 +26,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

@@ -12,7 +12,7 @@
 #include <fstream>
 #include <string>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 // Shift+Left/Right marks a range inside the composition and Enter stores the
 // marked text as a phrase override without committing (McBopomofo's marking mode).
@@ -23,7 +23,7 @@ void engine_test_phrase_overrides(fcitx::Instance* instance) {
         EngineHarness harness(instance);
         FCITX_ASSERT(harness.input_context());
 
-        const auto* path_value = std::getenv("IME_FCITX5_PHRASE_OVERRIDES_PATH");
+        const auto* path_value = std::getenv("LLAVON_IME_PHRASE_OVERRIDES_PATH");
         FCITX_ASSERT(path_value != nullptr);
         const std::filesystem::path path(path_value);
 
@@ -62,7 +62,7 @@ void engine_test_phrase_overrides(fcitx::Instance* instance) {
         auto* addon = instance->addonManager().addon("llavon-ime");
         const auto* sub_config = addon->getSubConfig("phraseoverrides");
         FCITX_ASSERT(sub_config != nullptr);
-        const auto* editor = static_cast<const ime::fcitx5::PhraseOverrideEditorConfig*>(sub_config);
+        const auto* editor = static_cast<const llavon::ime::PhraseOverrideEditorConfig*>(sub_config);
         FCITX_ASSERT(editor->entries->size() == 1);
         FCITX_ASSERT(editor->entries->front().phrase.value() == original_name);
         FCITX_ASSERT(editor->entries->front().readings.value() == "ㄡ-ㄧㄤˊ-ㄓˇ-ㄏㄥˊ");
@@ -117,17 +117,17 @@ void engine_test_phrase_overrides(fcitx::Instance* instance) {
         {
             auto* state = harness.engine_state();
             FCITX_ASSERT(state != nullptr);
-            FCITX_ASSERT(state->session.buffer.segments().size() == 2);
-            FCITX_ASSERT(state->session.buffer.segments()[0].phrase_override_chosen);
-            FCITX_ASSERT(state->session.buffer.segments()[1].phrase_override_chosen);
+            FCITX_ASSERT(state->session->buffer.segments().size() == 2);
+            FCITX_ASSERT(state->session->buffer.segments()[0].phrase_override_chosen);
+            FCITX_ASSERT(state->session->buffer.segments()[1].phrase_override_chosen);
         }
         harness.type("su3");
         {
             auto* state = harness.engine_state();
             FCITX_ASSERT(state != nullptr);
-            FCITX_ASSERT(state->session.buffer.segments().size() == 3);
-            FCITX_ASSERT(state->session.buffer.segments()[0].phrase_override_chosen);
-            FCITX_ASSERT(state->session.buffer.segments()[1].phrase_override_chosen);
+            FCITX_ASSERT(state->session->buffer.segments().size() == 3);
+            FCITX_ASSERT(state->session->buffer.segments()[0].phrase_override_chosen);
+            FCITX_ASSERT(state->session->buffer.segments()[1].phrase_override_chosen);
         }
         FCITX_ASSERT(harness.preedit().rfind("你好", 0) == 0);
         harness.expect_commit("你好你");
@@ -156,9 +156,9 @@ void engine_test_phrase_overrides(fcitx::Instance* instance) {
         {
             auto* state = harness.engine_state();
             FCITX_ASSERT(state != nullptr);
-            FCITX_ASSERT(state->session.buffer.segments()[1].manually_chosen);
-            FCITX_ASSERT(!state->session.buffer.segments()[1].phrase_override_chosen);
-            FCITX_ASSERT(!state->session.buffer.segments()[0].phrase_override_chosen);
+            FCITX_ASSERT(state->session->buffer.segments()[1].manually_chosen);
+            FCITX_ASSERT(!state->session->buffer.segments()[1].phrase_override_chosen);
+            FCITX_ASSERT(!state->session->buffer.segments()[0].phrase_override_chosen);
         }
         harness.expect_commit(harness.preedit());
     });

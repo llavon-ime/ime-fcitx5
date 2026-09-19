@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 // Page and cursor math for a candidate list. The owner keeps the candidate
 // text; this type tracks only which page and row the user is on. The
@@ -97,4 +97,4 @@ struct CandidateView {
     }
 };
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

@@ -5,7 +5,7 @@
 
 #include "text/utf.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 namespace {
 
@@ -233,4 +233,4 @@ bool PhraseOverrideStore::save() const {
     return false;
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

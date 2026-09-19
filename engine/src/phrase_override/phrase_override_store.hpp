@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 struct PhraseOverrideRecord {
     std::u16string phrase;
@@ -46,4 +46,4 @@ private:
     std::map<std::string, std::u16string> phrases_;
 };
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

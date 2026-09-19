@@ -2,7 +2,7 @@
 
 #include <string>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 class Syllable {
 public:
@@ -38,4 +38,4 @@ bool is_bopomofo_medial(char32_t symbol);
 bool is_bopomofo_final(char32_t symbol);
 bool is_bopomofo_tone(char32_t symbol);
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

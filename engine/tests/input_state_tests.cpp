@@ -3,14 +3,14 @@
 #include "input/input_state.hpp"
 
 int run_input_state_tests() {
-    using ime::fcitx5::escape_action;
-    using ime::fcitx5::EscapeAction;
-    using ime::fcitx5::input_state_kind;
-    using ime::fcitx5::InputState;
-    using ime::fcitx5::InputStateKind;
-    using ime::fcitx5::make_input_state;
-    using ime::fcitx5::transition_input_state;
-    using ime::fcitx5::valid_input_state_transition;
+    using llavon::ime::escape_action;
+    using llavon::ime::EscapeAction;
+    using llavon::ime::input_state_kind;
+    using llavon::ime::InputState;
+    using llavon::ime::InputStateKind;
+    using llavon::ime::make_input_state;
+    using llavon::ime::transition_input_state;
+    using llavon::ime::valid_input_state_transition;
 
     bool ok = true;
     ok = ok && valid_input_state_transition(InputStateKind::Empty, InputStateKind::Empty);

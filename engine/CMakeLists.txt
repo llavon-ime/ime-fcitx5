@@ -3,32 +3,32 @@
 # This directory can be embedded from a host project (the fcitx5 addon today,
 # the macOS frontend later) with add_subdirectory. Variables normally provided
 # by the enclosing project when embedded:
-#   IME_FCITX5_UNIX_SERVICE_NAME          (defaults to llavon-ime-unix-service)
-#   IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH
-#   IME_FCITX5_INSTALLED_MODEL_PATH
-#   IME_FCITX5_TABLE_SOURCE_DIR
+#   LLAVON_IME_UNIX_SERVICE_NAME          (defaults to llavon-ime-unix-service)
+#   LLAVON_IME_INSTALLED_UNIX_SERVICE_PATH
+#   LLAVON_IME_INSTALLED_MODEL_PATH
+#   LLAVON_IME_TABLE_SOURCE_DIR
 #   LLAVON_IME_DEBUG
-#
-# TODO(phase 7): drop the IME_FCITX5_* names once the host adapters no longer
-# depend on them.
 
 include(GNUInstallDirs)
 
 option(LLAVON_IME_ENGINE_BUILD_TESTS "Build llavon-ime engine tests" ON)
-option(IME_FCITX5_REQUIRE_ATSPI "Fail configuration when the AT-SPI backend is unavailable" OFF)
+option(LLAVON_IME_REQUIRE_ATSPI "Fail configuration when the AT-SPI backend is unavailable" OFF)
 
-set(IME_FCITX5_UNIX_SERVICE_NAME "llavon-ime-unix-service" CACHE STRING "Installed Unix service executable name")
-if(NOT DEFINED IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH)
-    set(IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH "${CMAKE_INSTALL_FULL_BINDIR}/${IME_FCITX5_UNIX_SERVICE_NAME}")
+set(LLAVON_IME_UNIX_SERVICE_NAME "llavon-ime-unix-service" CACHE STRING "Installed Unix service executable name")
+if(NOT DEFINED LLAVON_IME_INSTALLED_UNIX_SERVICE_PATH)
+    set(LLAVON_IME_INSTALLED_UNIX_SERVICE_PATH "${CMAKE_INSTALL_FULL_BINDIR}/${LLAVON_IME_UNIX_SERVICE_NAME}")
 endif()
 
 add_library(llavon_ime_engine STATIC src/llavon_ime_engine.cpp)
 set_target_properties(llavon_ime_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(llavon_ime_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_include_directories(llavon_ime_engine PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
 target_compile_definitions(llavon_ime_engine PRIVATE
-    IME_FCITX5_UNIX_SERVICE_NAME="${IME_FCITX5_UNIX_SERVICE_NAME}"
-    IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH="${IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH}"
-    IME_FCITX5_INSTALLED_MODEL_PATH="${IME_FCITX5_INSTALLED_MODEL_PATH}"
+    LLAVON_IME_UNIX_SERVICE_NAME="${LLAVON_IME_UNIX_SERVICE_NAME}"
+    LLAVON_IME_INSTALLED_UNIX_SERVICE_PATH="${LLAVON_IME_INSTALLED_UNIX_SERVICE_PATH}"
+    LLAVON_IME_INSTALLED_MODEL_PATH="${LLAVON_IME_INSTALLED_MODEL_PATH}"
 )
 target_compile_options(llavon_ime_engine PRIVATE -Wall -Wextra -Wpedantic)
 if(LLAVON_IME_DEBUG)
@@ -45,13 +45,16 @@ if(PkgConfig_FOUND AND NOT WIN32)
     pkg_check_modules(ATSPI_LINK QUIET IMPORTED_TARGET atspi-2)
     pkg_check_modules(ATSPI_GLIB QUIET IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
 endif()
-if(IME_FCITX5_REQUIRE_ATSPI AND NOT (ATSPI_FOUND AND ATSPI_GLIB_FOUND))
+if(LLAVON_IME_REQUIRE_ATSPI AND NOT (ATSPI_FOUND AND ATSPI_GLIB_FOUND))
     message(FATAL_ERROR
-        "IME_FCITX5_REQUIRE_ATSPI is ON, but atspi-2 and glib/gobject/gio development files were not found")
+        "LLAVON_IME_REQUIRE_ATSPI is ON, but atspi-2 and glib/gobject/gio development files were not found")
 endif()
 
 target_sources(llavon_ime_engine PRIVATE src/config/config.cpp)
 target_sources(llavon_ime_engine PRIVATE
+    c_api/llavon_ime.cpp
+    src/host/engine.cpp
+    src/host/render_state.cpp
     src/text/utf.cpp
     src/bopomofo/keymap.cpp
     src/bopomofo/syllable.cpp
@@ -77,7 +80,7 @@ endif()
 target_link_libraries(llavon_ime_engine PUBLIC nlohmann_json::nlohmann_json Threads::Threads)
 if(ATSPI_FOUND AND ATSPI_GLIB_FOUND AND NOT WIN32 AND NOT APPLE)
     target_sources(llavon_ime_engine PRIVATE src/atspi/atspi_context_provider.cpp)
-    target_compile_definitions(llavon_ime_engine PRIVATE IME_FCITX5_HAVE_ATSPI=1)
+    target_compile_definitions(llavon_ime_engine PRIVATE LLAVON_IME_HAVE_ATSPI=1)
     target_include_directories(llavon_ime_engine PRIVATE ${ATSPI_INCLUDE_DIRS})
     # libatspi is loaded at runtime with dlopen so the addon still loads on
     # systems without at-spi2-core; only glib/gio are hard dependencies.
@@ -98,5 +101,9 @@ elseif(PkgConfig_FOUND AND NOT WIN32)
 endif()
 
 if(LLAVON_IME_ENGINE_BUILD_TESTS)
+    # The C ABI is exercised by a C translation unit, so hosts that embed the
+    # engine with tests enabled need the C language ready even if they only
+    # declare CXX.
+    enable_language(C)
     add_subdirectory(tests)
 endif()

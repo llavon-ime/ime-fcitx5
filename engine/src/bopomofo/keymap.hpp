@@ -6,7 +6,7 @@
 
 #include "bopomofo/syllable.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 enum class BopomofoKeyboardLayout {
     Standard,
@@ -34,4 +34,4 @@ BopomofoKeyResult apply_bopomofo_key(
     char32_t key,
     bool accept_uppercase = true);
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

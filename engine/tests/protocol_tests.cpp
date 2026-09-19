@@ -5,7 +5,7 @@
 
 namespace {
 
-bool equal(const ime::fcitx5::protocol::ByteVector& actual, std::initializer_list<unsigned> expected) {
+bool equal(const llavon::ime::protocol::ByteVector& actual, std::initializer_list<unsigned> expected) {
     if (actual.size() != expected.size()) return false;
     std::size_t index = 0;
     for (const auto value : expected) {
@@ -17,7 +17,7 @@ bool equal(const ime::fcitx5::protocol::ByteVector& actual, std::initializer_lis
 }  // namespace
 
 int run_protocol_tests() {
-    using namespace ime::fcitx5::protocol;
+    using namespace llavon::ime::protocol;
     bool ok = true;
 
     ok = ok && equal(encode(Message{OpenSessionRequest{}}), {2, 0, 0, 0, 1, 0});

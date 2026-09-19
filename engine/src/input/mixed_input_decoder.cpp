@@ -11,7 +11,7 @@
 #include "input/ascii_tokenizer.hpp"
 #include "text/utf.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 namespace {
 
@@ -312,4 +312,4 @@ std::vector<MixedCandidateEntry> MixedInputDecoder::expand_candidates(
     return entries;
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

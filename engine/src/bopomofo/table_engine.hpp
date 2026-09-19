@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 class TableEngine {
 public:
@@ -18,4 +18,4 @@ private:
     std::unordered_map<std::u16string, std::vector<char32_t>> mapping_;
 };
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

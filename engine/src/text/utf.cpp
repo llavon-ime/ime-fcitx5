@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 namespace {
 
@@ -152,4 +152,4 @@ char32_t first_utf8_codepoint(std::string_view input) {
     return decoded.front();
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

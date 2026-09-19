@@ -5,7 +5,7 @@
 
 #include <string>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 void engine_test_smart_usability(fcitx::Instance* instance) {
     // Hsu Chinese is a reversible preview: Backspace edits raw keys, while a

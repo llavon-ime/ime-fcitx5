@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <string>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 namespace {
 
 bool check(bool condition, const char* message) {
@@ -152,10 +152,10 @@ bool test_randomized_matches_reference() {
 }
 
 }  // namespace
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime
 
 int run_caret_prefix_sampler_tests() {
-    using namespace ime::fcitx5;
+    using namespace llavon::ime;
     bool ok = true;
     ok &= test_simple_prefix();
     ok &= test_multiline_prefix_is_kept();

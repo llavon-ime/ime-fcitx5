@@ -10,14 +10,14 @@
 
 namespace {
 
-using ime::fcitx5::apply_bopomofo_key;
-using ime::fcitx5::BopomofoKeyboardLayout;
-using ime::fcitx5::BopomofoKeyStatus;
+using llavon::ime::apply_bopomofo_key;
+using llavon::ime::BopomofoKeyboardLayout;
+using llavon::ime::BopomofoKeyStatus;
 
 // Types a sequence of physical Hsu keys into a syllable and returns the final
 // syllable text. Returns std::nullopt if any key is rejected.
 std::optional<std::u16string> type_hsu(const std::u32string& keys, bool accept_uppercase = true) {
-    ime::fcitx5::Syllable syllable;
+    llavon::ime::Syllable syllable;
     for (const char32_t key : keys) {
         const auto result = apply_bopomofo_key(syllable, BopomofoKeyboardLayout::Hsu, key, accept_uppercase);
         if (result.status == BopomofoKeyStatus::Rejected) return std::nullopt;
@@ -26,7 +26,7 @@ std::optional<std::u16string> type_hsu(const std::u32string& keys, bool accept_u
 }
 
 std::optional<std::u16string> type_hsu_standard(const std::u32string& keys, bool accept_uppercase = true) {
-    ime::fcitx5::Syllable syllable;
+    llavon::ime::Syllable syllable;
     for (const char32_t key : keys) {
         const auto result = apply_bopomofo_key(syllable, BopomofoKeyboardLayout::Standard, key, accept_uppercase);
         if (result.status == BopomofoKeyStatus::Rejected) return std::nullopt;
@@ -38,14 +38,14 @@ std::optional<std::u16string> type_hsu_standard(const std::u32string& keys, bool
 
 int run_bopomofo_tests() {
     bool ok = true;
-    ok = ok && ime::fcitx5::lookup_bopomofo_key(U'1') == U'ㄅ';
-    ok = ok && ime::fcitx5::lookup_bopomofo_key(U'4') == U'ˋ';
-    ok = ok && ime::fcitx5::lookup_bopomofo_key(U'q') == U'ㄆ';
-    ok = ok && ime::fcitx5::lookup_bopomofo_key(U'Q') == U'ㄆ';
-    ok = ok && ime::fcitx5::lookup_bopomofo_key(U'S') == U'ㄋ';
-    ok = ok && !ime::fcitx5::lookup_bopomofo_key(U'Q', false).has_value();
-    ok = ok && ime::fcitx5::lookup_bopomofo_key(U' ') == U' ';
-    ok = ok && !ime::fcitx5::lookup_bopomofo_key(U'@').has_value();
+    ok = ok && llavon::ime::lookup_bopomofo_key(U'1') == U'ㄅ';
+    ok = ok && llavon::ime::lookup_bopomofo_key(U'4') == U'ˋ';
+    ok = ok && llavon::ime::lookup_bopomofo_key(U'q') == U'ㄆ';
+    ok = ok && llavon::ime::lookup_bopomofo_key(U'Q') == U'ㄆ';
+    ok = ok && llavon::ime::lookup_bopomofo_key(U'S') == U'ㄋ';
+    ok = ok && !llavon::ime::lookup_bopomofo_key(U'Q', false).has_value();
+    ok = ok && llavon::ime::lookup_bopomofo_key(U' ') == U' ';
+    ok = ok && !llavon::ime::lookup_bopomofo_key(U'@').has_value();
     const std::vector<std::pair<char32_t, char32_t>> chewing_punctuation{
         {U'[', U'「'}, {U']', U'」'}, {U'{', U'『'}, {U'}', U'』'}, {U'\'', U'、'}, {U'<', U'，'},
         {U':', U'：'}, {U'"', U'；'}, {U'>', U'。'}, {U'~', U'～'}, {U'!', U'！'}, {U'@', U'＠'},
@@ -54,26 +54,26 @@ int run_bopomofo_tests() {
         {U'|', U'｜'}, {U'?', U'？'}, {U',', U'，'}, {U'.', U'。'}, {U';', U'；'},
     };
     for (const auto& [key, symbol] : chewing_punctuation) {
-        ok = ok && ime::fcitx5::lookup_chewing_punctuation_key(key) == symbol;
+        ok = ok && llavon::ime::lookup_chewing_punctuation_key(key) == symbol;
     }
-    ok = ok && !ime::fcitx5::lookup_chewing_punctuation_key(U'`').has_value();
-    ok = ok && ime::fcitx5::lookup_microsoft_ctrl_punctuation_key(U'!') == U'！';
-    ok = ok && ime::fcitx5::lookup_microsoft_ctrl_punctuation_key(U'.') == U'。';
+    ok = ok && !llavon::ime::lookup_chewing_punctuation_key(U'`').has_value();
+    ok = ok && llavon::ime::lookup_microsoft_ctrl_punctuation_key(U'!') == U'！';
+    ok = ok && llavon::ime::lookup_microsoft_ctrl_punctuation_key(U'.') == U'。';
 
-    ime::fcitx5::Syllable syllable;
+    llavon::ime::Syllable syllable;
     ok = ok && syllable.accept(U'ㄋ');
     ok = ok && syllable.accept(U'ㄧ');
     ok = ok && syllable.accept(U'ˇ');
     ok = ok && syllable.complete();
     ok = ok && syllable.text() == std::u16string(u"ㄋㄧˇ");
 
-    ime::fcitx5::Syllable tone_only;
+    llavon::ime::Syllable tone_only;
     ok = ok && tone_only.accept(U'ˋ');
     ok = ok && !tone_only.complete();
     ok = ok && tone_only.text() == std::u16string(u"ˋ");
 
     // Syllable structural accessors.
-    ime::fcitx5::Syllable structured;
+    llavon::ime::Syllable structured;
     ok = ok && !structured.has_initial() && !structured.has_medial() && !structured.has_final() && !structured.has_tone();
     ok = ok && structured.initial() == 0 && structured.medial() == 0 && structured.final() == 0 && structured.tone() == 0;
     ok = ok && structured.accept(U'ㄐ') && structured.accept(U'ㄧ') && structured.accept(U'ㄝ') &&
@@ -160,7 +160,7 @@ int run_bopomofo_tests() {
     ok = ok && type_hsu(U"bk") == std::u16string(u"ㄅㄤ");
     {
         // A final without a medial converts a ㄐ/ㄑ/ㄒ initial to ㄓ/ㄔ/ㄕ.
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         s.accept(U'ㄐ');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'k');
         ok = ok && result.status == BopomofoKeyStatus::Composing;
@@ -171,21 +171,21 @@ int run_bopomofo_tests() {
     // can only be produced by direct semantic construction.
     ok = ok && type_hsu(U"m ") == std::u16string(u"ㄢ ");
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         s.accept(U'ㄐ');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'j');
         ok = ok && result.status == BopomofoKeyStatus::Completed;
         ok = ok && s.text() == std::u16string(u"ㄓˋ");
     }
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         s.accept(U'ㄑ');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'f');
         ok = ok && result.status == BopomofoKeyStatus::Completed;
         ok = ok && s.text() == std::u16string(u"ㄔˇ");
     }
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         s.accept(U'ㄒ');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'd');
         ok = ok && result.status == BopomofoKeyStatus::Completed;
@@ -198,7 +198,7 @@ int run_bopomofo_tests() {
     ok = ok && type_hsu(U"C", true) == std::u16string(u"ㄕ");
     ok = ok && !type_hsu(U"C", false).has_value();
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         s.accept(U'ㄏ');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'D', false);
         ok = ok && result.status == BopomofoKeyStatus::Rejected;
@@ -211,7 +211,7 @@ int run_bopomofo_tests() {
     ok = ok && type_hsu_standard(U"SU3") == std::u16string(u"ㄋㄧˇ");
     ok = ok && !type_hsu_standard(U"Q", false).has_value();
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Standard, U'4');
         ok = ok && result.status == BopomofoKeyStatus::Composing;
         result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Standard, U'u');
@@ -223,93 +223,93 @@ int run_bopomofo_tests() {
 
     // Exact alternative-reading lists for first-tone completions.
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'a');
         result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U' ');
         ok = ok && result.status == BopomofoKeyStatus::Completed;
         ok = ok && result.alternative_readings == std::vector<std::u16string>({u"ㄟ "});
     }
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'e');
         result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U' ');
         ok = ok && result.alternative_readings == std::vector<std::u16string>({u"ㄝ "});
     }
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U's');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U' ');
         ok = ok && result.alternative_readings == std::vector<std::u16string>({u"˙"});
     }
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'd');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U' ');
         ok = ok && result.alternative_readings == std::vector<std::u16string>({u"ˊ"});
     }
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'f');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U' ');
         ok = ok && result.alternative_readings == std::vector<std::u16string>({u"ˇ"});
     }
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'g');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U' ');
         ok = ok && result.alternative_readings == std::vector<std::u16string>({u"ㄍ "});
     }
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'h');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U' ');
         ok = ok && result.alternative_readings == std::vector<std::u16string>({u"ㄏ "});
     }
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'j');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U' ');
         ok = ok && result.alternative_readings == std::vector<std::u16string>({u"ㄐ ", u"ˋ"});
     }
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'k');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U' ');
         ok = ok && result.alternative_readings == std::vector<std::u16string>({u"ㄎ "});
     }
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'l');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U' ');
         ok = ok && result.alternative_readings == std::vector<std::u16string>({u"ㄌ ", u"ㄥ "});
     }
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'c');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U' ');
         ok = ok && result.alternative_readings == std::vector<std::u16string>({u"ㄒ "});
     }
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'v');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U' ');
         ok = ok && result.alternative_readings == std::vector<std::u16string>({u"ㄑ "});
     }
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'n');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U' ');
         ok = ok && result.alternative_readings == std::vector<std::u16string>({u"ㄋ "});
     }
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'm');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U' ');
         ok = ok && result.alternative_readings == std::vector<std::u16string>({u"ㄇ "});
     }
     {
         // A non-first-tone completion has no alternative readings.
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'a');
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'd');
         ok = ok && result.status == BopomofoKeyStatus::Completed;
@@ -317,7 +317,7 @@ int run_bopomofo_tests() {
     }
     {
         // An unfinished syllable exposes no alternative readings.
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'a');
         ok = ok && result.status == BopomofoKeyStatus::Composing;
         ok = ok && result.alternative_readings.empty();
@@ -325,7 +325,7 @@ int run_bopomofo_tests() {
     {
         // A first tone inherited across a layout change still receives Hsu
         // alternatives when an ordinary key completes the syllable.
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         auto result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Standard, U'4');
         result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Standard, U' ');
         result = apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'a');
@@ -336,7 +336,7 @@ int run_bopomofo_tests() {
 
     // Rejected keys leave the syllable unchanged.
     {
-        ime::fcitx5::Syllable s;
+        llavon::ime::Syllable s;
         apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'g');
         apply_bopomofo_key(s, BopomofoKeyboardLayout::Hsu, U'e');
         const auto before = s.text();
@@ -348,7 +348,7 @@ int run_bopomofo_tests() {
         ok = ok && s.text() == before;
     }
 
-    ime::fcitx5::TableEngine table(IME_FCITX5_TEST_TABLE_PATH);
+    llavon::ime::TableEngine table(LLAVON_IME_TEST_TABLE_PATH);
     auto candidates = table.lookup(u"ㄋㄧˇ");
     ok = ok && !candidates.empty();
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;

@@ -11,7 +11,7 @@
 #include "bopomofo/keymap.hpp"
 #include "bopomofo/syllable.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 enum class CandidateTarget {
     BeforeCursor,
@@ -117,4 +117,4 @@ private:
     std::optional<size_t> selection_anchor_;
 };
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

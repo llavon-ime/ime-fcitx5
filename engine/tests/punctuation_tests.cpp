@@ -4,11 +4,11 @@
 #include "input/punctuation.hpp"
 
 int run_punctuation_tests() {
-    using ime::fcitx5::BopomofoKeyboardLayout;
-    using ime::fcitx5::chewing_punctuation_for_key;
-    using ime::fcitx5::input_key_state;
-    using ime::fcitx5::InputKey;
-    using ime::fcitx5::InputKeyState;
+    using llavon::ime::BopomofoKeyboardLayout;
+    using llavon::ime::chewing_punctuation_for_key;
+    using llavon::ime::input_key_state;
+    using llavon::ime::InputKey;
+    using llavon::ime::InputKeyState;
 
     const auto standard = BopomofoKeyboardLayout::Standard;
     const auto hsu = BopomofoKeyboardLayout::Hsu;

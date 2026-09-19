@@ -8,7 +8,7 @@
 #include <optional>
 #include <string>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 // The most recent text before the caret observed by a context source.
 struct AccessibilityContextSample {
@@ -94,11 +94,11 @@ private:
 };
 
 // Creates the best available backend for the current platform. The
-// IME_FCITX5_DISABLE_ATSPI and IME_FCITX5_CONTEXT_SAMPLE_FILE environment
+// LLAVON_IME_DISABLE_ATSPI and LLAVON_IME_CONTEXT_SAMPLE_FILE environment
 // variables override the platform backend for opting out and for headless
-// tests (IME_FCITX5_ATSPI_SAMPLE_FILE is kept as a legacy alias).
-// IME_FCITX5_ATSPI_LIBRARY points the AT-SPI backend at a different libatspi
+// tests (LLAVON_IME_ATSPI_SAMPLE_FILE is kept as a legacy alias).
+// LLAVON_IME_ATSPI_LIBRARY points the AT-SPI backend at a different libatspi
 // name, which the test suite uses to verify the missing-library fallback.
 std::unique_ptr<AccessibilityContextProvider> create_accessibility_context_provider(size_t max_code_units);
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

@@ -4,7 +4,7 @@
 #include <nlohmann/json.hpp>
 #include <string>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 struct Config {
     std::string model_path;
@@ -40,4 +40,4 @@ std::filesystem::path runtime_dir();
 std::filesystem::path socket_path();
 std::filesystem::path pid_path();
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

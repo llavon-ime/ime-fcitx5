@@ -11,7 +11,7 @@
 #include <string>
 #include <thread>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 namespace {
 
 bool check(bool condition, const char* message) {
@@ -48,9 +48,9 @@ std::unique_ptr<AccessibilityContextProvider> make_provider(size_t max_code_unit
 }
 
 bool test_publish_and_sequence() {
-    ScopedEnv sample("IME_FCITX5_CONTEXT_SAMPLE_FILE", nullptr);
-    ScopedEnv legacy("IME_FCITX5_ATSPI_SAMPLE_FILE", nullptr);
-    ScopedEnv disable("IME_FCITX5_DISABLE_ATSPI", nullptr);
+    ScopedEnv sample("LLAVON_IME_CONTEXT_SAMPLE_FILE", nullptr);
+    ScopedEnv legacy("LLAVON_IME_ATSPI_SAMPLE_FILE", nullptr);
+    ScopedEnv disable("LLAVON_IME_DISABLE_ATSPI", nullptr);
     auto provider = make_provider(64);
     bool ok = check(!provider->latest().has_value(), "no sample before the first publish");
     provider->publish(u"你好", true);
@@ -66,9 +66,9 @@ bool test_publish_and_sequence() {
 }
 
 bool test_disabled_start() {
-    ScopedEnv disable("IME_FCITX5_DISABLE_ATSPI", "1");
-    ScopedEnv sample("IME_FCITX5_CONTEXT_SAMPLE_FILE", nullptr);
-    ScopedEnv legacy("IME_FCITX5_ATSPI_SAMPLE_FILE", nullptr);
+    ScopedEnv disable("LLAVON_IME_DISABLE_ATSPI", "1");
+    ScopedEnv sample("LLAVON_IME_CONTEXT_SAMPLE_FILE", nullptr);
+    ScopedEnv legacy("LLAVON_IME_ATSPI_SAMPLE_FILE", nullptr);
     auto provider = make_provider(64);
     bool ok = check(provider->availability().availability == AccessibilityAvailability::Disabled,
                     "the disabled source reports Disabled");
@@ -78,10 +78,10 @@ bool test_disabled_start() {
 }
 
 bool test_availability_missing_library() {
-    ScopedEnv disable("IME_FCITX5_DISABLE_ATSPI", nullptr);
-    ScopedEnv sample("IME_FCITX5_CONTEXT_SAMPLE_FILE", nullptr);
-    ScopedEnv legacy("IME_FCITX5_ATSPI_SAMPLE_FILE", nullptr);
-    ScopedEnv library("IME_FCITX5_ATSPI_LIBRARY", "/nonexistent/llavon-ime-libatspi.so.0");
+    ScopedEnv disable("LLAVON_IME_DISABLE_ATSPI", nullptr);
+    ScopedEnv sample("LLAVON_IME_CONTEXT_SAMPLE_FILE", nullptr);
+    ScopedEnv legacy("LLAVON_IME_ATSPI_SAMPLE_FILE", nullptr);
+    ScopedEnv library("LLAVON_IME_ATSPI_LIBRARY", "/nonexistent/llavon-ime-libatspi.so.0");
 #if defined(__linux__)
     auto provider = make_provider(64);
     bool ok = check(!provider->start(), "start() fails when the library is missing");
@@ -100,10 +100,10 @@ bool test_availability_missing_library() {
 }
 
 bool test_missing_library_is_graceful() {
-    ScopedEnv disable("IME_FCITX5_DISABLE_ATSPI", nullptr);
-    ScopedEnv sample("IME_FCITX5_CONTEXT_SAMPLE_FILE", nullptr);
-    ScopedEnv legacy("IME_FCITX5_ATSPI_SAMPLE_FILE", nullptr);
-    ScopedEnv library("IME_FCITX5_ATSPI_LIBRARY", "/nonexistent/llavon-ime-libatspi.so.0");
+    ScopedEnv disable("LLAVON_IME_DISABLE_ATSPI", nullptr);
+    ScopedEnv sample("LLAVON_IME_CONTEXT_SAMPLE_FILE", nullptr);
+    ScopedEnv legacy("LLAVON_IME_ATSPI_SAMPLE_FILE", nullptr);
+    ScopedEnv library("LLAVON_IME_ATSPI_LIBRARY", "/nonexistent/llavon-ime-libatspi.so.0");
 #if defined(__linux__)
     auto provider = make_provider(64);
     bool ok = check(!provider->start(), "a missing AT-SPI library is not fatal");
@@ -122,9 +122,9 @@ bool test_file_backed_sample() {
         std::ofstream output(path, std::ios::binary);
         output << "\xe6\x97\xa9\xe5\xae\x89\xef\xbc\x8c\xe4\xb8\x96\xe7\x95\x8c";
     }
-    ScopedEnv sample("IME_FCITX5_CONTEXT_SAMPLE_FILE", path.c_str());
-    ScopedEnv legacy("IME_FCITX5_ATSPI_SAMPLE_FILE", nullptr);
-    ScopedEnv disable("IME_FCITX5_DISABLE_ATSPI", nullptr);
+    ScopedEnv sample("LLAVON_IME_CONTEXT_SAMPLE_FILE", path.c_str());
+    ScopedEnv legacy("LLAVON_IME_ATSPI_SAMPLE_FILE", nullptr);
+    ScopedEnv disable("LLAVON_IME_DISABLE_ATSPI", nullptr);
 
     auto provider = make_provider(64);
     bool ok = check(provider->availability().availability == AccessibilityAvailability::Unsupported,
@@ -167,9 +167,9 @@ bool test_legacy_sample_alias() {
         std::ofstream output(path, std::ios::binary | std::ios::trunc);
         output << "legacy";
     }
-    ScopedEnv sample("IME_FCITX5_CONTEXT_SAMPLE_FILE", nullptr);
-    ScopedEnv legacy("IME_FCITX5_ATSPI_SAMPLE_FILE", path.c_str());
-    ScopedEnv disable("IME_FCITX5_DISABLE_ATSPI", nullptr);
+    ScopedEnv sample("LLAVON_IME_CONTEXT_SAMPLE_FILE", nullptr);
+    ScopedEnv legacy("LLAVON_IME_ATSPI_SAMPLE_FILE", path.c_str());
+    ScopedEnv disable("LLAVON_IME_DISABLE_ATSPI", nullptr);
 
     auto provider = make_provider(64);
     bool ok = check(provider->start(), "the legacy sample env starts the file source");
@@ -189,8 +189,8 @@ bool test_file_sample_bounded_utf16() {
         std::ofstream output(path, std::ios::binary | std::ios::trunc);
         output << text;
     }
-    ScopedEnv sample("IME_FCITX5_CONTEXT_SAMPLE_FILE", path.c_str());
-    ScopedEnv legacy("IME_FCITX5_ATSPI_SAMPLE_FILE", nullptr);
+    ScopedEnv sample("LLAVON_IME_CONTEXT_SAMPLE_FILE", path.c_str());
+    ScopedEnv legacy("LLAVON_IME_ATSPI_SAMPLE_FILE", nullptr);
 
     auto provider = make_provider(5);
     (void)provider->start();
@@ -209,8 +209,8 @@ bool test_active_gating() {
         std::ofstream output(path, std::ios::binary | std::ios::trunc);
         output << "active sample";
     }
-    ScopedEnv sample("IME_FCITX5_CONTEXT_SAMPLE_FILE", path.c_str());
-    ScopedEnv legacy("IME_FCITX5_ATSPI_SAMPLE_FILE", nullptr);
+    ScopedEnv sample("LLAVON_IME_CONTEXT_SAMPLE_FILE", path.c_str());
+    ScopedEnv legacy("LLAVON_IME_ATSPI_SAMPLE_FILE", nullptr);
 
     auto provider = make_provider(64);
     bool ok = check(provider->start(), "the provider starts for the active-gating test");
@@ -245,9 +245,9 @@ bool test_active_gating() {
 }
 
 bool test_concurrent_access() {
-    ScopedEnv sample("IME_FCITX5_CONTEXT_SAMPLE_FILE", nullptr);
-    ScopedEnv legacy("IME_FCITX5_ATSPI_SAMPLE_FILE", nullptr);
-    ScopedEnv disable("IME_FCITX5_DISABLE_ATSPI", nullptr);
+    ScopedEnv sample("LLAVON_IME_CONTEXT_SAMPLE_FILE", nullptr);
+    ScopedEnv legacy("LLAVON_IME_ATSPI_SAMPLE_FILE", nullptr);
+    ScopedEnv disable("LLAVON_IME_DISABLE_ATSPI", nullptr);
     auto provider = make_provider(64);
     std::atomic<bool> stop{false};
     std::thread reader([&provider, &stop]() {
@@ -265,10 +265,10 @@ bool test_concurrent_access() {
 }
 
 }  // namespace
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime
 
 int run_accessibility_context_tests() {
-    using namespace ime::fcitx5;
+    using namespace llavon::ime;
     bool ok = true;
     ok &= test_publish_and_sequence();
     ok &= test_disabled_start();

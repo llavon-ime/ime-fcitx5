@@ -5,7 +5,7 @@
 #include <string_view>
 #include <type_traits>
 
-namespace ime::fcitx5::protocol {
+namespace llavon::ime::protocol {
 
 namespace {
 
@@ -298,4 +298,4 @@ const char* error_code_name(ErrorCode code) noexcept {
     return "UNKNOWN";
 }
 
-}  // namespace ime::fcitx5::protocol
+}  // namespace llavon::ime::protocol

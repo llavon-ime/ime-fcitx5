@@ -2,7 +2,7 @@
 
 #include <variant>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 // The editor is idle: no composition and no pending input.
 struct EmptyInputState {};
@@ -65,4 +65,4 @@ constexpr EscapeAction escape_action(bool clear_entire_buffer, InputStateKind st
     return EscapeAction::KeepBuffer;
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

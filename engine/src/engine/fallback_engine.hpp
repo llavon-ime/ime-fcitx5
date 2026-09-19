@@ -10,7 +10,7 @@
 #include <unordered_set>
 #include <vector>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 struct CandidatePrediction {
     std::u16string bopomofo;
@@ -41,4 +41,4 @@ private:
     std::unordered_map<std::u16string, double> english_frequencies_;
 };
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

@@ -7,9 +7,9 @@
 #include "engine/fallback_engine.hpp"
 
 int run_fallback_engine_tests() {
-    using namespace ime::fcitx5;
+    using namespace llavon::ime;
 
-    FallbackEngine fallback(IME_FCITX5_TEST_TABLE_PATH);
+    FallbackEngine fallback(LLAVON_IME_TEST_TABLE_PATH);
     CompositionBuffer buffer;
     for (const char32_t key : std::u32string(U"su3")) {
         if (!buffer.add_bopomofo_key(key, BopomofoKeyboardLayout::Standard)) return EXIT_FAILURE;

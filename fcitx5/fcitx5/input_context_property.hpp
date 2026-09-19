@@ -2,21 +2,27 @@
 
 #include <fcitx/inputcontextproperty.h>
 
+#include <cstdint>
 #include <functional>
 
+#include "host/host.hpp"
 #include "input/input_session.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
+// Per-input-context engine handle. The engine owns the InputSession; this
+// property carries the ContextId, a raw session pointer for tests, and the
+// detach hook that runs when the fcitx input context is destroyed.
 class ImeInputContextProperty final : public fcitx::InputContextProperty {
 public:
     ~ImeInputContextProperty() override {
-        if (session_close_handle) session_close_handle();
+        if (on_destroy) on_destroy();
     }
 
-    InputSession session;
-
-    std::function<void()> session_close_handle;
+    ContextId id = 0;
+    // Owned by the engine; valid while this context is attached.
+    InputSession* session = nullptr;
+    std::function<void()> on_destroy;
 
     void copyTo(fcitx::InputContextProperty*) override {}
     bool needCopy() const override { return false; }
@@ -24,4 +30,4 @@ public:
 
 using ImeInputContextPropertyFactory = fcitx::SimpleInputContextPropertyFactory<ImeInputContextProperty>;
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

@@ -13,8 +13,8 @@ Llavon IME 的 Linux 與 macOS Fcitx5 前端。推論由 `ime-unix-service` 子�
 
 腳本會初始化子模組與 vcpkg、編譯並測試服務與附加元件，再安裝（必要時使用
 `sudo`）。模型已有就沿用，否則從 Hugging Face 下載到 `models/` 並安裝至
-`/usr/share/llavon-ime/models/`；可用 `IME_FCITX5_MODEL_URL` 指定映像站、
-`IME_FCITX5_MODEL_DIR` 變更下載目錄。目前僅支援 x86_64。
+`/usr/share/llavon-ime/models/`；可用 `LLAVON_IME_MODEL_URL` 指定映像站、
+`LLAVON_IME_MODEL_DIR` 變更下載目錄。目前僅支援 x86_64。
 
 需要 CMake、pkg-config 與 fcitx5 開發檔案。
 
@@ -148,9 +148,11 @@ cmake --install build/macos
 
 發行套件內含 Q4 GGUF 模型（CC BY-NC 4.0，僅限非商業用途；署名與相依套件授權
 隨套件附上）。開發版本需自備模型，透過 fcitx5 設定頁面或
-`IME_FCITX5_MODEL_PATH` 指定：
+`LLAVON_IME_MODEL_PATH` 指定：
 
 https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF
+
+舊版 `IME_FCITX5_*` 環境變數名稱仍相容（例如 `IME_FCITX5_MODEL_PATH`）。
 
 ## 預測上下文
 

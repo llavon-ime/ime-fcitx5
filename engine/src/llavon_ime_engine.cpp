@@ -1,3 +1,3 @@
-namespace ime::fcitx5 {
+namespace llavon::ime {
 void llavon_ime_engine_anchor() {}
 }

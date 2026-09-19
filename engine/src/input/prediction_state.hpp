@@ -9,7 +9,7 @@
 
 #include "protocol/protocol.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 // Async prediction bookkeeping for one input session. The engine drives the
 // transport; this type owns the decisions about when a request may start, when
@@ -92,4 +92,4 @@ struct PredictionState {
     }
 };
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

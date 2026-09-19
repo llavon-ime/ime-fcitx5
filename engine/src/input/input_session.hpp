@@ -14,7 +14,7 @@
 #include "protocol/protocol.hpp"
 #include "symbol/symbol_menu.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 // Reversible decode state for one pending input. The preview is rendered in
 // preedit without destroying the exact raw keys kept by PendingInput.
@@ -60,4 +60,4 @@ struct InputSession {
     bool choosing_candidate() const { return kind() == InputStateKind::ChoosingCandidate; }
 };
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

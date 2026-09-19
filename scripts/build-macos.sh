@@ -12,17 +12,17 @@ set -euo pipefail
 # Environment overrides:
 #   FCITX5_MACOS_SOURCE_DIR   use this fcitx5-macos checkout instead of pulling
 #                             one into $TMPDIR
-#   IME_FCITX5_FCITX5_MACOS_REPO_URL  fcitx5-macos repository to pull
-#   IME_FCITX5_MODEL_URL      model mirror
-#   IME_FCITX5_VERSION        display version override
+#   LLAVON_IME_MACOS_REPO_URL  fcitx5-macos repository to pull
+#   LLAVON_IME_MODEL_URL      model mirror
+#   LLAVON_IME_VERSION        display version override
 #   LLAVON_IME_DEBUG          any non-empty value compiles in debug logging
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODEL_FILE="llavon-ime-llama-250m-Q4_K_M.gguf"
-MODEL_URL="${IME_FCITX5_MODEL_URL:-https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF/resolve/main/${MODEL_FILE}}"
+MODEL_URL="${LLAVON_IME_MODEL_URL:-https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF/resolve/main/${MODEL_FILE}}"
 MODEL_INSTALL_PATH="/Library/Application Support/llavon-ime/models/${MODEL_FILE}"
 FCITX5_APP_CONTENTS="/Library/Input Methods/Fcitx5.app/Contents"
-FCITX5_MACOS_REPO_URL="${IME_FCITX5_FCITX5_MACOS_REPO_URL:-https://github.com/fcitx/fcitx5-macos.git}"
+FCITX5_MACOS_REPO_URL="${LLAVON_IME_MACOS_REPO_URL:-https://github.com/fcitx/fcitx5-macos.git}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "This script only supports macOS." >&2
@@ -79,7 +79,7 @@ if [[ ! -f "${FCITX5_APP_CONTENTS}/lib/libFcitx5Core.dylib" ]]; then
     exit 2
 fi
 
-DISPLAY_VERSION="${IME_FCITX5_VERSION:-}"
+DISPLAY_VERSION="${LLAVON_IME_VERSION:-}"
 if [[ -z "${DISPLAY_VERSION}" ]]; then
     describe="$(git -C "${ROOT_DIR}" describe --long --tags --abbrev=7 2>/dev/null || true)"
     if [[ -n "${describe}" ]]; then
@@ -147,8 +147,8 @@ echo "Building and testing fcitx5 addon..."
     cd "${ROOT_DIR}/fcitx5"
     cmake --preset macos \
         -DFCITX5_MACOS_SOURCE_DIR="${FCITX5_MACOS_SOURCE_DIR}" \
-        -DIME_FCITX5_INSTALLED_MODEL_PATH="${MODEL_INSTALL_PATH}" \
-        -DIME_FCITX5_DISPLAY_VERSION="${DISPLAY_VERSION}" \
+        -DLLAVON_IME_INSTALLED_MODEL_PATH="${MODEL_INSTALL_PATH}" \
+        -DLLAVON_IME_DISPLAY_VERSION="${DISPLAY_VERSION}" \
         ${LLAVON_DEBUG_FLAG}
     cmake --build --preset macos --parallel
     ctest --preset macos

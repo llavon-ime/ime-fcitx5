@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <string>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 // Samples the text immediately before the caret for prediction context.
 //
@@ -70,4 +70,4 @@ private:
     bool usable_ = false;
 };
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

@@ -6,7 +6,7 @@
 #include <string_view>
 #include <vector>
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 std::u32string_view mcbopomofo_symbols() noexcept;
 
@@ -41,4 +41,4 @@ private:
     std::vector<std::u32string> menu_;
 };
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime
