@@ -1,35 +1,3 @@
-set(IME_FCITX5_TEST_SOURCES
-    test_main.cpp
-    config_tests.cpp
-    bopomofo_tests.cpp
-    buffer_tests.cpp
-    protocol_tests.cpp
-    service_transport_tests.cpp
-    keypad_tests.cpp
-    input_state_tests.cpp
-    input_key_tests.cpp
-    punctuation_tests.cpp
-    candidate_view_tests.cpp
-    input_processor_tests.cpp
-    prediction_state_tests.cpp
-    symbol_menu_tests.cpp
-    ascii_tokenizer_tests.cpp
-    caret_prefix_sampler_tests.cpp
-    sample_adoption_tests.cpp
-    accessibility_context_tests.cpp
-    real_service_tests.cpp
-    fallback_engine_tests.cpp
-    mixed_input_decoder_tests.cpp
-    phrase_override_store_tests.cpp
-)
-
-add_executable(llavon_ime_tests ${IME_FCITX5_TEST_SOURCES})
-target_link_libraries(llavon_ime_tests PRIVATE ime_fcitx5_shared)
-target_compile_definitions(llavon_ime_tests PRIVATE
-    IME_FCITX5_TEST_TABLE_PATH="${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json")
-add_test(NAME llavon_ime_tests COMMAND llavon_ime_tests)
-set_tests_properties(llavon_ime_tests PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/..")
-
 if(Fcitx5_FOUND AND NOT WIN32)
     add_test(NAME llavon_ime_fcitx5_metadata
         COMMAND ${CMAKE_COMMAND}
@@ -42,7 +10,7 @@ if(Fcitx5_FOUND AND NOT WIN32)
         ../fcitx5/prediction_coordinator.cpp)
     target_link_libraries(llavon_ime_prediction_coordinator_tests PRIVATE
         Fcitx5::Core
-        ime_fcitx5_shared)
+        llavon_ime_engine)
     target_include_directories(llavon_ime_prediction_coordinator_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(llavon_ime_prediction_coordinator_tests PRIVATE
@@ -55,7 +23,7 @@ if(Fcitx5_FOUND AND NOT WIN32)
         ../fcitx5/prediction_coordinator.cpp)
     target_link_libraries(llavon_ime_prediction_coordinator_integration_tests PRIVATE
         Fcitx5::Core
-        ime_fcitx5_shared)
+        llavon_ime_engine)
     target_include_directories(llavon_ime_prediction_coordinator_integration_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(llavon_ime_prediction_coordinator_integration_tests PRIVATE
@@ -133,7 +101,7 @@ if(Fcitx5_FOUND AND NOT WIN32)
         target_link_libraries(llavon_ime_engine_tests PRIVATE
             Fcitx5::Core
             Fcitx5::Module::TestFrontend
-            ime_fcitx5_shared)
+            llavon_ime_engine)
         target_include_directories(llavon_ime_engine_tests PRIVATE
             ${CMAKE_CURRENT_BINARY_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/..)
@@ -152,7 +120,7 @@ if(Fcitx5_FOUND AND NOT WIN32)
         target_link_libraries(llavon_ime_engine_prediction_integration_tests PRIVATE
             Fcitx5::Core
             Fcitx5::Module::TestFrontend
-            ime_fcitx5_shared)
+            llavon_ime_engine)
         target_include_directories(llavon_ime_engine_prediction_integration_tests PRIVATE
             ${CMAKE_CURRENT_BINARY_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/..)
