@@ -44,9 +44,10 @@ final class CandidatePanel {
 
         let pageOffset = snapshot.page * max(snapshot.pageSize, 1)
         for (row, candidate) in snapshot.candidates.enumerated() {
-            let key = row < snapshot.selectionKeys.count
-                ? String(Character(UnicodeScalar(snapshot.selectionKeys[row])))
-                : ""
+            let scalar = row < snapshot.selectionKeys.count
+                ? UnicodeScalar(snapshot.selectionKeys[row])
+                : nil
+            let key = scalar.map { String(Character($0)) } ?? ""
             let title = key.isEmpty ? candidate : "\(key) \(candidate)"
             let button = NSButton(title: title, target: self, action: #selector(clicked(_:)))
             button.tag = pageOffset + row

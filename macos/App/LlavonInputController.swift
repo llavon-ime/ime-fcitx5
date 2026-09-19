@@ -17,7 +17,7 @@ final class LlavonInputController: IMKInputController, EngineHost {
         candidatePanel.onSelect = { [weak self] index in
             self?.selectCandidate(index)
         }
-        EngineBridge.shared.attach(contextId, controller: self)
+        EngineBridge.shared.attach(contextId, host: self)
     }
 
     deinit {
@@ -65,13 +65,13 @@ final class LlavonInputController: IMKInputController, EngineHost {
     // MARK: - Host callbacks
 
     func insertCommit(_ text: String) {
-        guard let textClient = client() as? IMKTextInput else { return }
+        guard let textClient = client() else { return }
         textClient.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
         hasMarkedText = false
     }
 
     func refreshUI() {
-        guard let textClient = client() as? IMKTextInput,
+        guard let textClient = client(),
               let snapshot = EngineBridge.shared.snapshot(contextId) else { return }
         lastSnapshot = snapshot
 
@@ -109,7 +109,7 @@ final class LlavonInputController: IMKInputController, EngineHost {
 
     // Text before the caret, as UTF-16 units (the engine clips it further).
     func surroundingSample() -> (text: [UInt16], cursor: Int, anchor: Int)? {
-        guard let textClient = client() as? IMKTextInput else { return nil }
+        guard let textClient = client() else { return nil }
         let selected = textClient.selectedRange()
         guard selected.location != NSNotFound else { return nil }
 

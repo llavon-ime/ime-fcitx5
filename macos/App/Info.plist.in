@@ -20,19 +20,77 @@
 	<string>@VERSION@</string>
 	<key>CFBundleVersion</key>
 	<string>@VERSION@</string>
-	<key>LSBackgroundOnly</key>
+	<key>CFBundleSignature</key>
+	<string>MACV</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>MacOSX</string>
+	</array>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>LSHasLocalizedDisplayName</key>
+	<true/>
+	<key>LSUIElement</key>
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>TICapsLockLanguageSwitchCapable</key>
+	<true/>
+	<key>TISIconIsTemplate</key>
+	<true/>
+	<key>TISInputSourceID</key>
+	<string>@BUNDLE_ID@</string>
+	<key>TISIntendedLanguage</key>
+	<string>zh-Hant</string>
 	<key>InputMethodConnectionName</key>
 	<string>@BUNDLE_ID@_Connection</string>
 	<key>InputMethodServerControllerClass</key>
 	<string>LlavonInputController</string>
 	<key>tsInputMethodCharacterRepertoireKey</key>
 	<array>
-		<string>zh-Hant</string>
-		<string>zh-Hans</string>
+		<string>Hant</string>
+		<string>Hans</string>
 		<string>Latn</string>
 	</array>
+	<key>tsInputMethodIconFileKey</key>
+	<string>MenuIcon.png</string>
+	<key>ComponentInputModeDict</key>
+	<dict>
+		<key>tsInputModeListKey</key>
+		<dict>
+			<key>@BUNDLE_ID@.Default</key>
+			<dict>
+				<key>TISIconLabels</key>
+				<dict>
+					<key>Primary</key>
+					<string>拉風輸入法</string>
+				</dict>
+				<key>TISInputSourceID</key>
+				<string>@BUNDLE_ID@.Default</string>
+				<key>TISIntendedLanguage</key>
+				<string>zh-Hant</string>
+				<key>tsInputModeCharacterRepertoireKey</key>
+				<array>
+					<string>Hant</string>
+					<string>Hans</string>
+					<string>Latn</string>
+				</array>
+				<key>tsInputModeIsVisibleKey</key>
+				<true/>
+				<key>tsInputModePrimaryInScriptKey</key>
+				<true/>
+				<key>tsInputModeScriptKey</key>
+				<string>smUnicodeScript</string>
+				<key>tsInputModeMenuIconFileKey</key>
+				<string>MenuIcon.png</string>
+				<key>tsInputModePaletteIconFileKey</key>
+				<string>MenuIcon.png</string>
+			</dict>
+		</dict>
+		<key>tsVisibleInputModeOrderedArrayKey</key>
+		<array>
+			<string>@BUNDLE_ID@.Default</string>
+		</array>
+	</dict>
 </dict>
 </plist>

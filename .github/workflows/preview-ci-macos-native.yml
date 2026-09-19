@@ -35,6 +35,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-vcpkg-
 
+      - name: Install build prerequisites
+        run: brew install pkg-config
+
       - name: Build the app
         run: macos/scripts/build-native-app.sh
 
@@ -61,9 +64,9 @@ jobs:
           set -euo pipefail
           clang -framework Carbon -o "${RUNNER_TEMP}/tis" packaging/macos/tools/tis.c
           "${RUNNER_TEMP}/tis" register "${HOME}/Library/Input Methods/LlavonIME.app"
-          "${RUNNER_TEMP}/tis" list com.llavon.ime
-          "${RUNNER_TEMP}/tis" list com.llavon.ime | grep -q "^com\.llavon\.ime"
-          "${RUNNER_TEMP}/tis" enable com.llavon.ime || true
+          "${RUNNER_TEMP}/tis" list com.llavon.inputmethod.LlavonIME
+          "${RUNNER_TEMP}/tis" list com.llavon.inputmethod.LlavonIME | grep -q "^com\.llavon\.inputmethod\.LlavonIME"
+          "${RUNNER_TEMP}/tis" enable com.llavon.inputmethod.LlavonIME || true
 
       - name: Launch the input method
         continue-on-error: true

@@ -7,8 +7,8 @@
 
 namespace llavon::ime {
 
-class Config;
-class InputSession;
+struct Config;
+struct InputSession;
 class MixedInputDecoder;
 
 struct PreeditSegment {

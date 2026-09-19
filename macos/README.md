@@ -20,10 +20,15 @@ macos/scripts/build-native-app.sh            # build dist/macos/LlavonIME.app
 macos/scripts/build-native-app.sh --install  # also install for this user
 ```
 
+The build needs `pkg-config` (for vcpkg) and CMake; the script bootstraps
+vcpkg by itself.
+
 The install step copies the app to `~/Library/Input Methods/` and nudges
 `TextInputMenuAgent`. Then enable 「拉風輸入法」 under
 System Settings › Keyboard › Input Sources. If it does not show up, log out
-and back in once.
+and back in once. macOS only registers input methods whose bundle identifier
+contains `.inputmethod.` (the default bundle ID is
+`com.llavon.inputmethod.LlavonIME`).
 
 The app finds its resources in this order:
 

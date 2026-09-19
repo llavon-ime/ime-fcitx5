@@ -8,7 +8,7 @@ export COPYFILE_DISABLE=1
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 APP_NAME="LlavonIME"
-BUNDLE_ID="${LLAVON_IME_BUNDLE_ID:-com.llavon.ime}"
+BUNDLE_ID="${LLAVON_IME_BUNDLE_ID:-com.llavon.inputmethod.LlavonIME}"
 VERSION="${LLAVON_IME_VERSION:-}"
 BUILD_DIR="${LLAVON_IME_NATIVE_BUILD_DIR:-${ROOT_DIR}/build/native-macos}"
 ENGINE_BUILD_DIR="${BUILD_DIR}/engine"
@@ -76,6 +76,13 @@ sed -e "s/@APP_NAME@/${APP_NAME}/g" \
     -e "s/@VERSION@/${VERSION}/g" \
     "${ROOT_DIR}/macos/App/Info.plist.in" > "${APP_DIR}/Contents/Info.plist"
 printf 'APPL????' > "${APP_DIR}/Contents/PkgInfo"
+cp "${ROOT_DIR}/macos/App/MenuIcon.png" "${APP_DIR}/Contents/Resources/MenuIcon.png"
+for lproj in Base zh-Hant; do
+    mkdir -p "${APP_DIR}/Contents/Resources/${lproj}.lproj"
+    sed -e "s/@BUNDLE_ID@/${BUNDLE_ID}/g" \
+        "${ROOT_DIR}/macos/App/InfoPlist.strings.in" \
+        > "${APP_DIR}/Contents/Resources/${lproj}.lproj/InfoPlist.strings"
+done
 
 echo "Signing (ad-hoc)..."
 codesign --force --deep --sign - "${APP_DIR}"
