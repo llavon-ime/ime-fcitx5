@@ -18,7 +18,7 @@ final class LlavonAppDelegate: NSObject, NSApplicationDelegate {
     private var server: IMKServer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        EngineBridge.shared.start()
+        EngineBridge.shared.startResolved()
 
         let identifier = Bundle.main.bundleIdentifier ?? "com.llavon.ime"
         let connectionName = Bundle.main.infoDictionary?["InputMethodConnectionName"] as? String

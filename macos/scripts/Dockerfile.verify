@@ -1,0 +1,7 @@
+FROM swift:latest
+
+# Toolchain for building the C++ engine inside the container so the Swift core
+# can be compiled and executed against it (see verify-core-linux.sh).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends cmake ninja-build g++ nlohmann-json3-dev \
+    && rm -rf /var/lib/apt/lists/*

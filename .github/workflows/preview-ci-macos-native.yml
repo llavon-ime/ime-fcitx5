@@ -1,0 +1,78 @@
+name: Preview native macOS CI
+
+on:
+  push:
+    branches:
+      - preview
+  pull_request:
+    branches:
+      - preview
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-native-macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-install:
+    name: Build and install the native input method
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout ime-fcitx5
+        uses: actions/checkout@v4
+
+      - name: Cache vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-native-${{ hashFiles('vcpkg-configuration.json', 'engine/vcpkg.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-vcpkg-
+
+      - name: Build the app
+        run: macos/scripts/build-native-app.sh
+
+      - name: Verify the bundle
+        run: |
+          set -euo pipefail
+          app="dist/macos/LlavonIME.app"
+          plutil -lint "${app}/Contents/Info.plist"
+          codesign --verify --deep --strict --verbose=2 "${app}"
+          /usr/libexec/PlistBuddy -c "Print :InputMethodConnectionName" "${app}/Contents/Info.plist" \
+            | grep -q "_Connection"
+
+      - name: Install into the user input methods
+        run: |
+          set -euo pipefail
+          destination="${HOME}/Library/Input Methods"
+          mkdir -p "${destination}"
+          rm -rf "${destination}/LlavonIME.app"
+          cp -R "dist/macos/LlavonIME.app" "${destination}/"
+          test -x "${destination}/LlavonIME.app/Contents/MacOS/LlavonIME"
+
+      - name: Register and verify the input source
+        run: |
+          set -euo pipefail
+          clang -framework Carbon -o "${RUNNER_TEMP}/tis" packaging/macos/tools/tis.c
+          "${RUNNER_TEMP}/tis" register "${HOME}/Library/Input Methods/LlavonIME.app"
+          "${RUNNER_TEMP}/tis" list com.llavon.ime
+          "${RUNNER_TEMP}/tis" list com.llavon.ime | grep -q "^com\.llavon\.ime"
+          "${RUNNER_TEMP}/tis" enable com.llavon.ime || true
+
+      - name: Launch the input method
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          open "${HOME}/Library/Input Methods/LlavonIME.app"
+          sleep 5
+          pgrep -x LlavonIME
+
+      - name: Upload the app
+        uses: actions/upload-artifact@v4
+        with:
+          name: LlavonIME-app
+          path: dist/macos/LlavonIME.app

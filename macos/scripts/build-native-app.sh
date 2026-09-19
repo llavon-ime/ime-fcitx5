@@ -61,6 +61,7 @@ mkdir -p "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources"
 
 swiftc -O -parse-as-library \
     -I "${ROOT_DIR}/engine/include" \
+    "${ROOT_DIR}"/macos/Core/*.swift \
     "${ROOT_DIR}"/macos/App/*.swift \
     "${ENGINE_BUILD_DIR}/libllavon_ime_engine.a" \
     -lc++ \

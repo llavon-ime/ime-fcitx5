@@ -4,7 +4,7 @@ import InputMethodKit
 // One controller per client session; every controller owns a ContextId and
 // forwards keys, commits and renders through the shared EngineBridge.
 @objc(LlavonInputController)
-final class LlavonInputController: IMKInputController {
+final class LlavonInputController: IMKInputController, EngineHost {
     private let contextId: UInt64
     private let candidatePanel: CandidatePanel
     private var lastSnapshot: RenderSnapshot?
@@ -35,7 +35,12 @@ final class LlavonInputController: IMKInputController {
         guard let event else { return false }
         switch event.type {
         case .keyDown, .keyUp:
-            return EngineBridge.shared.sendKey(contextId, event: event)
+            return EngineBridge.shared.sendKey(contextId,
+                                               keyCode: event.keyCode,
+                                               charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+                                               modifiers: Keysym.modifiers(for: event),
+                                               capsLock: event.modifierFlags.contains(.capsLock),
+                                               isRelease: event.type == .keyUp)
         default:
             return false
         }

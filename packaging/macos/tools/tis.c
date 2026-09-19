@@ -57,6 +57,44 @@ static int enable_input_source(const char *bundle_id) {
     return 0;
 }
 
+static int list_input_sources(const char *bundle_id) {
+    CFStringRef bundle = CFStringCreateWithCString(NULL, bundle_id, kCFStringEncodingUTF8);
+    if (bundle == NULL) {
+        fprintf(stderr, "invalid bundle id: %s\n", bundle_id);
+        return 1;
+    }
+
+    const void *keys[] = { kTISPropertyBundleID };
+    const void *values[] = { bundle };
+    CFDictionaryRef conditions = CFDictionaryCreate(
+        NULL, keys, values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFRelease(bundle);
+    if (conditions == NULL) {
+        fprintf(stderr, "failed to build input source filter\n");
+        return 1;
+    }
+
+    CFArrayRef sources = TISCreateInputSourceList(conditions, true);
+    CFRelease(conditions);
+    if (sources == NULL) {
+        return 1;
+    }
+
+    CFIndex count = CFArrayGetCount(sources);
+    for (CFIndex i = 0; i < count; ++i) {
+        TISInputSourceRef source = (TISInputSourceRef)CFArrayGetValueAtIndex(sources, i);
+        if (source == NULL) continue;
+        CFStringRef source_id = (CFStringRef)TISGetInputSourceProperty(source, kTISPropertyInputSourceID);
+        if (source_id == NULL) continue;
+        char buffer[256] = {0};
+        if (CFStringGetCString(source_id, buffer, sizeof(buffer), kCFStringEncodingUTF8)) {
+            printf("%s\n", buffer);
+        }
+    }
+    CFRelease(sources);
+    return count > 0 ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "register") == 0) {
         return register_app(argv[2]);
@@ -64,6 +102,9 @@ int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "enable") == 0) {
         return enable_input_source(argv[2]);
     }
-    fprintf(stderr, "usage: %s register <app-path> | enable <bundle-id>\n", argv[0]);
+    if (argc == 3 && strcmp(argv[1], "list") == 0) {
+        return list_input_sources(argv[2]);
+    }
+    fprintf(stderr, "usage: %s register <app-path> | enable <bundle-id> | list <bundle-id>\n", argv[0]);
     return 2;
 }
