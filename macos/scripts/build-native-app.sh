@@ -60,6 +60,7 @@ rm -rf "${APP_DIR}"
 mkdir -p "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources"
 
 swiftc -O -parse-as-library \
+    -module-name LlavonIMEApp \
     -I "${ROOT_DIR}/engine/include" \
     "${ROOT_DIR}"/macos/Core/*.swift \
     "${ROOT_DIR}"/macos/App/*.swift \

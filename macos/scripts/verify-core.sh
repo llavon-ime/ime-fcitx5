@@ -35,6 +35,7 @@ fi
 cmake --build "${BUILD_DIR}/engine" --target llavon_ime_engine --parallel
 
 swiftc -O -parse-as-library \
+    -module-name LlavonIMECoreTests \
     -I "${ROOT_DIR}/engine/include" \
     "${ROOT_DIR}"/macos/Core/KeyTranslation.swift \
     "${ROOT_DIR}"/macos/Core/RenderSnapshot.swift \
