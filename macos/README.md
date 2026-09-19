@@ -1,28 +1,58 @@
 # macOS native frontend
 
-This directory hosts the native macOS frontend. The engine is host-agnostic and
-exposes a C ABI (`engine/include/llavon_ime/llavon_ime.h`) so a Swift
-InputMethodKit input method can drive it directly.
+The native macOS input method is a Swift InputMethodKit app that drives the
+host-agnostic engine through its C ABI
+(`engine/include/llavon_ime/llavon_ime.h`). It replaces the fcitx5-macos
+frontend on macOS; Linux keeps using the fcitx5 addon.
 
-## Current status
+## Layout
 
-- `Smoke/` is a headless Swift smoke test for the C ABI (keys, commits,
-  renders, callbacks). It does not use InputMethodKit yet.
-- The InputMethodKit app itself still has to be written; see "Next steps".
+- `App/` — the input method app (Swift): IMK server, input controller, engine
+  bridge, candidate panel, key mapping, `Info.plist`.
+- `Smoke/` — a headless Swift smoke test for the C ABI (no InputMethodKit).
+- `scripts/build-native-app.sh` — builds the engine, compiles the app bundle,
+  signs it ad-hoc, and optionally installs it.
 
-## Build the smoke test (macOS)
+## Build and install
 
-Build and install the engine first, using the existing macOS preset:
+```sh
+macos/scripts/build-native-app.sh            # build dist/macos/LlavonIME.app
+macos/scripts/build-native-app.sh --install  # also install for this user
+```
+
+The install step copies the app to `~/Library/Input Methods/` and nudges
+`TextInputMenuAgent`. Then enable 「拉風輸入法」 under
+System Settings › Keyboard › Input Sources. If it does not show up, log out
+and back in once.
+
+The app finds its resources in this order:
+
+1. `LLAVON_IME_*` environment overrides (`TABLE_PATH`, `TABLES_DIR`,
+   `MODEL_PATH`, `UNIX_SERVICE_PATH`, `PHRASE_OVERRIDES_PATH`).
+2. The package payload: `/Library/Application Support/llavon-ime/payload`
+   (service + tables) and `/Library/Application Support/llavon-ime/models`.
+3. The development install: `~/Library/fcitx5` (from `scripts/build-macos.sh`).
+
+Without a service or model the engine still works with table candidates;
+predictions are additive.
+
+## Manual test checklist (TextEdit)
+
+- Bopomofo typing, candidate list, paging, selection keys, commit.
+- Smart English and the phrase marking tooltip (Shift+←, Enter, Esc).
+- Switching apps/focus (composition commits on deactivate).
+- Password fields (context must not be read or sent).
+- Surrounding text reaching predictions.
+
+## Smoke test (engine only)
 
 ```sh
 cd fcitx5
 cmake --preset macos
 cmake --build --preset macos --parallel
-```
+ctest --test-dir ../build/macos --output-on-failure   # 4/4
 
-Then compile and run the smoke test against the engine archive:
-
-```sh
+cd ..
 swiftc -O -parse-as-library \
   -I engine/include \
   macos/Smoke/Smoke.swift \
@@ -51,18 +81,13 @@ service; predictions fail fast and the engine falls back to table candidates.
 - Key fields mirror the engine's `InputKey`: `sym` is an X11 keysym, `states`
   holds modifier bits, `release` marks key-up events (received, not consumed).
 
-## Next steps (InputMethodKit app)
+## Notes / known gaps
 
-1. `IMKInputController` subclass registered as a system input method
-   (`.inputmethod` bundle with `tsInputMethodCharacterRepertoireKey` etc.),
-   with `recognizedEvents` including `NSEventMaskKeyUp`.
-2. Forward every key event through `lv_engine_key_event`; consume the event
-   when it returns 1.
-3. Render `lv_render_info` as marked text (`setMarkedText:selectionRange:`)
-   plus a candidate window; `lv_engine_preedit_segment` carries the underline
-   flags and `lv_engine_aux_up` the phrase-marking tooltip.
-4. Implement `lv_host.surrounding_text` from the client's
-   `NSTextInputClient` state and `is_sensitive` from secure-input state.
-5. Bundle the service binary, tables and model, or reuse the installed
-   `/Library/Application Support/llavon-ime` copies, passing their paths in
-   `lv_engine_options`.
+- Packaging still ships the fcitx5-macos setup; migrating
+  `scripts/package-macos.sh`, the Homebrew tap and the release workflow to the
+  native app happens once the app is verified on macOS.
+- The app is unsigned (ad-hoc); distributing it needs a Developer ID and
+  notarization.
+- The candidate window is anchored with
+  `attributes(forCharacterIndex:lineHeightRectangle:)`; coordinate adjustments
+  may be needed per client app.

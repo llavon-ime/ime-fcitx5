@@ -8,6 +8,27 @@
 #   LLAVON_IME_INSTALLED_MODEL_PATH
 #   LLAVON_IME_TABLE_SOURCE_DIR
 #   LLAVON_IME_DEBUG
+#
+# It can also be configured on its own (for the macOS frontend):
+#   cmake -S engine -B build/engine -DCMAKE_TOOLCHAIN_FILE=vcpkg/.../vcpkg.cmake
+
+cmake_minimum_required(VERSION 3.20)
+
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(llavon-ime-engine VERSION 0.2.1 LANGUAGES C CXX)
+    set(CMAKE_CXX_STANDARD 23)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    set(CMAKE_CXX_EXTENSIONS OFF)
+    option(LLAVON_IME_DEBUG "Compile in debug logging (LLAVON_DEBUG_LOG)" OFF)
+    set(LLAVON_IME_INSTALLED_MODEL_PATH "" CACHE FILEPATH "Installed default GGUF model path")
+    set(LLAVON_IME_TABLE_SOURCE_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/../ime-unix-service/ime-core/table"
+        CACHE PATH
+        "Source directory for the canonical ime-core tables")
+    if(LLAVON_IME_ENGINE_BUILD_TESTS)
+        enable_testing()
+    endif()
+endif()
 
 include(GNUInstallDirs)
 
