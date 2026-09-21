@@ -8,7 +8,13 @@ final class EngineBridge: EngineCore {
 
     private let supportRoot = "/Library/Application Support/llavon-ime"
 
+    // Set by the caller before launch to point the prediction service at a
+    // development model. Captured here because applyServiceEnvironment() writes
+    // the settings-file value into the same variable.
+    private let modelPathOverride: String?
+
     private override init() {
+        modelPathOverride = ProcessInfo.processInfo.environment["LLAVON_IME_MODEL_PATH"]
         super.init()
         setPostToMain { work in
             if Thread.isMainThread {
@@ -41,7 +47,7 @@ final class EngineBridge: EngineCore {
 
     func startResolved() {
         let configJson = effectiveConfigJSON()
-        let serviceModelPath = ProcessInfo.processInfo.environment["LLAVON_IME_MODEL_PATH"]
+        let serviceModelPath = modelPathOverride
         start(options: EngineStartOptions(tablePath: resolveTablePath(),
                                           phraseOverridesPath: resolvePhraseOverridesPath(),
                                           servicePath: resolveServicePath(),
@@ -51,6 +57,7 @@ final class EngineBridge: EngineCore {
                                           autoStartService: true,
                                           // InputMethodKit supplies surrounding text.
                                           enableAccessibility: false))
+        applyServiceEnvironment()
     }
 
     // Mirrors the fcitx5 addon's reload_config(): re-reads the settings file on
@@ -58,8 +65,16 @@ final class EngineBridge: EngineCore {
     // overrides so external edits take effect.
     func reloadConfigFromDisk() {
         guard let configJson = effectiveConfigJSON() else { return }
+        let previous = self.config()
         _ = reloadConfigJson(configJson)
         reloadPhraseOverrides()
+        // External edits to the service settings need the same restart the
+        // settings window asks for; the engine alone cannot apply them.
+        if let previous, let current = self.config(),
+           Self.serviceSettingsChanged(from: previous, to: current) {
+            applyServiceEnvironment()
+            restartPredictionService()
+        }
     }
 
     // The settings file with the effective model path filled in: the config
@@ -89,19 +104,115 @@ final class EngineBridge: EngineCore {
     }
 
     // Applies the settings in memory and persists them for the next launch.
+    // Settings the prediction service owns are only read when its process
+    // starts, so a restart is requested when they change.
     @discardableResult
     func saveConfig(_ config: EngineConfig) -> Bool {
+        let previous = self.config()
         guard setConfig(config) else { return false }
         guard let data = config.jsonData() else { return false }
         do {
             try FileManager.default.createDirectory(at: configFileURL.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
             try data.write(to: configFileURL, options: .atomic)
-            return true
         } catch {
             NSLog("llavon-ime: failed to save settings: \(error)")
             return false
         }
+        if Self.serviceSettingsChanged(from: previous, to: config) {
+            applyServiceEnvironment()
+            restartPredictionService()
+        }
+        // The surrounding sample window follows the same setting.
+        if let length = config.value("context_length")?.intValue, length > 0 {
+            contextLength = length
+        }
+        return true
+    }
+
+    // MARK: - Prediction service
+
+    // Settings only the service process reads; the engine passes them on the
+    // command line when it spawns the service.
+    private static let serviceSettings = [
+        "model_path",
+        "context_length",
+        "thread_count",
+        "gpu_layers",
+        "idle_timeout_seconds",
+    ]
+
+    private static func serviceSettingsChanged(from previous: EngineConfig?, to next: EngineConfig) -> Bool {
+        guard let previous else { return true }
+        return serviceSettings.contains { previous.value($0) != next.value($0) }
+    }
+
+    // The service inherits the app's environment, so the settings it owns are
+    // passed here instead of through the command line the engine captured when
+    // it was created. Refreshed at launch and whenever they are saved.
+    private func applyServiceEnvironment() {
+        guard let config = self.config() else { return }
+        let values: [(String, String?)] = [
+            ("LLAVON_IME_MODEL_PATH", modelPathOverride ?? config.value("model_path")?.stringValue),
+            ("LLAVON_IME_CONTEXT_LENGTH", config.value("context_length")?.intValue.map { String($0) }),
+            ("LLAVON_IME_THREADS", config.value("thread_count")?.intValue.map { String($0) }),
+            ("LLAVON_IME_GPU_LAYERS", config.value("gpu_layers")?.intValue.map { $0 == -2 ? "auto" : String($0) }),
+            ("LLAVON_IME_IDLE_TIMEOUT", config.value("idle_timeout_seconds")?.intValue.map { String($0) }),
+        ]
+        for (name, value) in values {
+            if let value {
+                _ = setenv(name, value, 1)
+            } else {
+                _ = unsetenv(name)
+            }
+        }
+    }
+
+    // The engine spawns the service lazily, so shutting the running one down is
+    // enough: the next prediction starts a fresh process, which reads the
+    // settings file again and therefore ignores the stale command line.
+    private func restartPredictionService() {
+        guard let path = serviceSocketPath() else { return }
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { return }
+        defer { close(descriptor) }
+
+        var timeout = timeval(tv_sec: 1, tv_usec: 0)
+        setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = Array(path.utf8)
+        guard pathBytes.count < MemoryLayout.size(ofValue: address.sun_path) else { return }
+        withUnsafeMutableBytes(of: &address.sun_path) { buffer in
+            buffer.copyBytes(from: pathBytes)
+        }
+
+        let connected = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
+                connect(descriptor, socketAddress, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard connected == 0 else { return }
+
+        // MessageType::Shutdown (6) with payload kind 0, behind the 4-byte
+        // little-endian frame length the service protocol uses.
+        let frame: [UInt8] = [2, 0, 0, 0, 6, 0]
+        _ = frame.withUnsafeBytes { write(descriptor, $0.baseAddress, frame.count) }
+        var response = [UInt8](repeating: 0, count: 8)
+        _ = read(descriptor, &response, response.count)
+    }
+
+    // Mirrors ServiceTransport::default_socket_path in the engine.
+    private func serviceSocketPath() -> String? {
+        let environment = ProcessInfo.processInfo.environment
+        if let override = environment["LLAVON_IME_UNIX_SOCKET_PATH"], !override.isEmpty {
+            return override
+        }
+        let runtime = environment["XDG_RUNTIME_DIR"] ?? environment["TMPDIR"] ?? "/tmp"
+        return URL(fileURLWithPath: runtime, isDirectory: true)
+            .appendingPathComponent("llavon-ime/ime.sock").path
     }
 
     // MARK: - Paths

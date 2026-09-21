@@ -87,11 +87,6 @@ int main(int argc, char* argv[]) {
     try {
         ime::unix_service::UnixServerOptions options;
         options.runtime.tables_dir = default_tables_dir(argv[0]);
-        if (const char* value = env_value("LLAVON_IME_MODEL_PATH")) options.runtime.model_path = value;
-        if (const char* value = env_value("LLAVON_IME_CONTEXT_LENGTH"))
-            options.runtime.context_length = static_cast<std::uint32_t>(positive_number(value, "--context-length"));
-        if (const char* value = env_value("LLAVON_IME_THREADS"))
-            options.runtime.threads = static_cast<std::uint32_t>(positive_number(value, "--threads"));
 
         for (int i = 1; i < argc; ++i) {
             const std::string_view argument = argv[i];
@@ -133,6 +128,23 @@ int main(int argc, char* argv[]) {
                 throw std::runtime_error("unknown option: " + std::string(argument));
             }
         }
+
+        // Frontend-provided settings. The frontend keeps these in sync with its
+        // settings file and the service inherits its environment, so a restart
+        // applies the values the frontend has now instead of the ones it had
+        // when it created its transport. They win over the command line.
+        if (const char* value = env_value("LLAVON_IME_MODEL_PATH")) options.runtime.model_path = value;
+        if (const char* value = env_value("LLAVON_IME_CONTEXT_LENGTH"))
+            options.runtime.context_length = static_cast<std::uint32_t>(positive_number(value, "--context-length"));
+        if (const char* value = env_value("LLAVON_IME_THREADS"))
+            options.runtime.threads = static_cast<std::uint32_t>(positive_number(value, "--threads"));
+        if (const char* value = env_value("LLAVON_IME_GPU_LAYERS")) {
+            const std::string_view layers = value;
+            options.runtime.gpu_layers =
+                layers == "auto" ? -2 : static_cast<int>(positive_number(layers, "--gpu-layers"));
+        }
+        if (const char* value = env_value("LLAVON_IME_IDLE_TIMEOUT"))
+            options.limits.idle_timeout = std::chrono::seconds(positive_number(value, "--idle-timeout"));
 
         if (options.runtime.context_length == 0 ||
             options.runtime.context_length > ime::unix_service::protocol::kMaxContextCodeUnits) {
