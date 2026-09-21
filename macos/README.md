@@ -20,13 +20,26 @@ frontend on macOS; Linux keeps using the fcitx5 addon.
 
 ```sh
 macos/scripts/build-native-app.sh            # build dist/macos/LlavonIME.app
-macos/scripts/build-native-app.sh --install  # also install for this user
+macos/scripts/build-native-app.sh --install  # install the app and the service
 ```
 
 The build needs `pkg-config` (for vcpkg) and CMake; the script bootstraps
 vcpkg by itself.
 
-The install step copies the app to `~/Library/Input Methods/` and nudges
+`--install` also builds, tests and installs the AI prediction service through
+`scripts/build-macos-service.sh`: `/Library/Application Support/llavon-ime/payload`
+for a system install (the path the package uses and the app prefers),
+`~/Library/fcitx5` with `--user`. The model under
+`/Library/Application Support/llavon-ime/models` is reused when present and
+downloaded otherwise. `--no-service` skips the service and only installs the
+app.
+
+The install step copies the app to `/Library/Input Methods/`, the same place
+the package uses, so a package install and a development install never shadow
+each other. It removes a `~/Library/Input Methods/` copy first, because a
+second bundle with the same identifier shadows the system one (and makes the
+package installer relocate its bundle). `--install --user` installs into the
+home directory instead, for machines without sudo. The step then nudges
 `TextInputMenuAgent`. Then enable 「拉風輸入法」 under
 System Settings › Keyboard › Input Sources. If it does not show up, log out
 and back in once. macOS only registers input methods whose bundle identifier

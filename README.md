@@ -49,21 +49,41 @@ macOS 會詢問是否允許這個第三方輸入法。首次安裝需登出再�
 下載 `llavon-ime-<版本>-arm64.pkg` 安裝；未簽名，若被 Gatekeeper 阻擋請右鍵
 選擇「打開」。目前僅提供 arm64 安裝檔。
 
+解除安裝：
+
+```bash
+brew uninstall --cask llavon-ime
+```
+
+套件內也附一支解除安裝腳本，會一併清掉舊 fcitx5-based 安裝留下的檔案
+（`~/Library/fcitx5` 的 addon 與 service），移除前會先詢問是否也要刪除
+Fcitx5.app（預設保留）：
+
+```bash
+sudo "/Library/Application Support/llavon-ime/uninstall.sh"
+```
+
 開發者可直接從原始碼建置原生輸入法（不需要 fcitx5-macos）：
 
 ```bash
-macos/scripts/build-native-app.sh --install
+macos/scripts/build-native-app.sh --install   # 安裝 app + service（需要 sudo）
 ```
 
 前置需求：Xcode Command Line Tools、CMake，以及 vcpkg 需要的 `pkg-config`
 （`brew install cmake pkg-config`）。腳本會用 vcpkg 編譯引擎、以 `swiftc` 編譯
-前端、ad-hoc 簽章並安裝到 `~/Library/Input Methods/LlavonIME.app`；第一次安裝要
-登出再登入，讓 macOS 掃到輸入來源。改完程式重跑同一行指令即生效（可先
-`pkill -x LlavonIME`）。
+前端、ad-hoc 簽章並安裝到 `/Library/Input Methods/LlavonIME.app`（與套件相同
+位置，兩者不會互相 shadow）；安裝前會先移除 `~/Library/Input Methods/` 的舊
+copy，因為同 bundle ID 的使用者層 copy 會蓋掉系統層的，也會讓套件安裝時把
+bundle relocate 到家目錄。沒有 sudo 的機器可用 `--install --user` 裝到家目錄。
+第一次安裝要登出再登入，讓 macOS 掃到輸入來源。改完程式重跑同一行指令即生效
+（可先 `pkill -x LlavonIME`）。
 
-AI 預測用的 `llavon-ime-unix-service` 由 `scripts/build-macos-service.sh` 建置、
-測試並安裝到 `~/Library/fcitx5`（目前僅 Apple Silicon，模型位於
-`/Library/Application Support/llavon-ime/models`，已存在就沿用）。
+`--install` 也會透過 `scripts/build-macos-service.sh` 建置、測試並安裝 AI 預測
+服務：系統安裝裝到 `/Library/Application Support/llavon-ime/payload`（套件用的
+路徑，app 優先讀這裡），`--user` 時裝到 `~/Library/fcitx5`。模型位於
+`/Library/Application Support/llavon-ime/models`，已存在就沿用，沒有才下載。
+只想更新 app 時加 `--no-service` 可跳過 service（建置 service 較久，目前僅
+Apple Silicon）。
 
 ### 啟用
 

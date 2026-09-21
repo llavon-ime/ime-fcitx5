@@ -154,6 +154,11 @@ xcrun clang -O2 -Wall -Wextra -framework Carbon \
     -o "${tool_root}/llavon-ime-tis" \
     "${ROOT_DIR}/packaging/macos/tools/tis.c"
 
+# The uninstaller cleans the files the cask's uninstall does not know about
+# (the legacy fcitx5 payload) and asks before removing a leftover Fcitx5.app.
+install -m 0755 "${ROOT_DIR}/packaging/macos/uninstall.sh" \
+    "${PKGROOT}/Library/Application Support/llavon-ime/uninstall.sh"
+
 if command -v xattr >/dev/null 2>&1; then
     xattr -cr "${PKGROOT}" || true
 fi
@@ -191,6 +196,7 @@ required_files=(
     "${license_root}/mcbopomofo-symbols/NOTICE"
     "${PKGROOT}${MODEL_INSTALL_PATH}"
     "${tool_root}/llavon-ime-tis"
+    "${PKGROOT}/Library/Application Support/llavon-ime/uninstall.sh"
 )
 
 for file in "${required_files[@]}"; do

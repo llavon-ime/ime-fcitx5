@@ -2,25 +2,31 @@
 set -euo pipefail
 
 # Builds and tests the AI prediction service (ime-unix-service) from this
-# checkout and installs it into ~/Library/fcitx5, where the native macOS input
-# method looks for it during development. The model is installed at the package
-# default location and reused when present.
+# checkout and installs it where the native macOS input method looks for it.
+# The model is installed at the package default location and reused when
+# present.
 #
-# The input method frontend itself is built by macos/scripts/build-native-app.sh;
-# it works without this service (table candidates are the fallback, predictions
-# are additive), so only run this when you want the llama service.
+# The input method frontend itself is built by macos/scripts/build-native-app.sh,
+# which calls this script with LLAVON_IME_SERVICE_INSTALL_PREFIX when it
+# installs the app. It works without this service (table candidates are the
+# fallback, predictions are additive), so only run this when you want the
+# llama service.
 #
 # Currently Apple Silicon only: the macos preset uses the arm64-osx-llavon
 # triplet with the Metal backend.
 #
 # Environment overrides:
-#   LLAVON_IME_MODEL_URL      model mirror
-#   LLAVON_IME_DEBUG          any non-empty value compiles in debug logging
+#   LLAVON_IME_MODEL_URL                model mirror
+#   LLAVON_IME_DEBUG                    any non-empty value compiles in debug logging
+#   LLAVON_IME_SERVICE_INSTALL_PREFIX   install prefix (default ~/Library/fcitx5;
+#                                       the package payload path installs with sudo)
+#   LLAVON_IME_SERVICE_SKIP_NEXT_STEPS  set to 1 to drop the closing hints
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODEL_FILE="llavon-ime-llama-250m-Q4_K_M.gguf"
 MODEL_URL="${LLAVON_IME_MODEL_URL:-https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF/resolve/main/${MODEL_FILE}}"
 MODEL_INSTALL_PATH="/Library/Application Support/llavon-ime/models/${MODEL_FILE}"
+INSTALL_PREFIX="${LLAVON_IME_SERVICE_INSTALL_PREFIX:-${HOME}/Library/fcitx5}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "This script only supports macOS." >&2
@@ -110,16 +116,23 @@ echo "Building and testing ime-unix-service (Metal; the first build can take a w
     ctest --test-dir build/macos --output-on-failure
 )
 
-echo "Installing ime-unix-service into ${HOME}/Library/fcitx5..."
-cmake --install "${ROOT_DIR}/ime-unix-service/build/macos"
+echo "Installing ime-unix-service into ${INSTALL_PREFIX}..."
+if [[ "${INSTALL_PREFIX}" == "${HOME}"/* ]]; then
+    cmake --install "${ROOT_DIR}/ime-unix-service/build/macos" --prefix "${INSTALL_PREFIX}"
+else
+    # The package payload lives outside the home directory.
+    "${SUDO[@]}" cmake --install "${ROOT_DIR}/ime-unix-service/build/macos" --prefix "${INSTALL_PREFIX}"
+fi
 
-cat <<EOF
+if [[ "${LLAVON_IME_SERVICE_SKIP_NEXT_STEPS:-}" != "1" ]]; then
+    cat <<EOF
 
 Service build, tests, and installation completed successfully.
 
 Next steps:
   * Build and install the input method frontend:
       macos/scripts/build-native-app.sh --install
-  * The app finds the service at ~/Library/fcitx5/bin/llavon-ime-unix-service
-    and the tables at ~/Library/fcitx5/share/llavon-ime/tables.
+  * The app finds the service at ${INSTALL_PREFIX}/bin/llavon-ime-unix-service
+    and the tables at ${INSTALL_PREFIX}/share/llavon-ime/tables.
 EOF
+fi

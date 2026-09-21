@@ -15,13 +15,22 @@ ENGINE_BUILD_DIR="${BUILD_DIR}/engine"
 DIST_DIR="${LLAVON_IME_NATIVE_DIST_DIR:-${ROOT_DIR}/dist/macos}"
 APP_DIR="${DIST_DIR}/${APP_NAME}.app"
 INSTALL=0
+INSTALL_USER=0
+BUILD_SERVICE=1
+SYSTEM_INSTALL_DIR="${LLAVON_IME_SYSTEM_INSTALL_DIR:-/Library/Input Methods}"
+SYSTEM_PAYLOAD_DIR="${LLAVON_IME_SYSTEM_PAYLOAD_DIR:-/Library/Application Support/llavon-ime/payload}"
 
 for argument in "$@"; do
     case "${argument}" in
         --install) INSTALL=1 ;;
+        # Install into the home directory instead of /Library. The package
+        # installs system-wide, so this is only for machines without sudo.
+        --user) INSTALL_USER=1 ;;
+        # Skip the prediction service; the app alone is enough for UI work.
+        --no-service) BUILD_SERVICE=0 ;;
         *)
             echo "Unknown argument: ${argument}" >&2
-            echo "Usage: $0 [--install]" >&2
+            echo "Usage: $0 [--install [--user] [--no-service]]" >&2
             exit 2
             ;;
     esac
@@ -116,12 +125,55 @@ done
 echo "Signing (ad-hoc)..."
 codesign --force --deep --sign - "${APP_DIR}"
 
+if [[ "${INSTALL}" == "1" && "${BUILD_SERVICE}" == "1" ]]; then
+    if [[ "${INSTALL_USER}" == "1" ]]; then
+        service_prefix="${HOME}/Library/fcitx5"
+    else
+        # The package payload, which the app prefers over ~/Library/fcitx5.
+        service_prefix="${SYSTEM_PAYLOAD_DIR}"
+    fi
+    echo "Building and installing the prediction service into ${service_prefix}..."
+    LLAVON_IME_SERVICE_INSTALL_PREFIX="${service_prefix}" \
+    LLAVON_IME_SERVICE_SKIP_NEXT_STEPS=1 \
+        "${ROOT_DIR}/scripts/build-macos-service.sh"
+    # A running service keeps its old binary; the engine spawns a new one on
+    # the next prediction.
+    pkill -x llavon-ime-unix-service 2>/dev/null || true
+fi
+
 if [[ "${INSTALL}" == "1" ]]; then
-    destination="${HOME}/Library/Input Methods/${APP_NAME}.app"
-    echo "Installing to ${destination}..."
+    if [[ "${INSTALL_USER}" == "1" ]]; then
+        install_dir="${HOME}/Library/Input Methods"
+    else
+        # The package installs the app here. A second copy in the home
+        # directory with the same bundle identifier shadows the system one
+        # (and makes the package installer relocate its bundle), so drop that
+        # copy first.
+        install_dir="${SYSTEM_INSTALL_DIR}"
+        user_destination="${HOME}/Library/Input Methods/${APP_NAME}.app"
+        if [[ -e "${user_destination}" ]]; then
+            echo "Removing the user-level copy at ${user_destination}..."
+            sudo rm -rf "${user_destination}"
+        fi
+    fi
+    destination="${install_dir}/${APP_NAME}.app"
+    if [[ "${INSTALL_USER}" == "1" ]]; then
+        echo "Installing to ${destination}..."
+    else
+        echo "Installing to ${destination} (sudo required)..."
+    fi
     pkill -x "${APP_NAME}" 2>/dev/null || true
-    rm -rf "${destination}"
-    cp -R "${APP_DIR}" "${destination}"
+    if [[ "${INSTALL_USER}" == "1" ]]; then
+        mkdir -p "${install_dir}"
+        rm -rf "${destination}"
+        cp -R "${APP_DIR}" "${destination}"
+    else
+        sudo mkdir -p "${install_dir}"
+        sudo rm -rf "${destination}"
+        sudo cp -R "${APP_DIR}" "${destination}"
+        # Keep the bundle readable for every user, like the package does.
+        sudo chmod -R a+rX "${destination}"
+    fi
     killall TextInputMenuAgent 2>/dev/null || true
     # TextInputSwitcher and CursorUIViewService ignore SIGTERM and cache input
     # source icons in memory, so a stale instance keeps showing an icon-less
