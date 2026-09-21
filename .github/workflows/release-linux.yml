@@ -148,7 +148,7 @@ jobs:
           path: |
             dist/linux/*.deb
             dist/linux/*.rpm
-            build/package-linux-${{ matrix.format }}/addon/tests/llavon_ime_tests
+            build/package-linux-${{ matrix.format }}/addon/engine/tests/llavon_ime_tests
           if-no-files-found: error
           retention-days: 14
 
