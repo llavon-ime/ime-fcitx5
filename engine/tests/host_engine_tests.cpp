@@ -204,6 +204,58 @@ bool test_shift_letter_reported_as_state(Engine& engine, ContextId context, Fake
     return after_punctuation.back().second == u"你，";
 }
 
+// Keypad digits keep their literal meaning: with nothing to compose they are
+// left to the application, while a composition in progress absorbs them as
+// literals so the preedit stays editable and commits with the digit inside.
+bool test_keypad_digits_join_composition(Engine& engine, ContextId context, FakeHost& host) {
+    constexpr char32_t kKeypad5 = 0xffb5;
+
+    engine.reset(context, InputResetReason::Explicit, true);
+    if (engine.key_event(context, make_key(kKeypad5))) return false;
+    if (!engine.render_state(context).composition_empty) return false;
+
+    const auto commits_before = host.commits().size();
+    type(engine, context, u"su3");
+    if (!engine.key_event(context, make_key(kKeypad5))) return false;
+    if (host.commits().size() != commits_before) return false;
+    const auto state = engine.render_state(context);
+    if (state.composition_empty) return false;
+    if (preedit_text(state) != u"你5") return false;
+
+    // Enter commits the composition with the digit inside.
+    if (!engine.key_event(context, make_key(keysym::Return))) return false;
+    const auto commits = host.commits();
+    if (commits.size() != commits_before + 1) return false;
+    if (commits.back().second != u"你5") return false;
+    return engine.render_state(context).composition_empty;
+}
+
+// A pending English token settles into the composition first, so the keypad
+// digit joins the settled text instead of committing it.
+bool test_keypad_digit_joins_pending_token(Engine& engine, ContextId context, FakeHost& host) {
+    constexpr char32_t kKeypad3 = 0xffb3;
+
+    // The preceding test leaves smart English off; this rule needs it on.
+    Config config = engine.config();
+    config.smart_english = true;
+    engine.set_config(config);
+
+    engine.reset(context, InputResetReason::Explicit, true);
+    type(engine, context, u"hello");
+    auto* session = engine.session(context);
+    if (session == nullptr || session->pending_token.empty()) return false;
+
+    const auto commits_before = host.commits().size();
+    if (!engine.key_event(context, make_key(kKeypad3))) return false;
+    if (host.commits().size() != commits_before) return false;
+    const auto preedit = preedit_text(engine.render_state(context));
+    if (preedit.empty() || preedit.back() != u'3') return false;
+
+    if (!engine.key_event(context, make_key(keysym::Return))) return false;
+    const auto commits = host.commits();
+    return commits.size() == commits_before + 1 && commits.back().second == preedit;
+}
+
 }  // namespace
 
 int run_host_engine_tests() {
@@ -224,6 +276,7 @@ int run_host_engine_tests() {
         if (!test_marking_hint_target(engine, context)) fail("marking hint");
         if (!test_symbol_menu_target(engine, context)) fail("symbol menu");
         if (!test_shift_letter_reported_as_state(engine, context, host)) fail("shift letter state");
+        if (!test_keypad_digits_join_composition(engine, context, host)) fail("keypad digits");
         if (!host.pump_until([&]() { return host.redraw_count() > 0; })) fail("redraw 1");
     }
 
@@ -255,6 +308,7 @@ int run_host_engine_tests() {
         const ContextId context = 11;
         engine.attach(context);
         if (!test_config_change_settles_pending(engine, context)) fail("config settle");
+        if (!test_keypad_digit_joins_pending_token(engine, context, host)) fail("keypad pending");
         if (!host.pump_until([&]() { return host.redraw_count() > 0; })) fail("redraw 4");
     }
 

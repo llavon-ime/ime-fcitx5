@@ -377,6 +377,22 @@ void InputProcessor::process_impl(const InputKey& key) {
         return;
     }
 
+    // The numeric keypad keeps its literal meaning, but a composition in
+    // progress absorbs a digit as a literal instead of being committed: the
+    // preedit stays editable and the digit commits with it. With nothing to
+    // compose the digit falls through and is typed by the application.
+    if (const auto keypad_digit = keypad_digit_keysym(static_cast<std::uint32_t>(key.sym))) {
+        if (!session_->pending_token.empty()) (void)settle_pending_preview();
+        if (!session_->buffer.empty()) {
+            (void)session_->buffer.add_literal(*keypad_digit);
+            (void)transition_to(InputStateKind::Inputting);
+            mark_prediction_dirty();
+            redraw();
+            consume();
+            return;
+        }
+    }
+
     if (is_keypad_passthrough_keysym(static_cast<std::uint32_t>(key.sym))) {
         if (!session_->pending_token.empty()) (void)settle_pending_preview();
         if (!session_->buffer.empty()) commit_current();

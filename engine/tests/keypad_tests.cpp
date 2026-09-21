@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <cstdlib>
+#include <optional>
 
 #include "input/keypad.hpp"
 
@@ -29,6 +30,16 @@ int run_keypad_tests() {
     ok = ok && !llavon::ime::is_ascii_digit_keysym('/');
     ok = ok && !llavon::ime::is_ascii_digit_keysym(':');
     ok = ok && !llavon::ime::is_ascii_digit_keysym(0xffb0);
+
+    // Keypad digits report the ASCII digit they type; nothing else does.
+    ok = ok && llavon::ime::keypad_digit_keysym(0xffb0) == std::optional<char32_t>(U'0');
+    ok = ok && llavon::ime::keypad_digit_keysym(0xffb5) == std::optional<char32_t>(U'5');
+    ok = ok && llavon::ime::keypad_digit_keysym(0xffb9) == std::optional<char32_t>(U'9');
+    ok = ok && !llavon::ime::keypad_digit_keysym(0xffae).has_value();  // KP_Decimal
+    ok = ok && !llavon::ime::keypad_digit_keysym(0xffab).has_value();  // KP_Add
+    ok = ok && !llavon::ime::keypad_digit_keysym(0xff0d).has_value();  // Return
+    ok = ok && !llavon::ime::keypad_digit_keysym(U'5').has_value();
+
     for (std::uint32_t key = '1'; key <= '9'; ++key) {
         ok = ok && llavon::ime::ascii_digit_selection_index(key) == static_cast<int>(key - '1');
     }

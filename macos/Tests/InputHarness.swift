@@ -155,6 +155,25 @@ struct InputHarness {
         key(controller, client, "Escape", keyCode: 0x35, characters: "\u{1b}")
         expect(client.marked.isEmpty, "Escape clears the composition")
 
+        // Keypad digits join the composition instead of committing it; with
+        // nothing to compose they are handed back to the application.
+        for (label, keyCode, characters) in [("s", UInt16(0x01), "s"), ("u", UInt16(0x20), "u"), ("3", UInt16(0x14), "3")] {
+            key(controller, client, label, keyCode: keyCode, characters: characters)
+        }
+        let commitsBeforeKeypad = client.commits.count
+        let keypadConsumed = key(controller, client, "KP_5", keyCode: 0x57, characters: "5")
+        expect(keypadConsumed, "keypad 5 is consumed")
+        expect(client.marked == "你5", "keypad 5 joins the composition", client.marked)
+        expect(client.commits.count == commitsBeforeKeypad, "keypad 5 does not commit",
+               "\(client.commits.count)")
+        key(controller, client, "Return", keyCode: 0x24, characters: "\r")
+        expect(client.commits.last == "你5", "Return commits the composition with the digit",
+               "\(client.commits)")
+        expect(client.marked.isEmpty, "keypad commit clears the marked text")
+
+        let idleKeypadConsumed = key(controller, client, "KP_5 (idle)", keyCode: 0x57, characters: "5")
+        expect(!idleKeypadConsumed, "keypad 5 passes through with nothing to compose")
+
         // Command shortcuts are handed back to the application.
         let controlConsumed = key(controller, client, "Ctrl+A", keyCode: 0x00, characters: "a", control: true)
         expect(!controlConsumed, "Ctrl+A passes through to the application")

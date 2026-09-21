@@ -39,6 +39,13 @@ bool is_ascii_digit_keysym(std::uint32_t keysym) {
     return keysym >= '0' && keysym <= '9';
 }
 
+std::optional<char32_t> keypad_digit_keysym(std::uint32_t keysym) {
+    if (keysym >= kKeypad0 && keysym <= kKeypad9) {
+        return static_cast<char32_t>(U'0' + (keysym - kKeypad0));
+    }
+    return std::nullopt;
+}
+
 int ascii_digit_selection_index(std::uint32_t keysym) {
     if (keysym >= '1' && keysym <= '9') return static_cast<int>(keysym - '1');
     return keysym == '0' ? 9 : -1;
