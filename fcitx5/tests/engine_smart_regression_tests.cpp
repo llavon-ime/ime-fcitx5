@@ -5,7 +5,7 @@
 
 #include <string>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 void engine_test_smart_regressions(fcitx::Instance* instance) {
     // SmartEnglish and Hsu must be enabled at the same time. Common English

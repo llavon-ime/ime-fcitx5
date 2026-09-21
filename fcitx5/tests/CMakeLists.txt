@@ -1,35 +1,3 @@
-set(IME_FCITX5_TEST_SOURCES
-    test_main.cpp
-    config_tests.cpp
-    bopomofo_tests.cpp
-    buffer_tests.cpp
-    protocol_tests.cpp
-    service_transport_tests.cpp
-    keypad_tests.cpp
-    input_state_tests.cpp
-    input_key_tests.cpp
-    punctuation_tests.cpp
-    candidate_view_tests.cpp
-    input_processor_tests.cpp
-    prediction_state_tests.cpp
-    symbol_menu_tests.cpp
-    ascii_tokenizer_tests.cpp
-    caret_prefix_sampler_tests.cpp
-    sample_adoption_tests.cpp
-    accessibility_context_tests.cpp
-    real_service_tests.cpp
-    fallback_engine_tests.cpp
-    mixed_input_decoder_tests.cpp
-    phrase_override_store_tests.cpp
-)
-
-add_executable(llavon_ime_tests ${IME_FCITX5_TEST_SOURCES})
-target_link_libraries(llavon_ime_tests PRIVATE ime_fcitx5_shared)
-target_compile_definitions(llavon_ime_tests PRIVATE
-    IME_FCITX5_TEST_TABLE_PATH="${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json")
-add_test(NAME llavon_ime_tests COMMAND llavon_ime_tests)
-set_tests_properties(llavon_ime_tests PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/..")
-
 if(Fcitx5_FOUND AND NOT WIN32)
     add_test(NAME llavon_ime_fcitx5_metadata
         COMMAND ${CMAKE_COMMAND}
@@ -37,34 +5,8 @@ if(Fcitx5_FOUND AND NOT WIN32)
             -DINPUTMETHOD_CONF=${CMAKE_BINARY_DIR}/fcitx5/inputmethod/llavon-ime.conf
             -P ${CMAKE_CURRENT_LIST_DIR}/check_fcitx5_metadata.cmake)
 
-    add_executable(llavon_ime_prediction_coordinator_tests
-        prediction_coordinator_tests.cpp
-        ../fcitx5/prediction_coordinator.cpp)
-    target_link_libraries(llavon_ime_prediction_coordinator_tests PRIVATE
-        Fcitx5::Core
-        ime_fcitx5_shared)
-    target_include_directories(llavon_ime_prediction_coordinator_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    target_compile_definitions(llavon_ime_prediction_coordinator_tests PRIVATE
-        IME_FCITX5_TEST_TABLE_PATH="${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json")
-    add_test(NAME llavon_ime_prediction_coordinator_tests
-        COMMAND llavon_ime_prediction_coordinator_tests)
-
-    add_executable(llavon_ime_prediction_coordinator_integration_tests
-        prediction_coordinator_integration_tests.cpp
-        ../fcitx5/prediction_coordinator.cpp)
-    target_link_libraries(llavon_ime_prediction_coordinator_integration_tests PRIVATE
-        Fcitx5::Core
-        ime_fcitx5_shared)
-    target_include_directories(llavon_ime_prediction_coordinator_integration_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    target_compile_definitions(llavon_ime_prediction_coordinator_integration_tests PRIVATE
-        IME_FCITX5_TEST_TABLE_PATH="${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json")
-    add_test(NAME llavon_ime_prediction_coordinator_integration_tests
-        COMMAND llavon_ime_prediction_coordinator_integration_tests)
-
     find_package(Fcitx5Module QUIET COMPONENTS TestFrontend)
-    set(IME_FCITX5_LOCAL_TESTFRONTEND OFF)
+    set(LLAVON_IME_LOCAL_TESTFRONTEND OFF)
     if(APPLE AND NOT TARGET Fcitx5::Module::TestFrontend)
         set(_ime_fcitx5_testfrontend_source "")
         if(EXISTS "${FCITX5_MACOS_SOURCE_DIR}/fcitx5/testing/testfrontend/testfrontend.cpp")
@@ -87,14 +29,14 @@ if(Fcitx5_FOUND AND NOT WIN32)
             add_library(Fcitx5::Module::TestFrontend INTERFACE IMPORTED GLOBAL)
             set_target_properties(Fcitx5::Module::TestFrontend PROPERTIES
                 INTERFACE_INCLUDE_DIRECTORIES "${_ime_fcitx5_testfrontend_source}")
-            set(IME_FCITX5_LOCAL_TESTFRONTEND ON)
+            set(LLAVON_IME_LOCAL_TESTFRONTEND ON)
         endif()
     endif()
 
     if(TARGET Fcitx5::Module::TestFrontend)
         add_subdirectory(test/addon)
         add_subdirectory(test/inputmethod)
-        if(IME_FCITX5_LOCAL_TESTFRONTEND)
+        if(LLAVON_IME_LOCAL_TESTFRONTEND)
             configure_file(
                 "${_ime_fcitx5_testfrontend_source}/testfrontend.conf"
                 "${CMAKE_CURRENT_BINARY_DIR}/test/addon/testfrontend.conf"
@@ -102,7 +44,7 @@ if(Fcitx5_FOUND AND NOT WIN32)
         endif()
         configure_file(testdir.h.in ${CMAKE_CURRENT_BINARY_DIR}/testdir.h @ONLY)
 
-        set(IME_FCITX5_ENGINE_TEST_SOURCES
+        set(LLAVON_IME_ENGINE_TEST_SOURCES
             engine_test_main.cpp
             engine_basic_input_tests.cpp
             engine_hsu_layout_tests.cpp
@@ -111,7 +53,7 @@ if(Fcitx5_FOUND AND NOT WIN32)
             engine_punctuation_tests.cpp
             engine_shift_letter_tests.cpp
             engine_context_source_tests.cpp
-            engine_async_state_tests.cpp
+            engine_config_schema_tests.cpp
             engine_lifecycle_tests.cpp
             engine_smart_candidate_tests.cpp
             engine_smart_chat_tests.cpp
@@ -129,22 +71,22 @@ if(Fcitx5_FOUND AND NOT WIN32)
             engine_phrase_override_tests.cpp
         )
 
-        add_executable(llavon_ime_engine_tests ${IME_FCITX5_ENGINE_TEST_SOURCES})
+        add_executable(llavon_ime_engine_tests ${LLAVON_IME_ENGINE_TEST_SOURCES})
         target_link_libraries(llavon_ime_engine_tests PRIVATE
             Fcitx5::Core
             Fcitx5::Module::TestFrontend
-            ime_fcitx5_shared)
+            llavon_ime_engine)
         target_include_directories(llavon_ime_engine_tests PRIVATE
             ${CMAKE_CURRENT_BINARY_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/..)
         add_dependencies(llavon_ime_engine_tests llavon-ime-addon)
-        if(IME_FCITX5_LOCAL_TESTFRONTEND)
+        if(LLAVON_IME_LOCAL_TESTFRONTEND)
             add_dependencies(llavon_ime_engine_tests testfrontend)
         endif()
         add_test(NAME llavon_ime_engine_tests COMMAND llavon_ime_engine_tests)
         set_tests_properties(llavon_ime_engine_tests PROPERTIES
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/.."
-            ENVIRONMENT "IME_FCITX5_TABLE_PATH=${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json"
+            ENVIRONMENT "LLAVON_IME_TABLE_PATH=${LLAVON_IME_TABLE_SOURCE_DIR}/bopomofo_char.json"
             SKIP_RETURN_CODE 77)
 
         add_executable(llavon_ime_engine_prediction_integration_tests
@@ -152,19 +94,19 @@ if(Fcitx5_FOUND AND NOT WIN32)
         target_link_libraries(llavon_ime_engine_prediction_integration_tests PRIVATE
             Fcitx5::Core
             Fcitx5::Module::TestFrontend
-            ime_fcitx5_shared)
+            llavon_ime_engine)
         target_include_directories(llavon_ime_engine_prediction_integration_tests PRIVATE
             ${CMAKE_CURRENT_BINARY_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/..)
         add_dependencies(llavon_ime_engine_prediction_integration_tests llavon-ime-addon)
-        if(IME_FCITX5_LOCAL_TESTFRONTEND)
+        if(LLAVON_IME_LOCAL_TESTFRONTEND)
             add_dependencies(llavon_ime_engine_prediction_integration_tests testfrontend)
         endif()
         add_test(NAME llavon_ime_engine_prediction_integration_tests
             COMMAND llavon_ime_engine_prediction_integration_tests)
         set_tests_properties(llavon_ime_engine_prediction_integration_tests PROPERTIES
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/.."
-            ENVIRONMENT "IME_FCITX5_TABLE_PATH=${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json"
+            ENVIRONMENT "LLAVON_IME_TABLE_PATH=${LLAVON_IME_TABLE_SOURCE_DIR}/bopomofo_char.json"
             SKIP_RETURN_CODE 77)
     endif()
 endif()

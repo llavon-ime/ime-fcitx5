@@ -1,37 +1,31 @@
 #pragma once
 
 #include "config/config.hpp"
+#include "config/config_schema.hpp"
 
 #include <fcitx-config/configuration.h>
 #include <fcitx-config/enum.h>
 #include <fcitx-config/option.h>
 
+#include <functional>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
 #include "bopomofo/keymap.hpp"
 
-#ifndef IME_FCITX5_DISPLAY_VERSION
-#define IME_FCITX5_DISPLAY_VERSION "unknown"
+#ifndef LLAVON_IME_DISPLAY_VERSION
+#define LLAVON_IME_DISPLAY_VERSION "unknown"
 #endif
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 inline constexpr const char* kFcitxConfigFile = "conf/llavon-ime.conf";
 
 enum class DisplayVersion { Current };
-FCITX_CONFIG_ENUM_NAME(DisplayVersion, IME_FCITX5_DISPLAY_VERSION);
-
-FCITX_CONFIG_ENUM_NAME(BopomofoKeyboardLayout, "標準", "許氏");
-
-enum class SelectionKeys { Digits, HomeRow, LeftHand };
-FCITX_CONFIG_ENUM_NAME(SelectionKeys, "數字鍵", "本位列", "左手鍵");
-
-enum class CandidateLayout { NotSet, Vertical, Horizontal };
-FCITX_CONFIG_ENUM_NAME(CandidateLayout, "系統預設", "垂直", "水平");
-
-enum class SelectPhrase { BeforeCursor, AfterCursor };
-FCITX_CONFIG_ENUM_NAME(SelectPhrase, "游標前", "游標後");
-
-enum class ShiftLetterKeys { DirectlyOutputUppercase, DirectlyPutToBuffer };
-FCITX_CONFIG_ENUM_NAME(ShiftLetterKeys, "直接輸出大寫", "直接放入組字區");
+FCITX_CONFIG_ENUM_NAME(DisplayVersion, LLAVON_IME_DISPLAY_VERSION);
 
 // The text and its readings are separate columns so either half can be edited
 // without retyping the other; the file keeps the combined "text readings" form.
@@ -54,45 +48,62 @@ FCITX_CONFIGURATION(PhraseOverrideEditorConfig,
     fcitx::OptionWithAnnotation<std::vector<PunctuationMapEntryConfig>, fcitx::ListDisplayOptionAnnotation>
         entries{this, "Entries", "強制替代詞彙", {}, {}, {}, fcitx::ListDisplayOptionAnnotation("Phrase")};);
 
-FCITX_CONFIGURATION(ImeFcitxConfig,
+// String annotation that lists runtime choices so fcitx5 UIs render a combo
+// box (see fcitx::EnumAnnotation). The stored value is the label, which is what
+// the INI keeps; the engine canonicalizes it when reading the config.
+class ChoiceAnnotation {
+public:
+    ChoiceAnnotation() = default;
+    explicit ChoiceAnnotation(std::vector<std::string> choices) : choices_(std::move(choices)) {}
+
+    bool skipDescription() { return false; }
+    bool skipSave() { return false; }
+    void dumpDescription(fcitx::RawConfig& config) const {
+        config.setValueByPath("IsEnum", "True");
+        for (size_t i = 0; i < choices_.size(); ++i) {
+            config.setValueByPath("Enum/" + std::to_string(i), choices_[i]);
+        }
+    }
+
+private:
+    std::vector<std::string> choices_;
+};
+
+using ChoiceOption = fcitx::Option<std::string, fcitx::NoConstrain<std::string>,
+                                   fcitx::DefaultMarshaller<std::string>, ChoiceAnnotation>;
+
+// One fcitx Option per engine config field, created from config_fields() at
+// runtime. Adding an option to the engine schema makes it show up in the
+// fcitx5 config UI (and the macOS settings window) without per-platform code.
+class SchemaOptions {
+public:
+    explicit SchemaOptions(fcitx::Configuration* parent);
+
+    ConfigValue read(const ConfigField& field) const;
+    bool write(const ConfigField& field, const ConfigValue& value);
+
+private:
+    std::unordered_map<std::string, std::function<ConfigValue()>> readers_;
+    std::unordered_map<std::string, std::function<bool(const ConfigValue&)>> writers_;
+    std::vector<std::unique_ptr<fcitx::OptionBase>> options_;
+};
+
+class ImeFcitxConfig final : public fcitx::Configuration {
+public:
+    ImeFcitxConfig() = default;
+    ImeFcitxConfig(const ImeFcitxConfig& other) : ImeFcitxConfig() { copyHelper(other); }
+    ImeFcitxConfig& operator=(const ImeFcitxConfig& other) {
+        if (this != &other) copyHelper(other);
+        return *this;
+    }
+    bool operator==(const ImeFcitxConfig& other) const { return compareHelper(other); }
+    ~ImeFcitxConfig() override = default;
+
+    const char* typeName() const override { return "ImeFcitxConfig"; }
+
+    // Extra, addon-only entries that are not part of the shared engine config.
     fcitx::Option<DisplayVersion> version{this, "Version", "版本", DisplayVersion::Current};
-    fcitx::Option<std::string> modelPath{this, "ModelPath", "模型路徑", default_config().model_path};
-    fcitx::Option<int, fcitx::IntConstrain> contextLength{
-        this, "ContextLength", "上下文長度", default_config().context_length, fcitx::IntConstrain(1, 1048576)};
-    fcitx::Option<int, fcitx::IntConstrain> threadCount{
-        this, "ThreadCount", "執行緒數", default_config().thread_count, fcitx::IntConstrain(1, 1024)};
-    fcitx::Option<int, fcitx::IntConstrain> gpuLayers{
-        this, "GpuLayers", "顯示卡分層數", default_config().gpu_layers, fcitx::IntConstrain(0, 1024)};
-    fcitx::Option<int, fcitx::IntConstrain> idleTimeoutSeconds{this, "IdleTimeoutSeconds", "閒置逾時秒數",
-                                                                default_config().idle_timeout_seconds,
-                                                                fcitx::IntConstrain(0, 86400)};
-    fcitx::Option<BopomofoKeyboardLayout> keyboardLayout{this, "BopomofoKeyboardLayout",
-                                                          "注音鍵盤配置",
-                                                          BopomofoKeyboardLayout::Standard};
-    fcitx::Option<SelectionKeys> selectionKeys{this, "SelectionKeys", "候選選字鍵", SelectionKeys::Digits};
-    fcitx::Option<int, fcitx::IntConstrain> selectionKeyCount{this, "SelectionKeysCount", "候選選字鍵數量",
-                                                              default_config().selection_key_count,
-                                                              fcitx::IntConstrain(4, 10)};
-    fcitx::Option<int, fcitx::IntConstrain> candidatePageSize{this, "CandidatePageSize", "候選頁大小",
-                                                              default_config().candidate_page_size,
-                                                              fcitx::IntConstrain(1, 50)};
-    fcitx::Option<CandidateLayout> candidateLayout{this, "CandidateLayout", "候選窗排列",
-                                                    CandidateLayout::NotSet};
-    fcitx::Option<bool> chooseCandidateUsingSpace{this, "ChooseCandidateUsingSpace",
-                                                   "空白鍵選取候選字",
-                                                   default_config().space_selects_candidate};
-    fcitx::Option<SelectPhrase> selectPhrase{this, "SelectPhrase", "候選字查詢位置", SelectPhrase::BeforeCursor};
-    fcitx::Option<bool> moveCursorAfterSelection{this, "MoveCursorAfterSelection", "選字後移動游標",
-                                                  default_config().move_cursor_after_selection};
-    fcitx::Option<bool> escKeyClearsEntireComposingBuffer{this, "EscKeyClearsEntireComposingBuffer",
-                                                           "Esc 鍵清除整個組字區",
-                                                           default_config().esc_clears_entire_buffer};
-    fcitx::Option<bool> capsLockInputsBopomofo{this, "CapsLockInputsBopomofo",
-                                               "大寫鎖定時仍輸入注音",
-                                               default_config().caps_lock_inputs_bopomofo};
-    fcitx::Option<ShiftLetterKeys> shiftLetterKeys{this, "ShiftLetterKeys", "Shift 鍵輸入英文",
-                                                    ShiftLetterKeys::DirectlyOutputUppercase};
-    fcitx::Option<bool> smartEnglish{this, "SmartEnglish", "智慧型中英文", default_config().smart_english};
+    SchemaOptions fields{this};
     fcitx::SubConfigOption phraseOverrides{this, "PhraseOverrides", "管理強制替代詞彙",
                                             "fcitx://config/addon/llavon-ime/phraseoverrides"};
     fcitx::Option<std::string, fcitx::NoConstrain<std::string>, fcitx::DefaultMarshaller<std::string>,
@@ -103,9 +114,10 @@ FCITX_CONFIGURATION(ImeFcitxConfig,
                             "",
                             fcitx::NoConstrain<std::string>(),
                             fcitx::DefaultMarshaller<std::string>(),
-                            fcitx::ToolTipAnnotation("由 IME 更新的唯讀狀態:顯示能否取得聚焦視窗的文字作為預測上下文;可用時會自動使用")};);
+                            fcitx::ToolTipAnnotation("由 IME 更新的唯讀狀態:顯示能否取得聚焦視窗的文字作為預測上下文;可用時會自動使用")};
+};
 
 Config to_shared_config(const ImeFcitxConfig& config);
 void apply_shared_config(ImeFcitxConfig& target, const Config& source);
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime

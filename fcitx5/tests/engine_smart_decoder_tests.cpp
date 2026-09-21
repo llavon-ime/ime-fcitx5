@@ -5,7 +5,7 @@
 
 #include <string>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 // Mixed-input decoder scenarios: structured ASCII followed by Chinese keeps a
 // complete mixed candidate, while Email/URL/path/code/number input is never

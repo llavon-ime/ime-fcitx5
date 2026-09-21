@@ -5,7 +5,7 @@
 
 #include <string>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 // SmartEnglish: long and multi-syllable compositions plus consecutive English
 // words. Each scenario builds a fresh EngineHarness and enables the

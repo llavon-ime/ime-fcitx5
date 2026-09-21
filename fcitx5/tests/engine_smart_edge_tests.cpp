@@ -5,7 +5,7 @@
 
 #include <string>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 // Edge cases and non-letter keys with a pending word (SmartEnglish).
 // Every scenario creates its own EngineHarness and always enables

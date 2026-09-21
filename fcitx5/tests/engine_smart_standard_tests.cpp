@@ -5,7 +5,7 @@
 
 #include <string>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 // SmartEnglish on the standard keyboard: lowercase pending characters render
 // as raw ASCII in the preedit until a tone key (3/6/4/7) or space decides

@@ -5,7 +5,7 @@
 
 #include <string>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 // Types "su3" (ㄋㄧˇ in the standard layout), opens candidates with Space,
 // selects with a digit, and commits with Return.

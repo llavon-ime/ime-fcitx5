@@ -5,7 +5,7 @@
 
 #include <string>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 // 智慧型中英文 — mixed Chinese and English inside one composition. With
 // SmartEnglish on, lowercase letters typed after already-composed Chinese

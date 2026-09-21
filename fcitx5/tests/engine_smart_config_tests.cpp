@@ -5,7 +5,7 @@
 
 #include <string>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 // The SmartEnglish config option: default OFF preserves existing behavior
 // exactly; turning it ON holds pending letters raw until a tone key or space

@@ -5,7 +5,7 @@
 
 #include <string>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 // SmartEnglish space decision: a pending word that is a valid first-tone
 // reading converts to Chinese (top candidate into the preedit, space

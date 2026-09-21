@@ -17,32 +17,16 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
-#include "context/accessibility_context.hpp"
-#include "context/sample_adoption.hpp"
-#include "debug/context_log.hpp"
-#include "input/input_processor.hpp"
+#include "config/config.hpp"
+#include "host/render_state.hpp"
 #include "text/utf.hpp"
+#include "util/env.hpp"
 
-namespace ime::fcitx5 {
+namespace llavon::ime {
 
 namespace {
-
-const char* non_empty_env(const char* name) {
-    if (const char* value = std::getenv(name); value != nullptr && value[0] != '\0') return value;
-    return nullptr;
-}
-
-std::string to_utf8(const std::u16string& value) {
-    return u16_to_utf8(value);
-}
-
-std::string to_utf8(const std::u32string& value) {
-    std::string result;
-    result.reserve(value.size());
-    for (const char32_t codepoint : value) result += char32_to_utf8(codepoint);
-    return result;
-}
 
 std::string accessibility_status_text(const AccessibilityContextState& state) {
     switch (state.availability) {
@@ -67,12 +51,10 @@ std::string accessibility_status_text(const AccessibilityContextState& state) {
     return "無障礙: 未知";
 }
 
-std::u16string to_utf16(char32_t value) {
-    return utf8_to_u16(char32_to_utf8(value));
-}
-
 std::filesystem::path default_table_path() {
-    if (const char* override = non_empty_env("IME_FCITX5_TABLE_PATH")) return override;
+    if (const char* override = env_with_legacy("LLAVON_IME_TABLE_PATH", "IME_FCITX5_TABLE_PATH")) {
+        return override;
+    }
 #ifdef __APPLE__
     if (const char* home = std::getenv("HOME"); home != nullptr && home[0] != '\0') {
         const auto user_path =
@@ -81,12 +63,12 @@ std::filesystem::path default_table_path() {
         if (std::filesystem::exists(user_path)) return user_path;
     }
 #endif
-#ifdef IME_FCITX5_SOURCE_TABLE_PATH
-    const auto source_path = std::filesystem::path(IME_FCITX5_SOURCE_TABLE_PATH);
+#ifdef LLAVON_IME_SOURCE_TABLE_PATH
+    const auto source_path = std::filesystem::path(LLAVON_IME_SOURCE_TABLE_PATH);
     if (std::filesystem::exists(source_path)) return source_path;
 #endif
-#ifdef IME_FCITX5_INSTALLED_TABLE_PATH
-    const auto installed_path = std::filesystem::path(IME_FCITX5_INSTALLED_TABLE_PATH);
+#ifdef LLAVON_IME_INSTALLED_TABLE_PATH
+    const auto installed_path = std::filesystem::path(LLAVON_IME_INSTALLED_TABLE_PATH);
     if (std::filesystem::exists(installed_path)) return installed_path;
     return installed_path;
 #endif
@@ -102,122 +84,59 @@ ServiceTransportOptions default_transport_options() {
     options.threads = static_cast<std::uint32_t>(config.thread_count);
     options.gpu_layers = config.gpu_layers;
     options.idle_timeout_seconds = static_cast<std::uint32_t>(config.idle_timeout_seconds);
-    if (const char* model = non_empty_env("IME_FCITX5_MODEL_PATH")) options.model_path = model;
-    if (non_empty_env("IME_FCITX5_DISABLE_SERVICE") != nullptr) options.auto_start = false;
+    if (const char* model = env_with_legacy("LLAVON_IME_MODEL_PATH", "IME_FCITX5_MODEL_PATH")) {
+        options.model_path = model;
+    }
+    if (env_with_legacy("LLAVON_IME_DISABLE_SERVICE", "IME_FCITX5_DISABLE_SERVICE") != nullptr) {
+        options.auto_start = false;
+    }
     return options;
 }
 
-// Builds the current composition as a sequence of per-segment states and
-// removes it from the tail of an accessibility sample.
-std::optional<std::u16string> strip_accessibility_preedit(const InputSession& session,
-                                                          const std::u16string& sample) {
-    std::vector<std::pair<std::u16string, std::u16string>> storage;
-    for (const auto& segment : session.buffer.segments()) {
-        if (segment.empty()) continue;
-        storage.emplace_back(segment.rendered_text(), segment.reading());
+fcitx::KeyList selection_key_list(const std::vector<char32_t>& keys) {
+    fcitx::KeyList list;
+    list.reserve(keys.size());
+    for (const char32_t key : keys) {
+        list.emplace_back(static_cast<fcitx::KeySym>(static_cast<unsigned char>(key)));
     }
-    if (!session.pending_token.empty()) {
-        storage.emplace_back(InputProcessor::pending_rendered_text(session), session.pending_token.raw);
-    }
-
-    std::vector<PreeditSegmentState> states;
-    states.reserve(storage.size());
-    for (const auto& [rendered, reading] : storage) states.push_back({rendered, reading});
-    return strip_preedit_suffix(sample, states);
+    return list;
 }
 
+fcitx::CandidateLayoutHint candidate_layout_hint(const std::string& layout) {
+    if (layout == "vertical") return fcitx::CandidateLayoutHint::Vertical;
+    if (layout == "horizontal") return fcitx::CandidateLayoutHint::Horizontal;
+    return fcitx::CandidateLayoutHint::NotSet;
+}
+
+// Candidate entries are selectable; the callback routes the activation back
+// into the engine by context id, so it works even when the input context
+// object has been recreated meanwhile.
 class SelectableCandidateWord final : public fcitx::CandidateWord {
 public:
-    SelectableCandidateWord(fcitx::Text text, std::function<void(fcitx::InputContext*)> callback)
+    SelectableCandidateWord(fcitx::Text text, std::function<void()> callback)
         : CandidateWord(std::move(text)), callback_(std::move(callback)) {}
 
-    void select(fcitx::InputContext* input_context) const override {
-        callback_(input_context);
-    }
+    void select(fcitx::InputContext*) const override { callback_(); }
 
 private:
-    std::function<void(fcitx::InputContext*)> callback_;
+    std::function<void()> callback_;
 };
 
 }  // namespace
 
-ImeEngine::StateScope::StateScope(ImeEngine& engine, fcitx::InputContext* input_context) : engine_(engine) {
-    if (input_context != nullptr) {
-        engine_.enter_context(input_context);
-        entered_ = true;
-    }
-}
-
-ImeEngine::StateScope::~StateScope() {
-    if (entered_) engine_.leave_context();
-}
-
-ImeInputContextProperty* ImeEngine::property(fcitx::InputContext* input_context) const {
-    if (input_context == nullptr) return nullptr;
-    return static_cast<ImeInputContextProperty*>(input_context->property(&property_factory_));
-}
-
-void ImeEngine::enter_context(fcitx::InputContext* input_context) {
-    if (state_scope_depth_++ != 0) return;
-    active_input_context_ = input_context;
-    auto* state = property(input_context);
-    if (state == nullptr) return;
-
-    session_ = state->session;
-}
-
-void ImeEngine::leave_context() {
-    if (state_scope_depth_ == 0) return;
-    if (--state_scope_depth_ != 0) return;
-    auto* state = property(active_input_context_);
-    if (state != nullptr) {
-        state->session = session_;
-    }
-    active_input_context_ = nullptr;
-}
-
 ImeEngine::ImeEngine(fcitx::Instance* instance)
-    : fallback_(default_table_path()),
-      decoder_([this](std::u16string_view reading) { return fallback_.lookup(reading); },
-               [this](std::u16string_view word) { return fallback_.latin_frequency(word); }),
-      phrase_overrides_(phrase_overrides_path()),
-      processor_(fallback_, decoder_, phrase_overrides_),
-      service_transport_(default_transport_options()),
-      coordinator_(service_transport_, processor_,
-                   [dispatcher = instance ? &instance->eventDispatcher() : nullptr](
-                       PredictionCoordinator::ContextReference context,
-                       std::function<void(fcitx::InputContext*)> body) {
-                       if (dispatcher == nullptr) return;
-                       dispatcher->scheduleWithContext(context, [context, body = std::move(body)]() mutable {
-                           if (auto* input_context = context.get()) body(input_context);
-                       });
-                   },
-                   alive_,
-                   PredictionCoordinator::Callbacks{
-                       [this]() -> const Config& { return config_; },
-                       [this](fcitx::InputContext* input_context, InputSession& session) {
-                           resync_context(input_context, session);
-                       },
-                       [this](fcitx::InputContext* input_context, const std::function<void(InputSession&)>& body) {
-                           StateScope state_scope(*this, input_context);
-                           body(session_);
-                       },
-                       [this](fcitx::InputContext* input_context) { update_ui(input_context); },
-                       [this](fcitx::InputContext* input_context) { return property(input_context); },
-                   }),
-      config_(default_config()),
-      instance_(instance),
-      event_dispatcher_(instance ? &instance->eventDispatcher() : nullptr) {
-    processor_.set_state_observer([this](InputStateKind previous, InputStateKind next) {
-        if (accessibility_context_ == nullptr) return;
-        if (previous == InputStateKind::Empty && next == InputStateKind::Inputting) {
-            // Samples published from here on may contain this composition's
-            // preedit; earlier ones cannot.
-            accessibility_composition_base_ = accessibility_context_->sequence();
-        } else if (next == InputStateKind::Empty) {
-            accessibility_composition_base_ = 0;
-        }
-    });
+    : instance_(instance), event_dispatcher_(instance ? &instance->eventDispatcher() : nullptr) {
+    EngineOptions options;
+    options.table_path = default_table_path();
+    options.phrase_overrides_path = phrase_overrides_path();
+    options.config = default_config();
+    options.transport = default_transport_options();
+#ifdef LLAVON_IME_NATIVE_SURROUNDING
+    // The InputMethodKit client supplies surrounding text directly; there is
+    // no accessibility provider to run.
+    options.enable_accessibility = false;
+#endif
+    engine_ = std::make_unique<Engine>(std::move(options), *this);
 
     if (instance_ != nullptr) {
         (void)instance_->inputContextManager().registerProperty("llavon-ime-input-state", &property_factory_);
@@ -225,26 +144,57 @@ ImeEngine::ImeEngine(fcitx::Instance* instance)
             fcitx::EventType::InputContextCapabilityAboutToChange, fcitx::EventWatcherPhase::Default,
             [this](fcitx::Event& event) {
                 const auto& capability_event = static_cast<const fcitx::CapabilityEvent&>(event);
-                if (capability_event.newFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
-                    if (auto* state = property(capability_event.inputContext())) state->session.context_text.clear();
-                }
+                if (!capability_event.newFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) return;
+                auto* property_state = property(capability_event.inputContext());
+                if (property_state == nullptr || property_state->id == 0) return;
+                engine_->clear_context_text(property_state->id);
             });
     }
     reload_config();
 }
 
 ImeEngine::~ImeEngine() {
+    // Property destructors may still run after this point during fcitx
+    // teardown; the lifetime token makes their detach hooks no-ops.
     alive_.reset();
-    // Transport callbacks hold a raw coordinator pointer after checking the
-    // lifetime token. Drain them while the coordinator is still alive.
-    service_transport_.stop();
+    engine_.reset();
+}
+
+ImeInputContextProperty* ImeEngine::property(fcitx::InputContext* input_context) const {
+    if (input_context == nullptr) return nullptr;
+    return static_cast<ImeInputContextProperty*>(input_context->property(&property_factory_));
+}
+
+ContextId ImeEngine::context_id(fcitx::InputContext* input_context) {
+    auto* property_state = property(input_context);
+    if (property_state == nullptr) return 0;
+    if (property_state->id != 0) return property_state->id;
+
+    const ContextId id = next_context_id_.fetch_add(1);
+    property_state->id = id;
+    const std::weak_ptr<bool> alive = alive_;
+    property_state->on_destroy = [this, id, alive]() {
+        if (alive.expired()) return;
+        engine_->detach(id);
+        contexts_.erase(id);
+    };
+    contexts_.emplace(id, input_context->watch());
+    engine_->attach(id);
+    property_state->session = engine_->session(id);
+    return id;
+}
+
+fcitx::InputContext* ImeEngine::input_context(ContextId context) const {
+    const auto it = contexts_.find(context);
+    if (it == contexts_.end()) return nullptr;
+    return it->second.get();
 }
 
 void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event) {
-    if (event.isRelease()) return;
+    auto* input_context_ptr = event.inputContext();
+    if (input_context_ptr == nullptr) return;
 
-    auto* input_context = event.inputContext();
-    StateScope state_scope(*this, input_context);
+    const ContextId id = context_id(input_context_ptr);
     const auto raw_key = event.rawKey();
     const fcitx::Key effective_key(event.key().sym(),
                                    event.key().states() | (raw_key.states() & fcitx::KeyState::Meta),
@@ -257,51 +207,57 @@ void ImeEngine::keyEvent(const fcitx::InputMethodEntry&, fcitx::KeyEvent& event)
     input_key.caps_lock = static_cast<bool>(raw_key.states() & fcitx::KeyState::CapsLock);
     input_key.release = event.isRelease();
 
-    const auto effect = processor_.process(input_key, session_, config_);
-    apply_effect(input_context, effect);
-    if (effect.handled) event.filterAndAccept();
+    if (engine_->key_event(id, input_key)) event.filterAndAccept();
 }
 
 void ImeEngine::activate(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& event) {
-    StateScope state_scope(*this, event.inputContext());
+    auto* input_context_ptr = event.inputContext();
+    if (input_context_ptr == nullptr) return;
+    const ContextId id = context_id(input_context_ptr);
     reload_config();
-    if (accessibility_context_) {
-        accessibility_context_->set_active(true);
-        accessibility_base_sequence_ = accessibility_context_->sequence();
-        accessibility_context_->refresh();
-    }
-    update_ui(event.inputContext());
+    engine_->activate(id);
 }
 
-void ImeEngine::deactivate(const fcitx::InputMethodEntry& entry, fcitx::InputContextEvent& event) {
-    if (accessibility_context_) {
-        accessibility_context_->set_active(false);
-        accessibility_base_sequence_ = accessibility_context_->sequence();
-    }
-    reset(entry, event);
+void ImeEngine::deactivate(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& event) {
+    auto* input_context_ptr = event.inputContext();
+    if (input_context_ptr == nullptr) return;
+    engine_->deactivate(context_id(input_context_ptr));
 }
 
 void ImeEngine::reset(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& event) {
-    StateScope state_scope(*this, event.inputContext());
+    auto* input_context_ptr = event.inputContext();
+    if (input_context_ptr == nullptr) return;
     const bool focus_out = event.type() == fcitx::EventType::InputContextFocusOut;
     const auto reason = focus_out ? InputResetReason::FocusOut
                                  : event.type() == fcitx::EventType::InputContextReset
                                        ? InputResetReason::Explicit
                                        : InputResetReason::Deactivate;
-    const auto effect = processor_.reset(session_, config_, reason, true);
-    if (focus_out && accessibility_context_) {
-        accessibility_context_->set_active(false);
-        accessibility_base_sequence_ = accessibility_context_->sequence();
-    }
-    apply_effect(event.inputContext(), effect);
+    engine_->reset(context_id(input_context_ptr), reason, true);
 }
 
 void ImeEngine::reloadConfig() {
     reload_config();
 }
 
+void ImeEngine::reload_config() {
+    fcitx_config_ = ImeFcitxConfig();
+    try {
+        fcitx::readAsIni(fcitx_config_, kFcitxConfigFile);
+    } catch (...) {
+        fcitx_config_ = ImeFcitxConfig();
+    }
+
+    std::error_code ec;
+    const bool has_fcitx_config = std::filesystem::exists(config_path(), ec) && !ec;
+    apply_shared_config(fcitx_config_, load_config());
+    if (!has_fcitx_config) save();
+    engine_->set_config(to_shared_config(fcitx_config_), false);
+    engine_->reload_phrase_overrides();
+    update_accessibility_status();
+}
+
 void ImeEngine::save() {
-    // The default INI location is PkgConfig, matching shared config_path().
+    // The default INI location is PkgConfig, matching config_path().
     // The accessibility status is informational and must not be persisted.
     const std::string status = *fcitx_config_.accessibilityStatus;
     (void)fcitx_config_.accessibilityStatus.setValue(std::string());
@@ -316,7 +272,7 @@ const fcitx::Configuration* ImeEngine::getConfig() const {
 void ImeEngine::refresh_phrase_override_editor() const {
     auto* entries = phrase_override_editor_.entries.mutableValue();
     entries->clear();
-    for (const auto& record : phrase_overrides_.entries()) {
+    for (const auto& record : engine_->phrase_overrides().entries()) {
         PunctuationMapEntryConfig entry;
         (void)entry.phrase.setValue(u16_to_utf8(record.phrase));
         (void)entry.readings.setValue(PhraseOverrideStore::format_readings(record.readings));
@@ -350,311 +306,147 @@ void ImeEngine::setSubConfig(const std::string& path, const fcitx::RawConfig& co
         if (!record || !PhraseOverrideStore::valid_entry(record->phrase, record->readings.size())) continue;
         records.push_back(*record);
     }
-    (void)phrase_overrides_.replace(records);
+    (void)engine_->phrase_overrides().replace(records);
 }
 
 void ImeEngine::setConfig(const fcitx::RawConfig& config) {
     fcitx_config_.load(config, true);
     (void)fcitx_config_.version.setValue(DisplayVersion::Current);
-    config_ = to_shared_config(fcitx_config_);
-    apply_context_sources();
-    save();
-    processor_.prepare_for_config_change(session_);
-    if (instance_ != nullptr) {
-        instance_->inputContextManager().foreach([this](fcitx::InputContext* input_context) {
-            auto* state = property(input_context);
-            if (state == nullptr) return true;
-            processor_.prepare_for_config_change(state->session);
-            coordinator_.close_session(state->session);
-            state->session_close_handle = {};
-            return true;
-        });
-    }
-}
-
-void ImeEngine::reload_config() {
-    fcitx_config_ = ImeFcitxConfig();
-    try {
-        fcitx::readAsIni(fcitx_config_, kFcitxConfigFile);
-    } catch (...) {
-        fcitx_config_ = ImeFcitxConfig();
-    }
-
-    std::error_code ec;
-    const bool has_fcitx_config = std::filesystem::exists(config_path(), ec) && !ec;
-    apply_shared_config(fcitx_config_, load_config());
-    if (!has_fcitx_config) save();
-    config_ = to_shared_config(fcitx_config_);
-    (void)phrase_overrides_.load();
-    apply_context_sources();
-}
-
-void ImeEngine::apply_context_sources() {
-#ifdef IME_FCITX5_NATIVE_SURROUNDING
-    if (accessibility_context_) {
-        accessibility_context_->stop();
-        accessibility_context_.reset();
-    }
-    accessibility_max_code_units_ = 0;
-    accessibility_base_sequence_ = 0;
-    (void)fcitx_config_.accessibilityStatus.setValue("InputMethodKit: 可取得（不需輔助使用權限）");
-    return;
-#endif
-
-    const size_t limit = static_cast<size_t>(std::max(1, config_.context_length));
-    if (accessibility_context_ && accessibility_max_code_units_ != limit) {
-        accessibility_context_->stop();
-        accessibility_context_.reset();
-        accessibility_max_code_units_ = 0;
-        accessibility_base_sequence_ = 0;
-    }
-    if (!accessibility_context_) {
-        accessibility_context_ = create_accessibility_context_provider(limit);
-        accessibility_max_code_units_ = limit;
-        accessibility_base_sequence_ = 0;
-    }
-    (void)accessibility_context_->start();
+    engine_->set_config(to_shared_config(fcitx_config_));
     update_accessibility_status();
+    save();
 }
 
 void ImeEngine::update_accessibility_status() {
-    const AccessibilityContextState state = accessibility_context_ ? accessibility_context_->availability()
-                                                                   : AccessibilityContextState{};
-    const std::string status = accessibility_status_text(state);
+#ifdef LLAVON_IME_NATIVE_SURROUNDING
+    const std::string status = "InputMethodKit: 可取得（不需輔助使用權限）";
+#else
+    const std::string status = accessibility_status_text(engine_->accessibility_state());
+#endif
     if (*fcitx_config_.accessibilityStatus == status) return;
     (void)fcitx_config_.accessibilityStatus.setValue(status);
 }
 
-void ImeEngine::apply_effect(fcitx::InputContext* input_context, const InputEffect& effect) {
-    if (!effect.commit.empty()) {
-        input_context->commitString(to_utf8(effect.commit));
-    }
-    if (effect.request_prediction) request_prediction_if_ready(input_context);
-    if (effect.redraw) update_ui(input_context);
+void ImeEngine::post(std::function<void()> body) {
+    if (event_dispatcher_ == nullptr) return;
+    event_dispatcher_->schedule(std::move(body));
 }
 
-void ImeEngine::run_effect(fcitx::InputContext* input_context, const std::function<InputEffect()>& operation) {
-    StateScope state_scope(*this, input_context);
-    apply_effect(input_context, operation());
+void ImeEngine::commit(ContextId context, std::u16string_view text) {
+    auto* input_context_ptr = input_context(context);
+    if (input_context_ptr == nullptr) return;
+    input_context_ptr->commitString(u16_to_utf8(text));
 }
 
-void ImeEngine::update_ui(fcitx::InputContext* input_context) {
-    StateScope state_scope(*this, input_context);
-    processor_.sync_state(session_, config_);
+void ImeEngine::update_ui(ContextId context) {
+    auto* input_context_ptr = input_context(context);
+    if (input_context_ptr == nullptr) return;
 
-    if (InputProcessor::composition_empty(session_)) {
-        input_context->inputPanel().reset();
-        input_context->updatePreedit();
-        if (!session_.symbol_menu.active()) {
-            input_context->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
-            return;
-        }
-    } else {
-        auto rendered = InputProcessor::current_preedit(session_);
-        auto prefix = session_.buffer.rendered_prefix_before_caret();
-        if (!session_.pending_token.empty()) prefix += InputProcessor::pending_rendered_text(session_);
-        // Frontends that render preedit formatting underline the marked range;
-        // the rest still show the caret at the marking edge.
+    const RenderState state = engine_->render_state(context);
+    auto& panel = input_context_ptr->inputPanel();
+    panel.reset();
+
+    if (!state.composition_empty) {
         fcitx::Text preedit;
-        if (const auto marked = session_.buffer.marked_range()) {
-            for (size_t i = 0; i < session_.buffer.segments().size(); ++i) {
-                preedit.append(to_utf8(session_.buffer.segments()[i].rendered_text()),
-                               i >= marked->first && i < marked->second ? fcitx::TextFormatFlag::Underline
-                                                                        : fcitx::TextFormatFlag::NoFlag);
-            }
-            if (!session_.pending_token.empty()) {
-                preedit.append(to_utf8(InputProcessor::pending_rendered_text(session_)));
-            }
-        } else {
-            preedit = fcitx::Text(to_utf8(rendered));
+        for (const auto& segment : state.preedit) {
+            preedit.append(u16_to_utf8(segment.text),
+                           segment.underlined ? fcitx::TextFormatFlag::Underline : fcitx::TextFormatFlag::NoFlag);
         }
-        preedit.setCursor(static_cast<int>(to_utf8(prefix).size()));
-        const bool use_client_preedit = input_context->capabilityFlags().test(fcitx::CapabilityFlag::Preedit);
-        input_context->inputPanel().setClientPreedit(use_client_preedit ? preedit : fcitx::Text());
-        input_context->inputPanel().setPreedit(use_client_preedit ? fcitx::Text() : preedit);
-        if (session_.buffer.marked_range()) {
-            input_context->inputPanel().setAuxUp(fcitx::Text(to_utf8(InputProcessor::marking_hint_text(session_))));
-        } else {
-            input_context->inputPanel().setAuxUp(fcitx::Text());
-        }
-        input_context->inputPanel().setAuxDown(fcitx::Text());
-        input_context->updatePreedit();
+        const auto full = preedit_text(state);
+        const auto caret_units = std::min(state.caret, full.size());
+        preedit.setCursor(static_cast<int>(
+            u16_to_utf8(std::u16string_view(full).substr(0, caret_units)).size()));
+        const bool use_client_preedit =
+            input_context_ptr->capabilityFlags().test(fcitx::CapabilityFlag::Preedit);
+        panel.setClientPreedit(use_client_preedit ? preedit : fcitx::Text());
+        panel.setPreedit(use_client_preedit ? fcitx::Text() : preedit);
+        if (!state.aux_up.empty()) panel.setAuxUp(fcitx::Text(u16_to_utf8(state.aux_up)));
+    }
+    panel.setAuxDown(fcitx::Text());
+    input_context_ptr->updatePreedit();
+
+    if (!state.has_candidates) {
+        panel.setCandidateList(nullptr);
+        input_context_ptr->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+        return;
     }
 
     auto candidates = std::make_unique<fcitx::CommonCandidateList>();
-    if (session_.mixed_decision.active() && session_.choosing_candidate()) {
-        session_.displayed_candidates.clear();
-        const auto entries = decoder_.expand_candidates(
-            session_.mixed_decision.result, InputProcessor::candidate_page_size(session_, config_),
-            session_.mixed_decision.preview_path);
-        for (const auto& entry : entries) session_.displayed_candidates.push_back(entry.text);
-    } else if (session_.symbol_menu.active()) {
-        // Candidates are rendered from symbol menu items below; the placeholder
-        // entries keep page and cursor bookkeeping sized identically.
-        session_.displayed_candidates.assign(session_.symbol_menu.menu().size(), u"?");
-    } else if (session_.buffer.marked_range() && !session_.choosing_candidate()) {
-        // The marking hint doubles as the tooltip McBopomofo shows next to the
-        // composing buffer, because the macOS frontend can only render it as a
-        // candidate list.
-        session_.displayed_candidates.assign(1, InputProcessor::marking_hint_text(session_));
-    } else {
-        session_.displayed_candidates.clear();
-        if (session_.choosing_candidate()) {
-            for (const char32_t candidate : InputProcessor::available_candidates(session_, config_)) {
-                session_.displayed_candidates.push_back(to_utf16(candidate));
-            }
-        }
-    }
-    if (session_.displayed_candidates.empty()) {
-        session_.candidate_view.reset();
-        input_context->inputPanel().setCandidateList(nullptr);
-        input_context->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
-        return;
-    }
+    candidates->setPageSize(state.page_size);
+    candidates->setSelectionKey(selection_key_list(state.selection_keys));
+    candidates->setLayoutHint(candidate_layout_hint(state.layout_hint));
 
-    InputProcessor::clamp_candidate_cursor(session_, config_);
-    const int page_size = InputProcessor::candidate_page_size(session_, config_);
-    const int page_count = static_cast<int>(
-        (session_.displayed_candidates.size() + static_cast<size_t>(page_size) - 1) / static_cast<size_t>(page_size));
-    if (session_.candidate_view.page >= page_count) session_.candidate_view.page = page_count - 1;
-    if (session_.candidate_view.page < 0) session_.candidate_view.page = 0;
-    candidates->setPageSize(page_size);
-    candidates->setSelectionKey(selection_key_list());
-    candidates->setLayoutHint(candidate_layout_hint());
-    const auto target =
-        session_.symbol_menu.active() ? std::optional<size_t>() : InputProcessor::current_candidate_target(session_, config_);
-    const auto symbol_epoch = session_.symbol_menu.epoch();
+    const ContextId id = context;
+    const auto target = state.candidate_target;
+    const auto epoch = state.symbol_epoch;
     int index = 0;
-    if (session_.symbol_menu.active()) {
-        for (const auto& item : session_.symbol_menu.menu()) {
-            candidates->append<SelectableCandidateWord>(
-                fcitx::Text(to_utf8(item)), [this, index, symbol_epoch](fcitx::InputContext* context) {
-                    run_effect(context, [this, index, symbol_epoch]() {
-                        return processor_.select_symbol(session_, config_, index, symbol_epoch);
-                    });
-                });
-            ++index;
+    for (const auto& candidate : state.candidates) {
+        std::function<void()> activate;
+        switch (target) {
+            case RenderTarget::SymbolMenu:
+                activate = [this, id, index, epoch]() { engine_->select_symbol(id, index, epoch); };
+                break;
+            case RenderTarget::MarkingHint:
+                // The marking hint is informational: clicking it must not pick
+                // a candidate behind the user's back.
+                activate = []() {};
+                break;
+            case RenderTarget::Candidates:
+            case RenderTarget::None:
+                activate = [this, id, index]() { engine_->select_candidate(id, index); };
+                break;
         }
-    } else if (session_.buffer.marked_range() && !session_.choosing_candidate()) {
-        // The marking hint is informational: clicking it must not pick a
-        // candidate behind the user's back.
-        candidates->append<SelectableCandidateWord>(fcitx::Text(to_utf8(session_.displayed_candidates.front())),
-                                                    [](fcitx::InputContext*) {});
-    } else {
-        for (const auto& candidate : session_.displayed_candidates) {
-            candidates->append<SelectableCandidateWord>(
-                fcitx::Text(to_utf8(candidate)), [this, index](fcitx::InputContext* context) {
-                    run_effect(context, [this, index]() {
-                        return processor_.select_candidate(session_, config_, index);
-                    });
-                });
-            ++index;
-        }
+        candidates->append<SelectableCandidateWord>(fcitx::Text(u16_to_utf8(candidate)), std::move(activate));
+        ++index;
     }
-    candidates->setPage(session_.candidate_view.page);
-    if (session_.symbol_menu.active() || session_.mixed_decision.active() || target) {
-        candidates->setCursorIndex(session_.candidate_view.cursor -
-                                   InputProcessor::candidate_page_offset(session_, config_));
-    }
-    input_context->inputPanel().setCandidateList(std::move(candidates));
-    input_context->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+    candidates->setPage(state.page);
+    if (state.cursor_visible) candidates->setCursorIndex(state.cursor);
+    panel.setCandidateList(std::move(candidates));
+    input_context_ptr->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
 }
 
-void ImeEngine::request_prediction_if_ready(fcitx::InputContext* input_context) {
-    processor_.apply_phrase_override(session_);
-    coordinator_.request(input_context, session_);
+HostContext ImeEngine::surrounding_text(ContextId context) {
+    auto* input_context_ptr = input_context(context);
+    HostContext result;
+    if (input_context_ptr == nullptr) return result;
+
+    const auto& surrounding = input_context_ptr->surroundingText();
+    if (!surrounding.isValid()) return result;
+
+    try {
+        // fcitx5 reports cursor/anchor as scalar (code point) offsets; the
+        // engine expects UTF-16 units.
+        const std::string raw = surrounding.text();
+        const auto scalars = utf8_to_u32(raw);
+        const auto scalar_to_units = [&scalars](unsigned int offset) {
+            const std::size_t bounded = std::min(static_cast<std::size_t>(offset), scalars.size());
+            std::size_t units = 0;
+            for (std::size_t i = 0; i < bounded; ++i) {
+                units += scalars[i] > 0xFFFF ? 2 : 1;
+            }
+            return units;
+        };
+        result.text = utf8_to_u16(raw);
+        result.cursor = scalar_to_units(surrounding.cursor());
+        result.anchor = scalar_to_units(surrounding.anchor());
+        result.valid = true;
+    } catch (const std::runtime_error&) {
+        // Ignore malformed surrounding text supplied by a client.
+        return HostContext{};
+    }
+    return result;
 }
 
-void ImeEngine::resync_context(fcitx::InputContext* input_context, InputSession& session) {
-    // Context is read fresh from the current source for every prediction; it
-    // is never accumulated or reused across requests.
-    session.context_text.clear();
-    if (input_context == nullptr ||
-        input_context->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
-        return;
-    }
-
-    const size_t limit =
-        config_.context_length > 0 ? static_cast<size_t>(config_.context_length) : 0;
-
-    // Some clients report an empty (but valid) document, notably Electron,
-    // Chromium and terminals. An empty client prefix must not shadow the
-    // accessibility sample, which may still hold the focused widget's text.
-    bool client_empty = false;
-    const auto& surrounding = input_context->surroundingText();
-    if (surrounding.isValid()) {
-        try {
-            const size_t cursor = std::min(surrounding.cursor(), surrounding.anchor());
-            auto text = utf8_prefix_tail(surrounding.text(), cursor, limit);
-            if (!text.empty()) {
-                session.context_text = std::move(text);
-                log_context("client-surrounding", session.context_text);
-                return;
-            }
-            if (!surrounding.text().empty()) {
-                log_context("client-surrounding-empty-prefix", {});
-                return;
-            }
-            client_empty = true;
-        } catch (const std::runtime_error&) {
-            // Ignore malformed surrounding text supplied by a client.
-        }
-    }
-
-    if (accessibility_context_) {
-        const auto sample = accessibility_context_->latest();
-        if (sample && sample->usable && sample->sequence > accessibility_base_sequence_) {
-            // A sample published before this composition started cannot
-            // contain its preedit; anything newer may, so it is only adopted
-            // after the composing text is stripped from its tail.
-            const bool predates_composition =
-                accessibility_composition_base_ != 0 && sample->sequence <= accessibility_composition_base_;
-            const bool may_contain_preedit = !InputProcessor::composition_empty(session) && !predates_composition;
-            std::optional<std::u16string> text;
-            if (!may_contain_preedit) {
-                text = sample->text;
-            } else {
-                text = strip_accessibility_preedit(session, sample->text);
-            }
-            if (text) {
-                session.context_text = utf16_tail(*text, limit);
-                log_context("accessibility", session.context_text);
-                return;
-            }
-            log_context("accessibility-preedit-mismatch", sample->text);
-        } else {
-            log_context("accessibility-unusable", {});
-        }
-    }
-
-    if (client_empty) {
-        log_context("client-surrounding-empty", {});
-        return;
-    }
-    log_context("context-fallback", {});
-}
-
-fcitx::KeyList ImeEngine::selection_key_list() const {
-    fcitx::KeyList keys;
-    const int count = std::min(config_.selection_key_count, static_cast<int>(config_.selection_keys.size()));
-    keys.reserve(static_cast<size_t>(count));
-    for (int i = 0; i < count; ++i) {
-        keys.emplace_back(
-            static_cast<fcitx::KeySym>(static_cast<unsigned char>(config_.selection_keys[static_cast<size_t>(i)])));
-    }
-    return keys;
-}
-
-fcitx::CandidateLayoutHint ImeEngine::candidate_layout_hint() const {
-    if (config_.candidate_layout == "vertical") return fcitx::CandidateLayoutHint::Vertical;
-    if (config_.candidate_layout == "horizontal") return fcitx::CandidateLayoutHint::Horizontal;
-    return fcitx::CandidateLayoutHint::NotSet;
+bool ImeEngine::is_sensitive(ContextId context) {
+    auto* input_context_ptr = input_context(context);
+    if (input_context_ptr == nullptr) return true;
+    return input_context_ptr->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive);
 }
 
 fcitx::AddonInstance* ImeEngineFactory::create(fcitx::AddonManager* manager) {
     return new ImeEngine(manager ? manager->instance() : nullptr);
 }
 
-}  // namespace ime::fcitx5
+}  // namespace llavon::ime
 
-FCITX_ADDON_FACTORY(ime::fcitx5::ImeEngineFactory)
+FCITX_ADDON_FACTORY(llavon::ime::ImeEngineFactory)

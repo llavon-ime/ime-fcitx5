@@ -13,8 +13,8 @@ Llavon IME 的 Linux 與 macOS Fcitx5 前端。推論由 `ime-unix-service` 子�
 
 腳本會初始化子模組與 vcpkg、編譯並測試服務與附加元件，再安裝（必要時使用
 `sudo`）。模型已有就沿用，否則從 Hugging Face 下載到 `models/` 並安裝至
-`/usr/share/llavon-ime/models/`；可用 `IME_FCITX5_MODEL_URL` 指定映像站、
-`IME_FCITX5_MODEL_DIR` 變更下載目錄。目前僅支援 x86_64。
+`/usr/share/llavon-ime/models/`；可用 `LLAVON_IME_MODEL_URL` 指定映像站、
+`LLAVON_IME_MODEL_DIR` 變更下載目錄。目前僅支援 x86_64。
 
 需要 CMake、pkg-config 與 fcitx5 開發檔案。
 
@@ -40,36 +40,36 @@ brew trust --cask llavon-ime/llavon-ime/llavon-ime
 brew install --cask llavon-ime
 ```
 
-安裝過程會要求管理員密碼，會一併安裝小企鵝輸入法（Fcitx5）、拉風輸入法與模型，
-並自動啟用輸入法及加入 macOS 輸入來源。首次安裝需登出再登入（或重開機），
-候選窗才能在全螢幕應用程式中顯示。
+安裝過程會要求管理員密碼，會安裝原生「拉風輸入法」、注音表、模型與 AI 預測
+服務。安裝後到「系統設定 › 鍵盤 › 輸入方式」加入「拉風輸入法」，
+macOS 會詢問是否允許這個第三方輸入法。首次安裝需登出再登入（或重開機），
+輸入來源才會出現。
 
 也可以從 [Releases](https://github.com/llavon-ime/ime-fcitx5/releases/latest)
 下載 `llavon-ime-<版本>-arm64.pkg` 安裝；未簽名，若被 Gatekeeper 阻擋請右鍵
-選擇「打開」。
+選擇「打開」。目前僅提供 arm64 安裝檔。
 
-開發者可直接從原始碼建置：
+開發者可直接從原始碼建置原生輸入法（不需要 fcitx5-macos）：
 
 ```bash
-./scripts/build-macos.sh
+macos/scripts/build-native-app.sh --install
 ```
 
-需先安裝 fcitx5-macos（Fcitx5.app 0.3.4 以上）。腳本會以目前的 checkout 編譯、
-測試並安裝到 `~/Library/fcitx5`；fcitx5-macos 標頭會自動 pull 到
-`$TMPDIR/llavon-ime-fcitx5-macos`，也可用 `FCITX5_MACOS_SOURCE_DIR` 指定。
-模型位於 `/Library/Application Support/llavon-ime/models`，已存在就沿用，否則
-下載後以 `sudo` 安裝。目前僅支援 Apple Silicon。
+前置需求：Xcode Command Line Tools、CMake，以及 vcpkg 需要的 `pkg-config`
+（`brew install cmake pkg-config`）。腳本會用 vcpkg 編譯引擎、以 `swiftc` 編譯
+前端、ad-hoc 簽章並安裝到 `~/Library/Input Methods/LlavonIME.app`；第一次安裝要
+登出再登入，讓 macOS 掃到輸入來源。改完程式重跑同一行指令即生效（可先
+`pkill -x LlavonIME`）。
+
+AI 預測用的 `llavon-ime-unix-service` 由 `scripts/build-macos-service.sh` 建置、
+測試並安裝到 `~/Library/fcitx5`（目前僅 Apple Silicon，模型位於
+`/Library/Application Support/llavon-ime/models`，已存在就沿用）。
 
 ### 啟用
 
-在 fcitx5 設定工具啟用 `llavon-ime`（首次安裝會自動啟用），Linux 執行
-`fcitx5 -r` 重新啟動；macOS 執行：
-
-```bash
-pkill -x Fcitx5; open -gj -b org.fcitx.inputmethod.Fcitx5
-```
-
-附加元件會在需要時啟動 `llavon-ime-unix-service`。
+Linux 在 fcitx5 設定工具啟用 `llavon-ime`（首次安裝會自動啟用），執行
+`fcitx5 -r` 重新啟動；macOS 則在「系統設定 › 鍵盤 › 輸入方式」或選單列輸入選單
+選擇「拉風輸入法」。輸入法會在需要時啟動 `llavon-ime-unix-service`。
 
 ## 強制替代詞彙
 
@@ -148,9 +148,11 @@ cmake --install build/macos
 
 發行套件內含 Q4 GGUF 模型（CC BY-NC 4.0，僅限非商業用途；署名與相依套件授權
 隨套件附上）。開發版本需自備模型，透過 fcitx5 設定頁面或
-`IME_FCITX5_MODEL_PATH` 指定：
+`LLAVON_IME_MODEL_PATH` 指定：
 
 https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF
+
+舊版 `IME_FCITX5_*` 環境變數名稱仍相容（例如 `IME_FCITX5_MODEL_PATH`）。
 
 ## 預測上下文
 

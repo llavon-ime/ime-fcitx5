@@ -3,7 +3,7 @@
 #include <fcitx-utils/log.h>
 #include <fcitx/instance.h>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 void engine_test_lifecycle(fcitx::Instance* instance) {
     // Focus-out commits a complete composition.
@@ -31,7 +31,7 @@ void engine_test_lifecycle(fcitx::Instance* instance) {
         harness.type("su");
         harness.input_context()->focusOut();
         FCITX_ASSERT(harness.preedit().empty());
-        FCITX_ASSERT(harness.engine_state()->session.context_text.empty());
+        FCITX_ASSERT(harness.engine_state()->session->context_text.empty());
     });
 
     // An explicit client reset never commits, even with a complete segment.
@@ -41,13 +41,13 @@ void engine_test_lifecycle(fcitx::Instance* instance) {
         harness.type("su3");
         auto* state = harness.engine_state();
         FCITX_ASSERT(state != nullptr);
-        const auto generation = state->session.prediction.generation;
+        const auto generation = state->session->prediction.generation;
         harness.input_context()->reset();
         FCITX_ASSERT(harness.preedit().empty());
-        FCITX_ASSERT(state->session.empty());
-        FCITX_ASSERT(state->session.buffer.empty());
-        FCITX_ASSERT(state->session.context_text.empty());
-        FCITX_ASSERT(state->session.prediction.generation == generation + 1);
+        FCITX_ASSERT(state->session->empty());
+        FCITX_ASSERT(state->session->buffer.empty());
+        FCITX_ASSERT(state->session->context_text.empty());
+        FCITX_ASSERT(state->session->prediction.generation == generation + 1);
     });
 
     // Config changes settle exact pending keys as literals, clear the mixed
@@ -58,18 +58,16 @@ void engine_test_lifecycle(fcitx::Instance* instance) {
         harness.type("hello");
         auto* state = harness.engine_state();
         FCITX_ASSERT(state != nullptr);
-        ime::fcitx5::protocol::SessionId session_id{};
+        llavon::ime::protocol::SessionId session_id{};
         session_id[0] = 0x44;
-        state->session.prediction.session_id = session_id;
-        const auto generation = state->session.prediction.generation;
-        state->session_close_handle = []() {};
+        state->session->prediction.session_id = session_id;
+        const auto generation = state->session->prediction.generation;
 
         harness.set_config("SmartEnglish", "False");
-        FCITX_ASSERT(state->session.pending_token.empty());
-        FCITX_ASSERT(!state->session.mixed_decision.active());
-        FCITX_ASSERT(state->session.buffer.commit_text() == std::u16string(u"hello"));
-        FCITX_ASSERT(!state->session.prediction.session_open());
-        FCITX_ASSERT(state->session.prediction.generation == generation + 1);
-        FCITX_ASSERT(!state->session_close_handle);
+        FCITX_ASSERT(state->session->pending_token.empty());
+        FCITX_ASSERT(!state->session->mixed_decision.active());
+        FCITX_ASSERT(state->session->buffer.commit_text() == std::u16string(u"hello"));
+        FCITX_ASSERT(!state->session->prediction.session_open());
+        FCITX_ASSERT(state->session->prediction.generation == generation + 1);
     });
 }

@@ -5,7 +5,7 @@
 
 #include <string>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 // Shift+letter types English directly (DirectlyOutputUppercase, the default),
 // mirroring McBopomofo: an empty buffer passes the key through, a non-empty

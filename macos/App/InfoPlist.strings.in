@@ -1,0 +1,4 @@
+"@BUNDLE_ID@" = "拉風輸入法";
+"@BUNDLE_ID@.Default" = "拉風輸入法";
+"CFBundleName" = "拉風輸入法";
+"CFBundleDisplayName" = "拉風輸入法";

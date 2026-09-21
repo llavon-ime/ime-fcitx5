@@ -1,10 +1,66 @@
 #!/bin/sh
 set -eu
 
-# Replace any previously installed Fcitx5.app so the bundled runtime is not
-# merged with stale files from an older version.
-if [ -d "/Library/Input Methods/Fcitx5.app" ]; then
-    /bin/rm -rf "/Library/Input Methods/Fcitx5.app"
+# Remove the previous copy so the new bundle cannot be merged with stale files.
+if [ -d "/Library/Input Methods/LlavonIME.app" ]; then
+    /bin/rm -rf "/Library/Input Methods/LlavonIME.app"
+fi
+
+# The fcitx5-based package bundled Fcitx5.app; this package ships the native
+# input method instead. A leftover Fcitx5 install keeps showing up as another
+# Chinese input source, so detect it and ask the console user whether to remove
+# it before the new input method is installed. The answer is never assumed:
+# without a console user (or when the prompt cannot be shown) it is kept.
+FCITX5_APP="/Library/Input Methods/Fcitx5.app"
+PAYLOAD="/Library/Application Support/llavon-ime"
+
+console_user="$(stat -f %Su /dev/console 2>/dev/null || true)"
+if [ -z "${console_user}" ] || [ "${console_user}" = "root" ] || [ "${console_user}" = "loginwindow" ]; then
+    console_user="${SUDO_USER:-}"
+fi
+
+user_home=""
+if [ -n "${console_user}" ] && id "${console_user}" >/dev/null 2>&1; then
+    user_home="$(dscl . -read "/Users/${console_user}" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+    if [ -z "${user_home}" ] || [ ! -d "${user_home}" ]; then
+        user_home="$(eval echo "~${console_user}")"
+    fi
+fi
+
+# fcitx5-macos may also live in the user's own input methods directory.
+user_fcitx5_app=""
+if [ -n "${user_home}" ] && [ -d "${user_home}/Library/Input Methods/Fcitx5.app" ]; then
+    user_fcitx5_app="${user_home}/Library/Input Methods/Fcitx5.app"
+fi
+
+if [ -d "${FCITX5_APP}" ] || [ -n "${user_fcitx5_app}" ]; then
+    answer=""
+    if [ -n "${user_home}" ]; then
+        # launchctl asuser puts osascript in the console user's session so the
+        # dialog is visible; dropping to the user keeps the AppleEvent allowed.
+        uid="$(id -u "${console_user}")"
+        answer="$(/bin/launchctl asuser "${uid}" /usr/bin/sudo -u "${console_user}" \
+            /usr/bin/osascript \
+            -e 'button returned of (display dialog "偵測到先前安裝的 Fcitx5 輸入法。要一併移除它嗎？" buttons {"保留", "移除"} default button "保留" with title "拉風輸入法" with icon caution giving up after 300)' \
+            2>/dev/null || true)"
+    fi
+
+    if [ "${answer}" = "移除" ]; then
+        /usr/bin/pkill -x Fcitx5 >/dev/null 2>&1 || true
+        /bin/rm -rf "${FCITX5_APP}"
+        if [ -n "${user_fcitx5_app}" ]; then
+            /bin/rm -rf "${user_fcitx5_app}"
+        fi
+        # Addon files that only the fcitx5-macos runtime loads.
+        /bin/rm -f \
+            "${PAYLOAD}/lib/fcitx5/llavon-ime-addon.so" \
+            "${PAYLOAD}/share/fcitx5/addon/llavon-ime.conf" \
+            "${PAYLOAD}/share/fcitx5/inputmethod/llavon-ime.conf" \
+            "${PAYLOAD}/plugin/llavon-ime.json"
+        echo "llavon-ime: removed the previous Fcitx5 install."
+    else
+        echo "llavon-ime: kept the previous Fcitx5 install; remove /Library/Input Methods/Fcitx5.app manually to uninstall it."
+    fi
 fi
 
 exit 0

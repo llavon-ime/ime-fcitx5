@@ -2,53 +2,70 @@
 set -euo pipefail
 export COPYFILE_DISABLE=1
 
+# Builds the native macOS input method package: LlavonIME.app from macos/,
+# the optional AI prediction service from ime-unix-service (Metal, arm64 only)
+# and its tables, plus the bundled GGUF model. Output:
+#   dist/macos/llavon-ime-<version>-arm64.pkg
+#
+# Signing is applied when the matching identities are provided:
+#   DEVELOPER_ID_APPLICATION  signs the app and the service
+#   DEVELOPER_ID_INSTALLER    signs the installer package
+# Without them the app keeps its ad-hoc signature and the pkg is unsigned.
+#
+# Environment overrides:
+#   LLAVON_IME_VERSION            package version (default 0.2.1)
+#   LLAVON_IME_BUNDLE_ID          input method bundle id
+#   LLAVON_IME_PACKAGE_MODEL_PATH .gguf bundled as the default model
+#   LLAVON_IME_VCPKG_FEATURES     service vcpkg features (default llama-metal)
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${IME_FCITX5_VERSION:-0.2.1}"
+APP_NAME="LlavonIME"
+BUNDLE_ID="${LLAVON_IME_BUNDLE_ID:-com.llavon.inputmethod.LlavonIME}"
+VERSION="${LLAVON_IME_VERSION:-0.2.1}"
 ARCH="$(uname -m)"
-PAYLOAD_PREFIX="${IME_FCITX5_MACOS_PAYLOAD_PREFIX:-/Library/Application Support/llavon-ime/payload}"
-BUILD_DIR="${IME_FCITX5_BUILD_DIR:-${ROOT_DIR}/build/package-llavon-ime-macos-${ARCH}}"
-UNIX_SERVICE_BUILD_DIR="${IME_FCITX5_UNIX_SERVICE_BUILD_DIR:-${ROOT_DIR}/build/package-llavon-ime-unix-service-macos-${ARCH}}"
-DIST_DIR="${IME_FCITX5_DIST_DIR:-${ROOT_DIR}/dist/macos}"
+DIST_DIR="${LLAVON_IME_DIST_DIR:-${ROOT_DIR}/dist/macos}"
 PKGROOT="${DIST_DIR}/pkgroot"
-PKG_IDENTIFIER="${IME_FCITX5_PKG_IDENTIFIER:-llavon-ime}"
-VCPKG_FEATURES="${IME_FCITX5_VCPKG_FEATURES:-llama-metal}"
-FCITX5_MACOS_SOURCE_DIR="${FCITX5_MACOS_SOURCE_DIR:-${1:-}}"
-FCITX5_MACOS_VERSION="${FCITX5_MACOS_VERSION:-0.3.7}"
-FCITX5_MACOS_RUNTIME_TARBALL="${FCITX5_MACOS_RUNTIME_TARBALL:-}"
-MODEL_PATH="${IME_FCITX5_PACKAGE_MODEL_PATH:-}"
+PKG_IDENTIFIER="${LLAVON_IME_PKG_IDENTIFIER:-llavon-ime}"
+PAYLOAD_PREFIX="${LLAVON_IME_MACOS_PAYLOAD_PREFIX:-/Library/Application Support/llavon-ime/payload}"
 MODEL_INSTALL_DIR="/Library/Application Support/llavon-ime/models"
-MODEL_INSTALL_PATH=""
+MODEL_PATH="${LLAVON_IME_PACKAGE_MODEL_PATH:-}"
+VCPKG_FEATURES="${LLAVON_IME_VCPKG_FEATURES:-llama-metal}"
+SERVICE_BUILD_DIR="${LLAVON_IME_UNIX_SERVICE_BUILD_DIR:-${ROOT_DIR}/build/package-llavon-ime-unix-service-macos-${ARCH}}"
 
-if [[ -z "${FCITX5_MACOS_SOURCE_DIR}" && -d "${ROOT_DIR}/../fcitx5-macos" ]]; then
-    FCITX5_MACOS_SOURCE_DIR="${ROOT_DIR}/../fcitx5-macos"
-fi
-
-if [[ -z "${FCITX5_MACOS_SOURCE_DIR}" ]]; then
-    cat >&2 <<'EOF'
-FCITX5_MACOS_SOURCE_DIR is required.
-
-Usage:
-  FCITX5_MACOS_SOURCE_DIR=/path/to/fcitx5-macos ./scripts/package-macos.sh
-  ./scripts/package-macos.sh /path/to/fcitx5-macos
-EOF
+if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "This script only supports macOS." >&2
     exit 2
 fi
 
-if [[ ! -f "${FCITX5_MACOS_SOURCE_DIR}/fcitx5/src/lib/fcitx/inputmethodengine.h" && ! -f "${FCITX5_MACOS_SOURCE_DIR}/src/lib/fcitx/inputmethodengine.h" ]]; then
-    cat >&2 <<EOF
-fcitx5 headers were not found under: ${FCITX5_MACOS_SOURCE_DIR}
-If this is a fcitx5-macos checkout, run:
-  git -C "${FCITX5_MACOS_SOURCE_DIR}" submodule update --init fcitx5
-EOF
+if [[ "${ARCH}" != "arm64" ]]; then
+    echo "The macOS package currently bundles the arm64 service; found ${ARCH}." >&2
     exit 2
 fi
 
-if [[ ! -x "${ROOT_DIR}/vcpkg/vcpkg" ]]; then
-    "${ROOT_DIR}/vcpkg/bootstrap-vcpkg.sh"
-fi
+for command in cmake swiftc codesign pkgbuild productbuild pkg-config xcrun; do
+    if ! command -v "${command}" >/dev/null 2>&1; then
+        echo "Required command not found: ${command}" >&2
+        if [[ "${command}" == "pkg-config" ]]; then
+            echo "Install it with: brew install pkg-config" >&2
+        fi
+        exit 2
+    fi
+done
 
+if [[ ! -f "${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" ]]; then
+    echo "Initializing the vcpkg submodule..."
+    git -C "${ROOT_DIR}" submodule update --init vcpkg
+fi
+if [[ ! -f "${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" ]]; then
+    echo "vcpkg was not found; run: git -C \"${ROOT_DIR}\" submodule update --init vcpkg" >&2
+    exit 2
+fi
 if [[ "$(git -C "${ROOT_DIR}/vcpkg" rev-parse --is-shallow-repository)" == "true" ]]; then
     git -C "${ROOT_DIR}/vcpkg" fetch --unshallow
+fi
+if [[ ! -x "${ROOT_DIR}/vcpkg/vcpkg" ]]; then
+    echo "Bootstrapping vcpkg..."
+    "${ROOT_DIR}/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
 fi
 
 if [[ -z "${MODEL_PATH}" ]]; then
@@ -61,82 +78,62 @@ if [[ -z "${MODEL_PATH}" ]]; then
         cat >&2 <<'EOF'
 No .gguf model was found under models/.
 
-Set IME_FCITX5_PACKAGE_MODEL_PATH=/path/to/model.gguf to build the installer with a bundled model.
+Set LLAVON_IME_PACKAGE_MODEL_PATH=/path/to/model.gguf to build the installer with a bundled model.
 EOF
         exit 2
     else
         cat >&2 <<'EOF'
 Multiple .gguf models were found under models/.
 
-Set IME_FCITX5_PACKAGE_MODEL_PATH=/path/to/model.gguf to choose the model bundled in the installer.
+Set LLAVON_IME_PACKAGE_MODEL_PATH=/path/to/model.gguf to choose the model bundled in the installer.
 EOF
         exit 2
     fi
 fi
 
 if [[ ! -f "${MODEL_PATH}" || "${MODEL_PATH}" != *.gguf ]]; then
-    echo "IME_FCITX5_PACKAGE_MODEL_PATH must point to a .gguf file: ${MODEL_PATH}" >&2
+    echo "LLAVON_IME_PACKAGE_MODEL_PATH must point to a .gguf file: ${MODEL_PATH}" >&2
     exit 2
 fi
 
 MODEL_INSTALL_PATH="${MODEL_INSTALL_DIR}/$(basename "${MODEL_PATH}")"
 
-if [[ -z "${FCITX5_MACOS_RUNTIME_TARBALL}" ]]; then
-    runtime_cache_dir="${ROOT_DIR}/build/macos-runtime"
-    mkdir -p "${runtime_cache_dir}"
-    FCITX5_MACOS_RUNTIME_TARBALL="${runtime_cache_dir}/Fcitx5-${ARCH}.tar.bz2"
-    if [[ ! -f "${FCITX5_MACOS_RUNTIME_TARBALL}" ]]; then
-        curl --fail --location --retry 3 \
-            -o "${FCITX5_MACOS_RUNTIME_TARBALL}" \
-            "https://github.com/fcitx/fcitx5-macos/releases/download/${FCITX5_MACOS_VERSION}/Fcitx5-${ARCH}.tar.bz2"
-    fi
-fi
-
-if [[ ! -f "${FCITX5_MACOS_RUNTIME_TARBALL}" ]]; then
-    echo "Fcitx5 runtime tarball not found: ${FCITX5_MACOS_RUNTIME_TARBALL}" >&2
-    exit 2
-fi
-
 rm -rf "${PKGROOT}"
 mkdir -p "${PKGROOT}" "${DIST_DIR}"
 
+echo "Building the native input method app..."
+LLAVON_IME_VERSION="${VERSION}" \
+LLAVON_IME_BUNDLE_ID="${BUNDLE_ID}" \
+    "${ROOT_DIR}/macos/scripts/build-native-app.sh"
+
+app_source="${ROOT_DIR}/dist/macos/${APP_NAME}.app"
+if [[ ! -x "${app_source}/Contents/MacOS/${APP_NAME}" ]]; then
+    echo "Built app not found: ${app_source}" >&2
+    exit 1
+fi
+
+echo "Building and testing ime-unix-service (Metal; the first build can take a while)..."
 unix_service_cmake_args=(
     -S "${ROOT_DIR}/ime-unix-service"
-    -B "${UNIX_SERVICE_BUILD_DIR}"
+    -B "${SERVICE_BUILD_DIR}"
     -G Ninja
     -DCMAKE_BUILD_TYPE=Release
     -DCMAKE_TOOLCHAIN_FILE="${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake"
     -DCMAKE_INSTALL_PREFIX="${PAYLOAD_PREFIX}"
+    -DLLAVON_IME_INSTALLED_MODEL_PATH="${MODEL_INSTALL_PATH}"
     -DIME_UNIX_SERVICE_BUILD_TESTS=ON
 )
 if [[ -n "${VCPKG_FEATURES}" ]]; then
     unix_service_cmake_args+=(-DVCPKG_MANIFEST_FEATURES="${VCPKG_FEATURES}")
 fi
 cmake "${unix_service_cmake_args[@]}"
-cmake --build "${UNIX_SERVICE_BUILD_DIR}"
-ctest --test-dir "${UNIX_SERVICE_BUILD_DIR}" --output-on-failure
-DESTDIR="${PKGROOT}" cmake --install "${UNIX_SERVICE_BUILD_DIR}"
+cmake --build "${SERVICE_BUILD_DIR}"
+ctest --test-dir "${SERVICE_BUILD_DIR}" --output-on-failure
+DESTDIR="${PKGROOT}" cmake --install "${SERVICE_BUILD_DIR}"
 
-cmake_args=(
-    -S "${ROOT_DIR}/fcitx5"
-    -B "${BUILD_DIR}"
-    -G Ninja
-    -DCMAKE_BUILD_TYPE=Release
-    -DCMAKE_TOOLCHAIN_FILE="${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake"
-    -DIME_FCITX5_BUILD_TESTS=ON
-    -DFCITX5_MACOS_SOURCE_DIR="${FCITX5_MACOS_SOURCE_DIR}"
-    -DCMAKE_INSTALL_PREFIX="${PAYLOAD_PREFIX}"
-    -DFCITX_INSTALL_ADDONDIR=lib/fcitx5
-    -DFCITX_INSTALL_PKGDATADIR=share/fcitx5
-    -DIME_FCITX5_FCITX_PLUGIN_DIR=plugin
-    -DIME_FCITX5_INSTALLED_MODEL_PATH="${MODEL_INSTALL_PATH}"
-    -DIME_FCITX5_DISPLAY_VERSION="${VERSION}"
-)
-
-cmake "${cmake_args[@]}"
-cmake --build "${BUILD_DIR}"
-ctest --test-dir "${BUILD_DIR}" --output-on-failure
-DESTDIR="${PKGROOT}" cmake --install "${BUILD_DIR}"
+app_root="${PKGROOT}/Library/Input Methods"
+mkdir -p "${app_root}"
+/usr/bin/ditto --norsrc --noextattr "${app_source}" "${app_root}/${APP_NAME}.app"
 
 payload_root="${PKGROOT}${PAYLOAD_PREFIX}"
 model_root="${PKGROOT}${MODEL_INSTALL_DIR}"
@@ -145,21 +142,12 @@ install -m 0644 "${MODEL_PATH}" "${model_root}/$(basename "${MODEL_PATH}")"
 
 license_root="${payload_root}/share/llavon-ime/licenses"
 cmake \
-    -DVCPKG_INSTALLED_DIR="${UNIX_SERVICE_BUILD_DIR}/vcpkg_installed" \
+    -DVCPKG_INSTALLED_DIR="${SERVICE_BUILD_DIR}/vcpkg_installed" \
     -DDESTINATION="${license_root}" \
     -DPROJECT_ROOT="${ROOT_DIR}" \
     -P "${ROOT_DIR}/scripts/install-licenses.cmake"
 
-# Bundle the fcitx5-macos runtime so a single install provides Fcitx5 and
-# the addon, and add the helper used to register the input source.
-runtime_root="${PKGROOT}/Library/Input Methods"
-mkdir -p "${runtime_root}"
-tar -xjf "${FCITX5_MACOS_RUNTIME_TARBALL}" -C "${runtime_root}"
-if [[ ! -d "${runtime_root}/Fcitx5.app" ]]; then
-    echo "Fcitx5.app was not found in ${FCITX5_MACOS_RUNTIME_TARBALL}" >&2
-    exit 1
-fi
-
+echo "Building the TIS registration helper..."
 tool_root="${PKGROOT}/Library/Application Support/llavon-ime/tools"
 mkdir -p "${tool_root}"
 xcrun clang -O2 -Wall -Wextra -framework Carbon \
@@ -171,38 +159,24 @@ if command -v xattr >/dev/null 2>&1; then
 fi
 find "${PKGROOT}" -name '._*' -delete
 
-codesign --force --deep --sign - "${runtime_root}/Fcitx5.app"
-
-# Keep the plugin descriptor's file list in sync with the payload so
-# fcitx5-macos can uninstall every installed file.
-if command -v python3 >/dev/null 2>&1; then
-    python3 - "${payload_root}" <<'PY'
-import json
-import os
-import sys
-
-root = sys.argv[1]
-descriptor = os.path.join(root, "plugin", "llavon-ime.json")
-with open(descriptor, encoding="utf-8") as f:
-    data = json.load(f)
-files = []
-for dirpath, _, names in os.walk(root):
-    for name in names:
-        rel = os.path.relpath(os.path.join(dirpath, name), root)
-        if rel != os.path.join("plugin", "llavon-ime.json"):
-            files.append(rel)
-data["files"] = sorted(files)
-with open(descriptor, "w", encoding="utf-8") as f:
-    json.dump(data, f, ensure_ascii=False, indent=2)
-    f.write("\n")
-PY
+if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
+    echo "Signing with Developer ID Application: ${DEVELOPER_ID_APPLICATION}"
+    codesign --force --deep --timestamp --options runtime \
+        --sign "${DEVELOPER_ID_APPLICATION}" \
+        "${app_root}/${APP_NAME}.app"
+    codesign --force --timestamp --options runtime \
+        --sign "${DEVELOPER_ID_APPLICATION}" \
+        "${payload_root}/bin/llavon-ime-unix-service"
+else
+    echo "No Developer ID Application identity; keeping the ad-hoc app signature."
+    codesign --force --timestamp=none --sign - \
+        "${payload_root}/bin/llavon-ime-unix-service"
 fi
 
 required_files=(
+    "${app_root}/${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
+    "${app_root}/${APP_NAME}.app/Contents/Info.plist"
     "${payload_root}/bin/llavon-ime-unix-service"
-    "${payload_root}/lib/fcitx5/llavon-ime-addon.so"
-    "${payload_root}/share/fcitx5/addon/llavon-ime.conf"
-    "${payload_root}/share/fcitx5/inputmethod/llavon-ime.conf"
     "${payload_root}/share/llavon-ime/tables/bopomofo_char.json"
     "${payload_root}/share/llavon-ime/tables/tokens/bpmf.json"
     "${payload_root}/share/llavon-ime/tables/tokens/chars.json"
@@ -215,9 +189,7 @@ required_files=(
     "${license_root}/llama-cpp/LICENSE"
     "${license_root}/llavon-ime-model/NOTICE"
     "${license_root}/mcbopomofo-symbols/NOTICE"
-    "${payload_root}/plugin/llavon-ime.json"
     "${PKGROOT}${MODEL_INSTALL_PATH}"
-    "${runtime_root}/Fcitx5.app/Contents/lib/libFcitx5Core.dylib"
     "${tool_root}/llavon-ime-tis"
 )
 
@@ -232,28 +204,6 @@ if [[ -e "${PKGROOT}/Users" ]]; then
     echo "Package root unexpectedly contains /Users; install paths are not relocatable." >&2
     exit 1
 fi
-
-if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
-    codesign --force --timestamp --options runtime --sign "${DEVELOPER_ID_APPLICATION}" \
-        "${payload_root}/bin/llavon-ime-unix-service" \
-        "${payload_root}/lib/fcitx5/llavon-ime-addon.so"
-fi
-
-# Plugin tarballs consumed by the fcitx5-macos Plugin Manager and the
-# one-click installer. Keep the layout relative to ~/Library/fcitx5.
-plugin_dist_dir="${DIST_DIR}/plugin"
-rm -rf "${plugin_dist_dir}"
-mkdir -p "${plugin_dist_dir}"
-tar -C "${payload_root}" -cjf "${plugin_dist_dir}/llavon-ime-${ARCH}.tar.bz2" \
-    bin/llavon-ime-unix-service \
-    lib/fcitx5/llavon-ime-addon.so \
-    plugin/llavon-ime.json
-tar -C "${payload_root}" -cjf "${plugin_dist_dir}/llavon-ime-any.tar.bz2" \
-    plugin/llavon-ime.json \
-    share/fcitx5/addon/llavon-ime.conf \
-    share/fcitx5/inputmethod/llavon-ime.conf \
-    share/llavon-ime
-echo "Built plugin tarballs in: ${plugin_dist_dir}"
 
 unsigned_pkg="${DIST_DIR}/llavon-ime-${VERSION}-${ARCH}.pkg"
 pkgbuild \

@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 namespace {
 

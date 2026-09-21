@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(llavon-ime VERSION 0.2.1 LANGUAGES CXX)
+project(llavon-ime VERSION 0.2.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,25 +9,30 @@ include(GNUInstallDirs)
 
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 
-option(IME_FCITX5_BUILD_TESTS "Build fcitx5 tests" ON)
-option(IME_FCITX5_REQUIRE_ATSPI "Fail configuration when the AT-SPI backend is unavailable" OFF)
+option(LLAVON_IME_BUILD_TESTS "Build fcitx5 tests" ON)
 option(LLAVON_IME_DEBUG "Compile in debug logging (LLAVON_DEBUG_LOG)" OFF)
-set(IME_FCITX5_UNIX_SERVICE_NAME "llavon-ime-unix-service" CACHE STRING "Installed Unix service executable name")
-set(IME_FCITX5_DISPLAY_VERSION "${PROJECT_VERSION}" CACHE STRING "Version displayed in the fcitx5 configuration UI")
-set(IME_FCITX5_FCITX_PLUGIN_DIR "plugin" CACHE STRING "macOS fcitx5-macos plugin metadata install directory")
-set(IME_FCITX5_INSTALLED_MODEL_PATH "" CACHE FILEPATH "Installed default GGUF model path")
-set(IME_FCITX5_TABLE_SOURCE_DIR
+set(LLAVON_IME_UNIX_SERVICE_NAME "llavon-ime-unix-service" CACHE STRING "Installed Unix service executable name")
+set(LLAVON_IME_DISPLAY_VERSION "${PROJECT_VERSION}" CACHE STRING "Version displayed in the fcitx5 configuration UI")
+set(LLAVON_IME_FCITX_PLUGIN_DIR "plugin" CACHE STRING "macOS fcitx5-macos plugin metadata install directory")
+set(LLAVON_IME_INSTALLED_MODEL_PATH "" CACHE FILEPATH "Installed default GGUF model path")
+set(LLAVON_IME_TABLE_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/../ime-unix-service/ime-core/table"
     CACHE PATH
     "Source directory for the canonical ime-core tables"
 )
 
-if(NOT EXISTS "${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json")
+if(NOT EXISTS "${LLAVON_IME_TABLE_SOURCE_DIR}/bopomofo_char.json")
     message(FATAL_ERROR "ime-core tables are missing; initialize submodules recursively")
 endif()
 
-set(IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH "${CMAKE_INSTALL_FULL_BINDIR}/${IME_FCITX5_UNIX_SERVICE_NAME}")
-set(IME_FCITX5_INSTALLED_TABLE_PATH "${CMAKE_INSTALL_FULL_DATADIR}/llavon-ime/tables/bopomofo_char.json")
+set(LLAVON_IME_INSTALLED_UNIX_SERVICE_PATH "${CMAKE_INSTALL_FULL_BINDIR}/${LLAVON_IME_UNIX_SERVICE_NAME}")
+set(LLAVON_IME_INSTALLED_TABLE_PATH "${CMAKE_INSTALL_FULL_DATADIR}/llavon-ime/tables/bopomofo_char.json")
+
+if(LLAVON_IME_BUILD_TESTS)
+    enable_testing()
+endif()
+set(LLAVON_IME_ENGINE_BUILD_TESTS "${LLAVON_IME_BUILD_TESTS}")
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../engine" "${CMAKE_BINARY_DIR}/engine")
 
 function(ime_fcitx5_install_destination output directory)
     if(IS_ABSOLUTE "${directory}")
@@ -41,69 +46,9 @@ function(ime_fcitx5_install_destination output directory)
     set(${output} "${directory}" PARENT_SCOPE)
 endfunction()
 
-add_library(ime_fcitx5_shared STATIC shared/ime_fcitx5_shared.cpp)
-set_target_properties(ime_fcitx5_shared PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(ime_fcitx5_shared PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/shared")
-target_compile_definitions(ime_fcitx5_shared PRIVATE
-    IME_FCITX5_UNIX_SERVICE_NAME="${IME_FCITX5_UNIX_SERVICE_NAME}"
-    IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH="${IME_FCITX5_INSTALLED_UNIX_SERVICE_PATH}"
-    IME_FCITX5_INSTALLED_MODEL_PATH="${IME_FCITX5_INSTALLED_MODEL_PATH}"
-)
-target_compile_options(ime_fcitx5_shared PRIVATE -Wall -Wextra -Wpedantic)
-if(LLAVON_IME_DEBUG)
-    target_compile_definitions(ime_fcitx5_shared PRIVATE LLAVON_IME_DEBUG=1)
-endif()
-
-find_package(nlohmann_json CONFIG REQUIRED)
-find_package(Threads REQUIRED)
-find_package(PkgConfig QUIET)
-if(PkgConfig_FOUND AND NOT WIN32)
-    # Compile-time headers for the AT-SPI backend, glib/gio for the worker
-    # loop and bus activation, and a hard link only for the standalone probe.
-    pkg_check_modules(ATSPI QUIET atspi-2)
-    pkg_check_modules(ATSPI_LINK QUIET IMPORTED_TARGET atspi-2)
-    pkg_check_modules(ATSPI_GLIB QUIET IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
-endif()
-if(IME_FCITX5_REQUIRE_ATSPI AND NOT (ATSPI_FOUND AND ATSPI_GLIB_FOUND))
-    message(FATAL_ERROR
-        "IME_FCITX5_REQUIRE_ATSPI is ON, but atspi-2 and glib/gobject/gio development files were not found")
-endif()
-target_sources(ime_fcitx5_shared PRIVATE shared/config/config.cpp)
-target_sources(ime_fcitx5_shared PRIVATE
-    shared/text/utf.cpp
-    shared/bopomofo/keymap.cpp
-    shared/bopomofo/syllable.cpp
-    shared/bopomofo/table_engine.cpp
-    shared/buffer/composition_buffer.cpp
-    shared/engine/fallback_engine.cpp
-    shared/input/ascii_tokenizer.cpp
-    shared/input/keypad.cpp
-    shared/input/input_processor.cpp
-    shared/input/mixed_input_decoder.cpp
-    shared/input/punctuation.cpp
-    shared/protocol/protocol.cpp
-    shared/symbol/symbol_menu.cpp
-    shared/phrase_override/phrase_override_store.cpp
-    shared/context/accessibility_context.cpp
-)
-if(NOT WIN32)
-    target_sources(ime_fcitx5_shared PRIVATE
-        shared/engine/service_transport.cpp
-        shared/ipc/unix_socket.cpp
-    )
-endif()
-target_link_libraries(ime_fcitx5_shared PUBLIC nlohmann_json::nlohmann_json Threads::Threads)
-if(ATSPI_FOUND AND ATSPI_GLIB_FOUND AND NOT WIN32 AND NOT APPLE)
-    target_sources(ime_fcitx5_shared PRIVATE shared/atspi/atspi_context_provider.cpp)
-    target_compile_definitions(ime_fcitx5_shared PRIVATE IME_FCITX5_HAVE_ATSPI=1)
-    target_include_directories(ime_fcitx5_shared PRIVATE ${ATSPI_INCLUDE_DIRS})
-    # libatspi is loaded at runtime with dlopen so the addon still loads on
-    # systems without at-spi2-core; only glib/gio are hard dependencies.
-    target_link_libraries(ime_fcitx5_shared PRIVATE PkgConfig::ATSPI_GLIB ${CMAKE_DL_LIBS})
-endif()
-install(FILES "${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json"
+install(FILES "${LLAVON_IME_TABLE_SOURCE_DIR}/bopomofo_char.json"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/llavon-ime/tables")
-install(DIRECTORY "${IME_FCITX5_TABLE_SOURCE_DIR}/tokens"
+install(DIRECTORY "${LLAVON_IME_TABLE_SOURCE_DIR}/tokens"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/llavon-ime/tables"
         FILES_MATCHING PATTERN "*.json")
 
@@ -117,45 +62,44 @@ if(Fcitx5_FOUND AND NOT WIN32)
         if(NOT DEFINED FCITX_INSTALL_PKGDATADIR)
             set(FCITX_INSTALL_PKGDATADIR "${CMAKE_INSTALL_FULL_DATADIR}/fcitx5")
         endif()
-        ime_fcitx5_install_destination(IME_FCITX5_FCITX_ADDONDIR "${FCITX_INSTALL_ADDONDIR}")
-        ime_fcitx5_install_destination(IME_FCITX5_FCITX_PKGDATADIR "${FCITX_INSTALL_PKGDATADIR}")
+        ime_fcitx5_install_destination(LLAVON_IME_FCITX_ADDONDIR "${FCITX_INSTALL_ADDONDIR}")
+        ime_fcitx5_install_destination(LLAVON_IME_FCITX_PKGDATADIR "${FCITX_INSTALL_PKGDATADIR}")
     else()
         # Match upstream Fcitx5 addons such as fcitx5-chewing: let
         # GNUInstallDirs select lib, lib64, or a multiarch libdir.
-        set(IME_FCITX5_FCITX_ADDONDIR "${CMAKE_INSTALL_LIBDIR}/fcitx5")
-        set(IME_FCITX5_FCITX_PKGDATADIR "${CMAKE_INSTALL_DATADIR}/fcitx5")
+        set(LLAVON_IME_FCITX_ADDONDIR "${CMAKE_INSTALL_LIBDIR}/fcitx5")
+        set(LLAVON_IME_FCITX_PKGDATADIR "${CMAKE_INSTALL_DATADIR}/fcitx5")
     endif()
 
     add_library(llavon-ime-addon MODULE
         fcitx5/ime_engine.cpp
-        fcitx5/ime_config.cpp
-        fcitx5/prediction_coordinator.cpp)
+        fcitx5/ime_config.cpp)
     target_include_directories(llavon-ime-addon PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(llavon-ime-addon PRIVATE Fcitx5::Core ime_fcitx5_shared)
+    target_link_libraries(llavon-ime-addon PRIVATE Fcitx5::Core llavon_ime_engine)
     target_compile_definitions(llavon-ime-addon PRIVATE
-        IME_FCITX5_SOURCE_TABLE_PATH="${IME_FCITX5_TABLE_SOURCE_DIR}/bopomofo_char.json"
-        IME_FCITX5_INSTALLED_TABLE_PATH="${IME_FCITX5_INSTALLED_TABLE_PATH}"
-        IME_FCITX5_DISPLAY_VERSION="${IME_FCITX5_DISPLAY_VERSION}"
+        LLAVON_IME_SOURCE_TABLE_PATH="${LLAVON_IME_TABLE_SOURCE_DIR}/bopomofo_char.json"
+        LLAVON_IME_INSTALLED_TABLE_PATH="${LLAVON_IME_INSTALLED_TABLE_PATH}"
+        LLAVON_IME_DISPLAY_VERSION="${LLAVON_IME_DISPLAY_VERSION}"
     )
     if(LLAVON_IME_DEBUG)
         target_compile_definitions(llavon-ime-addon PRIVATE LLAVON_IME_DEBUG=1)
     endif()
     if(APPLE)
-        target_compile_definitions(llavon-ime-addon PRIVATE IME_FCITX5_NATIVE_SURROUNDING=1)
+        target_compile_definitions(llavon-ime-addon PRIVATE LLAVON_IME_NATIVE_SURROUNDING=1)
     endif()
     target_compile_options(llavon-ime-addon PRIVATE -Wall -Wextra -Wpedantic)
     set_target_properties(llavon-ime-addon PROPERTIES PREFIX "")
     configure_file(fcitx5/addon.conf.in "${CMAKE_BINARY_DIR}/fcitx5/addon/llavon-ime.conf" @ONLY)
     configure_file(fcitx5/inputmethod.conf.in "${CMAKE_BINARY_DIR}/fcitx5/inputmethod/llavon-ime.conf" @ONLY)
-    install(TARGETS llavon-ime-addon LIBRARY DESTINATION "${IME_FCITX5_FCITX_ADDONDIR}")
+    install(TARGETS llavon-ime-addon LIBRARY DESTINATION "${LLAVON_IME_FCITX_ADDONDIR}")
     install(FILES "${CMAKE_BINARY_DIR}/fcitx5/addon/llavon-ime.conf"
-            DESTINATION "${IME_FCITX5_FCITX_PKGDATADIR}/addon")
+            DESTINATION "${LLAVON_IME_FCITX_PKGDATADIR}/addon")
     install(FILES "${CMAKE_BINARY_DIR}/fcitx5/inputmethod/llavon-ime.conf"
-            DESTINATION "${IME_FCITX5_FCITX_PKGDATADIR}/inputmethod")
+            DESTINATION "${LLAVON_IME_FCITX_PKGDATADIR}/inputmethod")
     if(APPLE)
         configure_file(fcitx5/plugin.json.in "${CMAKE_BINARY_DIR}/fcitx5/plugin/llavon-ime.json" @ONLY)
         install(FILES "${CMAKE_BINARY_DIR}/fcitx5/plugin/llavon-ime.json"
-                DESTINATION "${IME_FCITX5_FCITX_PLUGIN_DIR}")
+                DESTINATION "${LLAVON_IME_FCITX_PLUGIN_DIR}")
     endif()
 elseif(Fcitx5_FOUND)
     message(STATUS "llavon-ime Fcitx5 frontend is only built on Linux/macOS")
@@ -163,21 +107,6 @@ else()
     message(STATUS "fcitx5 development files not found; skipping llavon-ime-addon")
 endif()
 
-# Standalone probe that reports the text before the caret of the currently
-# focused editable widget through the same AT-SPI provider the addon uses. It
-# validates on a real desktop that the a11y bus provides reliable, low-latency
-# context for IME prediction.
-if(ATSPI_FOUND AND ATSPI_LINK_FOUND AND NOT WIN32 AND NOT APPLE)
-    add_executable(atspi_probe tools/atspi_probe.cpp)
-    target_include_directories(atspi_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/shared")
-    target_link_libraries(atspi_probe PRIVATE PkgConfig::ATSPI_LINK ime_fcitx5_shared)
-    target_compile_options(atspi_probe PRIVATE -Wall -Wextra)
-    install(TARGETS atspi_probe RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
-elseif(PkgConfig_FOUND AND NOT WIN32)
-    message(STATUS "atspi-2 not found; skipping atspi_probe tool")
-endif()
-
-if(IME_FCITX5_BUILD_TESTS)
-    enable_testing()
+if(LLAVON_IME_BUILD_TESTS)
     add_subdirectory(tests)
 endif()

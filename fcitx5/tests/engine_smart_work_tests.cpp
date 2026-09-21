@@ -5,7 +5,7 @@
 
 #include <string>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 // SmartEnglish (智慧型中英文) work/office scenarios: meeting notes, status
 // reports and technical chat. With SmartEnglish=ON, lowercase pending chars

@@ -5,7 +5,7 @@
 
 #include <string>
 
-using namespace ime::fcitx5::test;
+using namespace llavon::ime::test;
 
 // SmartEnglish on the Hsu (許氏) layout: lowercase letters are held as a raw
 // pending word; the Hsu tone keys d/f/j/s decide Chinese (replay as 注音),

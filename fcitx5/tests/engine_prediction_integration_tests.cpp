@@ -17,8 +17,8 @@
 #include "ipc/unix_socket.hpp"
 #include "protocol/protocol.hpp"
 
-using namespace ime::fcitx5;
-using namespace ime::fcitx5::test;
+using namespace llavon::ime;
+using namespace llavon::ime::test;
 
 namespace {
 
@@ -43,9 +43,9 @@ int main() {
 
     setenv("FCITX_CONFIG_HOME", config_home.c_str(), 1);
     setenv("XDG_CONFIG_HOME", config_home.c_str(), 1);
-    setenv("IME_FCITX5_TABLE_PATH", TESTING_TABLE_PATH, 1);
+    setenv("LLAVON_IME_TABLE_PATH", TESTING_TABLE_PATH, 1);
     setenv("LLAVON_IME_UNIX_SOCKET_PATH", socket_path.c_str(), 1);
-    setenv("IME_FCITX5_DISABLE_SERVICE", "1", 1);
+    setenv("LLAVON_IME_DISABLE_SERVICE", "1", 1);
 
     UnixSocketServer server;
     server.bind_listen(socket_path);
@@ -139,7 +139,7 @@ int main() {
                     if (done || !harness) return;
                     auto* state = harness->engine_state();
                     const auto* candidates =
-                        state == nullptr ? nullptr : state->session.buffer.segment_candidates(0);
+                        state == nullptr ? nullptr : state->session->buffer.segment_candidates(0);
                     if (candidates != nullptr && !candidates->empty() && candidates->front() == U'擬') {
                         prediction_visible = true;
                         harness.reset();

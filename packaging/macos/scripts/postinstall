@@ -1,124 +1,34 @@
 #!/bin/sh
 set -eu
 
-PAYLOAD_ROOT="/Library/Application Support/llavon-ime/payload"
+APP="/Library/Input Methods/LlavonIME.app"
+PAYLOAD="/Library/Application Support/llavon-ime"
+TIS_TOOL="${PAYLOAD}/tools/llavon-ime-tis"
 
 console_user="$(stat -f %Su /dev/console 2>/dev/null || true)"
 if [ -z "${console_user}" ] || [ "${console_user}" = "root" ] || [ "${console_user}" = "loginwindow" ]; then
     console_user="${SUDO_USER:-}"
 fi
 
-if [ -z "${console_user}" ] || ! id "${console_user}" >/dev/null 2>&1; then
-    echo "llavon-ime: no active user found; payload remains at ${PAYLOAD_ROOT}" >&2
-    exit 0
-fi
+if [ -n "${console_user}" ] && id "${console_user}" >/dev/null 2>&1; then
+    uid="$(id -u "${console_user}")"
 
-user_home="$(dscl . -read "/Users/${console_user}" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
-if [ -z "${user_home}" ] || [ ! -d "${user_home}" ]; then
-    user_home="$(eval echo "~${console_user}")"
-fi
+    # Stop the running input method so the replaced bundle is picked up.
+    /usr/bin/pkill -x -u "${uid}" LlavonIME >/dev/null 2>&1 || true
 
-uid="$(id -u "${console_user}")"
-
-stop_user_process() {
-    process_name="$1"
-    /usr/bin/pkill -x -u "${uid}" "${process_name}" >/dev/null 2>&1 || true
-    attempts=0
-    while /usr/bin/pgrep -x -u "${uid}" "${process_name}" >/dev/null 2>&1; do
-        attempts=$((attempts + 1))
-        if [ "${attempts}" -ge 20 ]; then
-            /usr/bin/pkill -KILL -x -u "${uid}" "${process_name}" >/dev/null 2>&1 || true
-            break
-        fi
-        /bin/sleep 0.1
-    done
-}
-
-if [ ! -d "${PAYLOAD_ROOT}" ]; then
-    echo "llavon-ime: missing package payload: ${PAYLOAD_ROOT}" >&2
-    exit 1
-fi
-
-fcitx_app="/Library/Input Methods/Fcitx5.app"
-if [ -d "${fcitx_app}" ]; then
-    resources="${fcitx_app}/Contents/Resources"
-    major="$(/usr/bin/sw_vers -productVersion | /usr/bin/cut -d. -f1)"
-    if [ "${major}" -ge 26 ] 2>/dev/null; then
-        icon="${resources}/menu_icon_26.pdf"
-    else
-        icon="${resources}/menu_icon_15.pdf"
+    # Best effort: ask the text input system to pick up the new source in the
+    # console user's session. macOS still requires the user to select and
+    # approve the input source in System Settings on first use.
+    if [ -x "${TIS_TOOL}" ]; then
+        /bin/launchctl asuser "${uid}" "${TIS_TOOL}" register "${APP}" >/dev/null 2>&1 || true
     fi
-    if [ -f "${icon}" ]; then
-        /bin/cp -f "${icon}" "${resources}/menu_icon.pdf" || true
-    fi
-fi
 
-target_root="${user_home}/Library/fcitx5"
-
-# The addon and service are loaded into the logged-in user's processes. Stop
-# both before replacing their files so the restarted input method cannot retain
-# an old service binary or addon image.
-stop_user_process llavon-ime-unix-service
-stop_user_process Fcitx5
-
-/bin/mkdir -p "${target_root}"
-/usr/bin/ditto --norsrc --noextattr "${PAYLOAD_ROOT}" "${target_root}"
-
-/usr/bin/find "${target_root}" "/Library/Application Support/llavon-ime" -name '._*' -delete
-
-/usr/sbin/chown -R "${console_user}:staff" "${target_root}"
-/bin/chmod -R a+rX "/Library/Application Support/llavon-ime/models" 2>/dev/null || true
-
-# Preconfigure fcitx5 for first-time users only, matching the one-click
-# installer. Existing profiles are left untouched.
-config_root="${user_home}/.config"
-config_dir="${config_root}/fcitx5"
-created_config_root=0
-if [ ! -d "${config_root}" ]; then
-    created_config_root=1
-fi
-/bin/mkdir -p "${config_dir}"
-if [ ! -f "${config_dir}/profile" ]; then
-    /bin/cat > "${config_dir}/profile" <<'EOF'
-[Groups/0]
-Name=Default
-Default Layout=us
-DefaultIM=llavon-ime
-
-[Groups/0/Items/0]
-Name=keyboard-us
-Layout=
-
-[Groups/0/Items/1]
-Name=llavon-ime
-Layout=
-
-[GroupOrder]
-0=Default
-EOF
-fi
-if [ ! -f "${config_dir}/config" ]; then
-    /bin/cat > "${config_dir}/config" <<'EOF'
-[Behavior]
-ActiveByDefault=True
-EOF
-fi
-/usr/sbin/chown -R "${console_user}:staff" "${config_dir}"
-if [ "${created_config_root}" -eq 1 ]; then
-    /usr/sbin/chown "${console_user}:staff" "${config_root}"
-fi
-
-tis_tool="/Library/Application Support/llavon-ime/tools/llavon-ime-tis"
-if [ -x "${tis_tool}" ] && [ -d "${fcitx_app}" ]; then
-    "${tis_tool}" register "${fcitx_app}" || true
-    /bin/launchctl asuser "${uid}" "${tis_tool}" enable "org.fcitx.inputmethod.Fcitx5" >/dev/null 2>&1 || \
-        /usr/bin/su -m "${console_user}" -c "${tis_tool} enable org.fcitx.inputmethod.Fcitx5" >/dev/null 2>&1 || true
-fi
-
-if [ ! -d "${fcitx_app}" ]; then
-    echo "llavon-ime: Fcitx5.app is not installed; install fcitx5-macos before using this input method." >&2
+    echo "llavon-ime: add 「拉風輸入法」 in System Settings > Keyboard > Input Sources."
+    echo "llavon-ime: the first install may require a log out and back in."
 else
-    /bin/launchctl asuser "${uid}" /usr/bin/open -gj -b org.fcitx.inputmethod.Fcitx5 >/dev/null 2>&1 || true
+    echo "llavon-ime: no active user found; add 「拉風輸入法」 in System Settings > Keyboard > Input Sources."
 fi
+
+/bin/chmod -R a+rX "${PAYLOAD}" 2>/dev/null || true
 
 exit 0

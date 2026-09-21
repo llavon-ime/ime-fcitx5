@@ -15,7 +15,6 @@ permissions:
   contents: write
 
 env:
-  FCITX5_MACOS_VERSION: "0.3.7"
   MODEL_REPOSITORY: "tony65535/llavon-ime-llama-250m-GGUF"
   MODEL_FILE_NAME: "llavon-ime-llama-250m-Q4_K_M.gguf"
   HOMEBREW_TAP_REPO: "llavon-ime/homebrew-llavon-ime"
@@ -95,32 +94,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/vcpkg/archives
-          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-${{ hashFiles('vcpkg-configuration.json', 'fcitx5/vcpkg.json', 'ime-unix-service/vcpkg.json', 'ime-unix-service/vcpkg-configuration.json', 'ime-unix-service/ime-core/vcpkg.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-${{ hashFiles('vcpkg-configuration.json', 'engine/vcpkg.json', 'ime-unix-service/vcpkg.json', 'ime-unix-service/vcpkg-configuration.json', 'ime-unix-service/ime-core/vcpkg.json') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-vcpkg-
-
-      - name: Install fcitx5-macos runtime for linking
-        run: |
-          set -euo pipefail
-          runtime="${RUNNER_TEMP}/Fcitx5-arm64.tar.bz2"
-          curl -L \
-            -o "${runtime}" \
-            "https://github.com/fcitx/fcitx5-macos/releases/download/${FCITX5_MACOS_VERSION}/Fcitx5-arm64.tar.bz2"
-          sudo mkdir -p "/Library/Input Methods"
-          sudo tar -xjf "${runtime}" -C "/Library/Input Methods"
-          test -f "/Library/Input Methods/Fcitx5.app/Contents/lib/libFcitx5Core.dylib"
-
-      - name: Checkout fcitx5-macos headers
-        run: |
-          set -euo pipefail
-          git clone \
-            --branch "${FCITX5_MACOS_VERSION}" \
-            --depth 1 \
-            --recurse-submodules \
-            --shallow-submodules \
-            https://github.com/fcitx/fcitx5-macos.git \
-            "${RUNNER_TEMP}/fcitx5-macos"
-          test -f "${RUNNER_TEMP}/fcitx5-macos/fcitx5/src/lib/fcitx/inputmethodengine.h"
 
       - name: Import signing certificates
         if: env.MACOS_CERTIFICATE_P12 != ''
@@ -163,9 +139,7 @@ jobs:
         id: package
         run: |
           set -euo pipefail
-          IME_FCITX5_VERSION="${{ steps.version.outputs.version }}" \
-          FCITX5_MACOS_SOURCE_DIR="${RUNNER_TEMP}/fcitx5-macos" \
-          FCITX5_MACOS_RUNTIME_TARBALL="${RUNNER_TEMP}/Fcitx5-arm64.tar.bz2" \
+          LLAVON_IME_VERSION="${{ steps.version.outputs.version }}" \
           ./scripts/package-macos.sh
 
           unsigned_pkg="dist/macos/llavon-ime-${{ steps.version.outputs.version }}-arm64.pkg"
@@ -203,10 +177,7 @@ jobs:
           assets=(
             "${{ steps.package.outputs.pkg }}"
           )
-          shopt -s nullglob
-          assets+=(dist/macos/plugin/*.tar.bz2)
-          shopt -u nullglob
-          notes="macOS fcitx5 package and plugin tarballs."
+          notes="Native macOS input method package."
           if gh release view "${tag}" >/dev/null 2>&1; then
             gh release upload "${tag}" "${assets[@]}" --clobber
           elif git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then

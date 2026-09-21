@@ -21,7 +21,7 @@
 #include <string_view>
 #include <utility>
 
-namespace ime::fcitx5::test {
+namespace llavon::ime::test {
 
 // fcitx5's testfrontend is a testing-only addon that some distro packages
 // expose headers/CMake metadata for but omit at runtime. Engine tests must
@@ -147,8 +147,8 @@ public:
     }
 
     // The per-input-context engine state registered by the addon.
-    ime::fcitx5::ImeInputContextProperty* engine_state() const {
-        return static_cast<ime::fcitx5::ImeInputContextProperty*>(
+    llavon::ime::ImeInputContextProperty* engine_state() const {
+        return static_cast<llavon::ime::ImeInputContextProperty*>(
             input_context()->property("llavon-ime-input-state"));
     }
 
@@ -156,7 +156,7 @@ public:
     // consumed) so tests can observe which state changes must issue a fresh
     // request. Bumps the generation so late responses are ignored.
     void settle_prediction() {
-        if (auto* state = engine_state()) state->session.prediction.invalidate();
+        if (auto* state = engine_state()) state->session->prediction.invalidate();
     }
 
     fcitx::Instance* instance() const { return instance_; }
@@ -182,4 +182,4 @@ private:
     fcitx::ICUUID uuid_{};
 };
 
-}  // namespace ime::fcitx5::test
+}  // namespace llavon::ime::test

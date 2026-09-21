@@ -53,6 +53,7 @@ std::uint64_t positive_number(std::string_view value, const char* option) {
 
 std::filesystem::path default_tables_dir(const char* executable) {
     if (const char* value = env_value("LLAVON_IME_TABLES_DIR")) return value;
+    if (const char* value = env_value("LLAVON_IME_TABLE_DIR")) return value;
     if (const char* value = env_value("IME_FCITX5_TABLE_DIR")) return value;
 
     const auto has_required_tables = [](const std::filesystem::path& path) {
