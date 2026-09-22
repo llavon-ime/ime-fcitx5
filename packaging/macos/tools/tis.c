@@ -98,8 +98,64 @@ static int select_input_source(const char *source_id) {
     return 0;
 }
 
-static int list_input_sources(const char *bundle_id) {
+// Prints the state of every input source of the bundle: whether the text input
+// system knows it, has it enabled, and has it selected.
+static int print_status(const char *bundle_id) {
     CFStringRef bundle = CFStringCreateWithCString(NULL, bundle_id, kCFStringEncodingUTF8);
+    if (bundle == NULL) {
+        fprintf(stderr, "invalid bundle id: %s\n", bundle_id);
+        return 1;
+    }
+
+    const void *keys[] = { kTISPropertyBundleID };
+    const void *values[] = { bundle };
+    CFDictionaryRef conditions = CFDictionaryCreate(
+        NULL, keys, values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFRelease(bundle);
+    if (conditions == NULL) {
+        fprintf(stderr, "failed to build input source filter\n");
+        return 1;
+    }
+
+    CFArrayRef sources = TISCreateInputSourceList(conditions, true);
+    CFRelease(conditions);
+    if (sources == NULL) {
+        printf("%s: not registered\n", bundle_id);
+        return 1;
+    }
+
+    const CFIndex count = CFArrayGetCount(sources);
+    for (CFIndex i = 0; i < count; ++i) {
+        TISInputSourceRef source = (TISInputSourceRef)CFArrayGetValueAtIndex(sources, i);
+        if (source == NULL) continue;
+        char id[256] = {0};
+        CFStringRef source_id = (CFStringRef)TISGetInputSourceProperty(source, kTISPropertyInputSourceID);
+        if (source_id != NULL) {
+            CFStringGetCString(source_id, id, sizeof(id), kCFStringEncodingUTF8);
+        }
+        const bool enabled =
+            TISGetInputSourceProperty(source, kTISPropertyInputSourceIsEnabled) == kCFBooleanTrue;
+        const bool selectable =
+            TISGetInputSourceProperty(source, kTISPropertyInputSourceIsSelectCapable) == kCFBooleanTrue;
+        const bool selected =
+            TISGetInputSourceProperty(source, kTISPropertyInputSourceIsSelected) == kCFBooleanTrue;
+        char icon[512] = {0};
+        CFURLRef icon_url = (CFURLRef)TISGetInputSourceProperty(source, kTISPropertyIconImageURL);
+        if (icon_url != NULL) {
+            CFStringRef path = CFURLCopyFileSystemPath(icon_url, kCFURLPOSIXPathStyle);
+            if (path != NULL) {
+                CFStringGetCString(path, icon, sizeof(icon), kCFStringEncodingUTF8);
+                CFRelease(path);
+            }
+        }
+        printf("%s enabled=%d selectable=%d selected=%d icon=%s\n", id, enabled ? 1 : 0,
+               selectable ? 1 : 0, selected ? 1 : 0, icon);
+    }
+    CFRelease(sources);
+    return count > 0 ? 0 : 1;
+}
+
+static int list_input_sources(const char *bundle_id) {    CFStringRef bundle = CFStringCreateWithCString(NULL, bundle_id, kCFStringEncodingUTF8);
     if (bundle == NULL) {
         fprintf(stderr, "invalid bundle id: %s\n", bundle_id);
         return 1;
@@ -146,10 +202,13 @@ int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "select") == 0) {
         return select_input_source(argv[2]);
     }
+    if (argc == 3 && strcmp(argv[1], "status") == 0) {
+        return print_status(argv[2]);
+    }
     if (argc == 3 && strcmp(argv[1], "list") == 0) {
         return list_input_sources(argv[2]);
     }
-    fprintf(stderr, "usage: %s register <app-path> | enable <bundle-id> | select <input-source-id> | list <bundle-id>\n",
+    fprintf(stderr, "usage: %s register <app-path> | enable <bundle-id> | select <input-source-id> | status <bundle-id> | list <bundle-id>\n",
             argv[0]);
     return 2;
 }

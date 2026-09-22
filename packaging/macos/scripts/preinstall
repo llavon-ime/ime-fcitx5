@@ -27,6 +27,13 @@ if [ -n "${console_user}" ] && id "${console_user}" >/dev/null 2>&1; then
     fi
 fi
 
+# The package installs system-wide, but a copy in the console user's own input
+# methods directory shadows it (and used to make Installer relocate the bundle
+# into the home directory), so drop that copy before installing.
+if [ -n "${user_home}" ] && [ -d "${user_home}/Library/Input Methods/LlavonIME.app" ]; then
+    /bin/rm -rf "${user_home}/Library/Input Methods/LlavonIME.app"
+fi
+
 # fcitx5-macos may also live in the user's own input methods directory.
 user_fcitx5_app=""
 if [ -n "${user_home}" ] && [ -d "${user_home}/Library/Input Methods/Fcitx5.app" ]; then

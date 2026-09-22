@@ -57,7 +57,13 @@ if ! command -v pkg-config >/dev/null 2>&1; then
 fi
 
 if [[ -z "${VERSION}" ]]; then
-    VERSION="$(git -C "${ROOT_DIR}" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
+    # Prefer the highest release tag: the squashed main/preview branches do not
+    # have the newest tags in their history, so git describe would report an
+    # old version.
+    VERSION="$(git -C "${ROOT_DIR}" tag --sort=-v:refname 2>/dev/null | head -1 | sed 's/^v//' || true)"
+    if [[ -z "${VERSION}" ]]; then
+        VERSION="$(git -C "${ROOT_DIR}" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
+    fi
 fi
 VERSION="${VERSION:-0.1.0}"
 
@@ -222,7 +228,19 @@ if [[ "${INSTALL}" == "1" ]]; then
         "${TIS_TOOL}" register "${destination}" >/dev/null 2>&1 || true
         "${TIS_TOOL}" enable "${BUNDLE_ID}" >/dev/null 2>&1 || true
         if [[ "${restore_input_source}" == "1" ]]; then
-            "${TIS_TOOL}" select "${BUNDLE_ID}.Default" >/dev/null 2>&1 || true
+            # TIS needs a moment to publish a freshly registered source, so
+            # select, verify, and retry instead of trusting a silent failure.
+            for _ in 1 2 3; do
+                "${TIS_TOOL}" select "${BUNDLE_ID}.Default" >/dev/null 2>&1 || true
+                status_output="$("${TIS_TOOL}" status "${BUNDLE_ID}" 2>/dev/null || true)"
+                if [[ "${status_output}" == *"selected=1"* ]]; then
+                    break
+                fi
+                sleep 1
+            done
+            if [[ "${status_output}" != *"selected=1"* ]]; then
+                echo "warning: 「拉風輸入法」 is not in the input menu yet; add it under System Settings > Keyboard > Input Sources." >&2
+            fi
         fi
     fi
 
@@ -231,6 +249,17 @@ if [[ "${INSTALL}" == "1" ]]; then
     # The menu agent and CursorUIViewService are left alone: killing them takes
     # the input menu and the caret UI down with it.
     killall -9 TextInputSwitcher 2>/dev/null || true
+
+    # Launch the input method once. A moved bundle leaves the text input system
+    # pointing at the old path, so switching to the input source silently does
+    # nothing until the app runs and re-registers itself. Launching it here also
+    # makes the input method usable without logging out.
+    if open "${destination}" 2>/dev/null; then
+        sleep 1
+    else
+        echo "note: could not launch 「拉風輸入法」 now; switch to it once and macOS will start it." >&2
+    fi
+
     cat <<'EOF'
 Installed. Select 「拉風輸入法」 under System Settings > Keyboard > Input Sources.
 The input source is re-registered on install; if it does not appear, log out

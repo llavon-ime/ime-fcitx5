@@ -212,9 +212,13 @@ if [[ -e "${PKGROOT}/Users" ]]; then
 fi
 
 unsigned_pkg="${DIST_DIR}/llavon-ime-${VERSION}-${ARCH}.pkg"
+# The component plist turns bundle relocation off: with it, Installer always
+# writes /Library/Input Methods/LlavonIME.app instead of upgrading a same-id
+# copy in the home directory.
 pkgbuild \
     --root "${PKGROOT}" \
     --scripts "${ROOT_DIR}/packaging/macos/scripts" \
+    --component-plist "${ROOT_DIR}/packaging/macos/LlavonIME-component.plist" \
     --identifier "${PKG_IDENTIFIER}" \
     --version "${VERSION}" \
     --install-location / \
