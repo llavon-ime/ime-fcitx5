@@ -230,6 +230,32 @@ bool test_keypad_digits_join_composition(Engine& engine, ContextId context, Fake
     return engine.render_state(context).composition_empty;
 }
 
+// Keypad operators keep their literal meaning too: with nothing to compose the
+// key is left to the application, while a composition in progress absorbs the
+// character so the preedit stays editable and commits with it.
+bool test_keypad_operator_joins_composition(Engine& engine, ContextId context, FakeHost& host) {
+    constexpr char32_t kKeypadDecimal = 0xffae;
+
+    engine.reset(context, InputResetReason::Explicit, true);
+    if (engine.key_event(context, make_key(kKeypadDecimal))) return false;
+    if (!engine.render_state(context).composition_empty) return false;
+
+    const auto commits_before = host.commits().size();
+    type(engine, context, u"su3");
+    if (!engine.key_event(context, make_key(kKeypadDecimal))) return false;
+    if (host.commits().size() != commits_before) return false;
+    const auto state = engine.render_state(context);
+    if (state.composition_empty) return false;
+    if (preedit_text(state) != u"你.") return false;
+
+    // Enter commits the composition with the character inside.
+    if (!engine.key_event(context, make_key(keysym::Return))) return false;
+    const auto commits = host.commits();
+    if (commits.size() != commits_before + 1) return false;
+    if (commits.back().second != u"你.") return false;
+    return engine.render_state(context).composition_empty;
+}
+
 // A pending English token settles into the composition first, so the keypad
 // digit joins the settled text instead of committing it.
 bool test_keypad_digit_joins_pending_token(Engine& engine, ContextId context, FakeHost& host) {
@@ -277,6 +303,7 @@ int run_host_engine_tests() {
         if (!test_symbol_menu_target(engine, context)) fail("symbol menu");
         if (!test_shift_letter_reported_as_state(engine, context, host)) fail("shift letter state");
         if (!test_keypad_digits_join_composition(engine, context, host)) fail("keypad digits");
+        if (!test_keypad_operator_joins_composition(engine, context, host)) fail("keypad operators");
         if (!host.pump_until([&]() { return host.redraw_count() > 0; })) fail("redraw 1");
     }
 

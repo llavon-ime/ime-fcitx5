@@ -75,4 +75,19 @@ RAWKEY_SUITE("punctuation", punctuation) {
         harness.type("b");
         RAWKEY_ASSERT(harness.preedit() == "ㄅ");
     }
+
+    {
+        // The numeric keypad keeps its literal meaning while composing: the
+        // character joins the preedit instead of committing it, and with
+        // nothing to compose the key is left to the application.
+        Harness harness;
+        harness.type("su3");
+        harness.key(Key("KP_Decimal"));
+        RAWKEY_ASSERT(harness.preedit() == "你.");
+        harness.expect_commit("你.");
+
+        Harness idle;
+        RAWKEY_ASSERT(!idle.key_accepted(Key("KP_Decimal")));
+        RAWKEY_ASSERT(!idle.key_accepted(Key("KP_Add")));
+    }
 }

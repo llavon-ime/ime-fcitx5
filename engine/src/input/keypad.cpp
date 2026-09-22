@@ -18,20 +18,24 @@ constexpr std::uint32_t kKeypadEqual = 0xffbd;
 
 }  // namespace
 
-bool is_keypad_passthrough_keysym(std::uint32_t keysym) {
-    if (keysym >= kKeypad0 && keysym <= kKeypad9) return true;
-
+std::optional<char32_t> keypad_operator_keysym(std::uint32_t keysym) {
     switch (keysym) {
         case kKeypadDecimal:
+            return U'.';
         case kKeypadSeparator:
+            return U',';
         case kKeypadAdd:
+            return U'+';
         case kKeypadSubtract:
+            return U'-';
         case kKeypadMultiply:
+            return U'*';
         case kKeypadDivide:
+            return U'/';
         case kKeypadEqual:
-            return true;
+            return U'=';
         default:
-            return false;
+            return std::nullopt;
     }
 }
 

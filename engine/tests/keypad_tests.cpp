@@ -7,22 +7,25 @@
 int run_keypad_tests() {
     bool ok = true;
 
-    ok = ok && !llavon::ime::is_keypad_passthrough_keysym('0');
-    ok = ok && !llavon::ime::is_keypad_passthrough_keysym('9');
-    ok = ok && !llavon::ime::is_keypad_passthrough_keysym(0xff0d);
-    ok = ok && !llavon::ime::is_keypad_passthrough_keysym(0xff8d);
+    ok = ok && !llavon::ime::keypad_operator_keysym('0');
+    ok = ok && !llavon::ime::keypad_operator_keysym('9');
+    ok = ok && !llavon::ime::keypad_operator_keysym(0xff0d);
+    ok = ok && !llavon::ime::keypad_operator_keysym(0xff8d);
 
     for (std::uint32_t key = 0xffb0; key <= 0xffb9; ++key) {
-        ok = ok && llavon::ime::is_keypad_passthrough_keysym(key);
+        ok = ok && !llavon::ime::keypad_operator_keysym(key);
     }
 
-    ok = ok && llavon::ime::is_keypad_passthrough_keysym(0xffaa);
-    ok = ok && llavon::ime::is_keypad_passthrough_keysym(0xffab);
-    ok = ok && llavon::ime::is_keypad_passthrough_keysym(0xffac);
-    ok = ok && llavon::ime::is_keypad_passthrough_keysym(0xffad);
-    ok = ok && llavon::ime::is_keypad_passthrough_keysym(0xffae);
-    ok = ok && llavon::ime::is_keypad_passthrough_keysym(0xffaf);
-    ok = ok && llavon::ime::is_keypad_passthrough_keysym(0xffbd);
+    // Keypad operators report the ASCII character they type; nothing else does.
+    ok = ok && llavon::ime::keypad_operator_keysym(0xffae) == std::optional<char32_t>(U'.');  // KP_Decimal
+    ok = ok && llavon::ime::keypad_operator_keysym(0xffac) == std::optional<char32_t>(U',');  // KP_Separator
+    ok = ok && llavon::ime::keypad_operator_keysym(0xffab) == std::optional<char32_t>(U'+');  // KP_Add
+    ok = ok && llavon::ime::keypad_operator_keysym(0xffad) == std::optional<char32_t>(U'-');  // KP_Subtract
+    ok = ok && llavon::ime::keypad_operator_keysym(0xffaa) == std::optional<char32_t>(U'*');  // KP_Multiply
+    ok = ok && llavon::ime::keypad_operator_keysym(0xffaf) == std::optional<char32_t>(U'/');  // KP_Divide
+    ok = ok && llavon::ime::keypad_operator_keysym(0xffbd) == std::optional<char32_t>(U'=');  // KP_Equal
+    ok = ok && !llavon::ime::keypad_operator_keysym(U'.').has_value();
+    ok = ok && !llavon::ime::keypad_operator_keysym(0xffb5).has_value();  // KP_5
 
     for (std::uint32_t key = '0'; key <= '9'; ++key) {
         ok = ok && llavon::ime::is_ascii_digit_keysym(key);
