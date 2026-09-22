@@ -95,11 +95,21 @@ final class LlavonInputController: IMKInputController, EngineHost {
                                     action: #selector(openSettings),
                                     keyEquivalent: "")
         settings.target = self
+        let restart = menu.addItem(withTitle: "重新啟動",
+                                   action: #selector(restartPredictionService),
+                                   keyEquivalent: "")
+        restart.target = self
         return menu
     }
 
     @objc private func openSettings() {
         SettingsWindowController.shared.show()
+    }
+
+    // Drops the prediction service; the engine starts a fresh process on the
+    // next prediction. Settings are re-read first so external edits apply.
+    @objc private func restartPredictionService() {
+        EngineBridge.shared.reloadAndRestartPredictionService()
     }
 
     // MARK: - Host callbacks

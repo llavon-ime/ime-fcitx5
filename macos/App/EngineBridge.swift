@@ -171,7 +171,7 @@ final class EngineBridge: EngineCore {
     // The engine spawns the service lazily, so shutting the running one down is
     // enough: the next prediction starts a fresh process, which reads the
     // settings file again and therefore ignores the stale command line.
-    private func restartPredictionService() {
+    func restartPredictionService() {
         guard let path = serviceSocketPath() else { return }
         let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { return }
@@ -202,6 +202,16 @@ final class EngineBridge: EngineCore {
         _ = frame.withUnsafeBytes { write(descriptor, $0.baseAddress, frame.count) }
         var response = [UInt8](repeating: 0, count: 8)
         _ = read(descriptor, &response, response.count)
+    }
+
+    // The input menu's 「重新啟動」: re-read the settings file so edits made
+    // outside the app take effect, refresh the environment the service
+    // inherits, then drop the running service. The engine starts a fresh one on
+    // the next prediction.
+    func reloadAndRestartPredictionService() {
+        reloadConfigFromDisk()
+        applyServiceEnvironment()
+        restartPredictionService()
     }
 
     // Mirrors ServiceTransport::default_socket_path in the engine.
