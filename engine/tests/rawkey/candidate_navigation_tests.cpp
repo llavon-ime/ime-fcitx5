@@ -197,7 +197,11 @@ RAWKEY_SUITE("candidate navigation tests", engine_test_candidate_navigation_test
 
         harness.key(Key("1"));
         const auto* state = harness.session();
-        RAWKEY_ASSERT(state->prediction.pending);
+        // The revision and key are set when the request starts and survive the
+        // request finishing, so they are the stable proof that a fresh request
+        // was made. `pending` is not: with no service behind the socket the
+        // failed attempt can already be drained here, which is why asserting it
+        // only held on the platform whose connect failure arrived later.
         RAWKEY_ASSERT(state->prediction.revision == state->buffer.revision());
         RAWKEY_ASSERT(state->prediction.revision > revision_before);
         RAWKEY_ASSERT(state->prediction.key == state->buffer.raw_composition());
