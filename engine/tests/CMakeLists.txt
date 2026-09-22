@@ -42,3 +42,43 @@ target_compile_definitions(llavon_ime_tests PRIVATE
 add_test(NAME llavon_ime_tests COMMAND llavon_ime_tests)
 set_tests_properties(llavon_ime_tests PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+
+# The standard raw-key suite: every frontend behaviour test lives here, drives
+# keys through the harness and can start a real prediction service. It is
+# host-free, so Linux and macOS run the same suites.
+set(LLAVON_IME_RAWKEY_TEST_SOURCES
+    rawkey/rawkey_test_main.cpp
+    rawkey/raw_key_harness.cpp
+    rawkey/basic_input_tests.cpp
+    rawkey/candidate_navigation_tests.cpp
+    rawkey/context_source_tests.cpp
+    rawkey/hsu_layout_tests.cpp
+    rawkey/lifecycle_tests.cpp
+    rawkey/phrase_override_tests.cpp
+    rawkey/prediction_integration_tests.cpp
+    rawkey/punctuation_tests.cpp
+    rawkey/shift_letter_tests.cpp
+    rawkey/smart_candidate_tests.cpp
+    rawkey/smart_chat_tests.cpp
+    rawkey/smart_config_tests.cpp
+    rawkey/smart_decoder_tests.cpp
+    rawkey/smart_edge_tests.cpp
+    rawkey/smart_hsu_tests.cpp
+    rawkey/smart_long_tests.cpp
+    rawkey/smart_mixed_tests.cpp
+    rawkey/smart_regression_tests.cpp
+    rawkey/smart_space_tests.cpp
+    rawkey/smart_standard_tests.cpp
+    rawkey/smart_usability_tests.cpp
+    rawkey/smart_work_tests.cpp
+    rawkey/symbol_menu_tests.cpp
+)
+
+add_executable(llavon_ime_rawkey_tests ${LLAVON_IME_RAWKEY_TEST_SOURCES})
+target_link_libraries(llavon_ime_rawkey_tests PRIVATE llavon_ime_engine)
+target_include_directories(llavon_ime_rawkey_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(llavon_ime_rawkey_tests PRIVATE
+    LLAVON_IME_TEST_TABLE_PATH="${LLAVON_IME_TABLE_SOURCE_DIR}/bopomofo_char.json")
+add_test(NAME llavon_ime_rawkey_tests COMMAND llavon_ime_rawkey_tests)
+set_tests_properties(llavon_ime_rawkey_tests PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../..")

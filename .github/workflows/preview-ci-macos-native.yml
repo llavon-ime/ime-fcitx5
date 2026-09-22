@@ -38,6 +38,9 @@ jobs:
       - name: Install build prerequisites
         run: brew install pkg-config
 
+      - name: Run the engine and raw-key test suites
+        run: scripts/verify-engine-tests.sh
+
       - name: Build the app
         run: macos/scripts/build-native-app.sh
 

@@ -9,9 +9,9 @@ frontend on macOS; Linux keeps using the fcitx5 addon.
 
 - `App/` — the input method app (Swift): IMK server, input controller, engine
   bridge, candidate panel, key mapping, `Info.plist`.
-- `Tests/` — Swift test programs: `CoreTests.swift` (platform-independent core,
-  `scripts/verify-core.sh`) and `InputHarness.swift` (raw NSEvents through the
-  input controller, `scripts/verify-input-harness.sh`).
+- `Tests/` — `CoreTests.swift`, pure-function tests of the platform-independent
+  Swift core (`scripts/verify-core.sh`). Input behaviour is not tested here:
+  it belongs to the shared raw-key suite (see Tests below).
 - `Smoke/` — a headless Swift smoke test for the C ABI (no InputMethodKit).
 - `scripts/build-native-app.sh` — builds the engine, compiles the app bundle,
   signs it ad-hoc, and optionally installs it.
@@ -105,25 +105,24 @@ predictions are additive.
 
 ## Tests
 
-Three layers, mirroring the fcitx5 side (which drives the addon through
-fcitx5's TestFrontend):
+One standard behaviour suite, shared by every frontend, plus unit tests for the
+parts keys cannot reach:
 
-- `macos/scripts/verify-input-harness.sh` — raw input at the frontend: built
-  `NSEvent`s go through the real `LlavonInputController` (key translation,
-  engine bridge, marked text and commits on a recording `TextClient`), and the
-  harness asserts both keysym shapes AppKit may report for punctuation.
-  `IMKInputController` rejects clients that are not real IMK proxies, so the
-  controller is built through its `init(testClient:)` seam; the IMK session
-  itself stays untested.
-- `macos/scripts/verify-core.sh` — platform-independent core: key translation,
+- `engine/tests/rawkey/` (`llavon_ime_rawkey_tests`) — the standard suite: raw
+  keys in, panel state and commits out, driven through the host-free engine API
+  that both frontends use. It runs on Linux and macOS, and scenarios can point
+  the transport at a scripted or real prediction service. All input behaviour
+  (bopomofo, smart English, candidate navigation, symbol menu, phrase
+  overrides, keypad, lifecycle, prediction) lives here.
+- `engine/tests/` (`llavon_ime_tests`) — engine unit tests for internals that
+  cannot be expressed as keys: protocol framing, config parsing, UTF handling,
+  the service transport and the C ABI contract.
+- `macos/scripts/verify-core.sh` — pure-function Swift core: key translation,
   the config schema/values model and the candidate paging math.
-- `engine/tests/` (ctest) — the engine and the C ABI contract, including the
-  shape sweep that keeps the two frontends' key shapes identical.
 
 ```sh
-macos/scripts/verify-input-harness.sh   # raw NSEvent -> controller -> client
-macos/scripts/verify-core.sh            # Swift core
-ctest --test-dir build/engine-tests --output-on-failure
+scripts/verify-engine-tests.sh   # unit + raw-key suites (Linux and macOS)
+macos/scripts/verify-core.sh     # Swift core
 ```
 
 ## Smoke test (engine only)
