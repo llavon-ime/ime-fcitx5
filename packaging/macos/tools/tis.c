@@ -25,10 +25,12 @@ static int enable_input_source(const char *bundle_id) {
         return 1;
     }
 
-    const void *keys[] = { kTISPropertyBundleID, kTISPropertyInputSourceID };
-    const void *values[] = { bundle, bundle };
+    // Match every input mode of the bundle, not just the entry whose input
+    // source id happens to equal the bundle id.
+    const void *keys[] = { kTISPropertyBundleID };
+    const void *values[] = { bundle };
     CFDictionaryRef conditions = CFDictionaryCreate(
-        NULL, keys, values, 2, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        NULL, keys, values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     CFRelease(bundle);
     if (conditions == NULL) {
         fprintf(stderr, "failed to build input source filter\n");
@@ -52,6 +54,45 @@ static int enable_input_source(const char *bundle_id) {
     CFRelease(sources);
     if (enabled == 0) {
         fprintf(stderr, "no input source matched %s\n", bundle_id);
+        return 1;
+    }
+    return 0;
+}
+
+static int select_input_source(const char *source_id) {
+    CFStringRef target = CFStringCreateWithCString(NULL, source_id, kCFStringEncodingUTF8);
+    if (target == NULL) {
+        fprintf(stderr, "invalid input source id: %s\n", source_id);
+        return 1;
+    }
+
+    const void *keys[] = { kTISPropertyInputSourceID };
+    const void *values[] = { target };
+    CFDictionaryRef conditions = CFDictionaryCreate(
+        NULL, keys, values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFRelease(target);
+    if (conditions == NULL) {
+        fprintf(stderr, "failed to build input source filter\n");
+        return 1;
+    }
+
+    CFArrayRef sources = TISCreateInputSourceList(conditions, false);
+    CFRelease(conditions);
+    if (sources == NULL) {
+        return 1;
+    }
+
+    int selected = 0;
+    CFIndex count = CFArrayGetCount(sources);
+    for (CFIndex i = 0; i < count; ++i) {
+        TISInputSourceRef source = (TISInputSourceRef)CFArrayGetValueAtIndex(sources, i);
+        if (source != NULL && TISSelectInputSource(source) == noErr) {
+            ++selected;
+        }
+    }
+    CFRelease(sources);
+    if (selected == 0) {
+        fprintf(stderr, "no input source matched %s\n", source_id);
         return 1;
     }
     return 0;
@@ -102,9 +143,13 @@ int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "enable") == 0) {
         return enable_input_source(argv[2]);
     }
+    if (argc == 3 && strcmp(argv[1], "select") == 0) {
+        return select_input_source(argv[2]);
+    }
     if (argc == 3 && strcmp(argv[1], "list") == 0) {
         return list_input_sources(argv[2]);
     }
-    fprintf(stderr, "usage: %s register <app-path> | enable <bundle-id> | list <bundle-id>\n", argv[0]);
+    fprintf(stderr, "usage: %s register <app-path> | enable <bundle-id> | select <input-source-id> | list <bundle-id>\n",
+            argv[0]);
     return 2;
 }

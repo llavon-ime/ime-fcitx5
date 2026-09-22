@@ -39,8 +39,14 @@ the package uses, so a package install and a development install never shadow
 each other. It removes a `~/Library/Input Methods/` copy first, because a
 second bundle with the same identifier shadows the system one (and makes the
 package installer relocate its bundle). `--install --user` installs into the
-home directory instead, for machines without sudo. The step then nudges
-`TextInputMenuAgent`. Then enable 「拉風輸入法」 under
+home directory instead, for machines without sudo.
+
+Moving the bundle makes the text input system drop the input source, which is
+what leaves the input menu without 「拉風輸入法」 after an install. The step
+therefore re-registers and re-enables the input source with the same helper the
+package builds (`packaging/macos/tools/tis.c`), and puts it back in the input
+menu when it was in use before (or when it is still registered but was dropped
+from the menu). Then enable 「拉風輸入法」 under
 System Settings › Keyboard › Input Sources. If it does not show up, log out
 and back in once. macOS only registers input methods whose bundle identifier
 contains `.inputmethod.` (the default bundle ID is

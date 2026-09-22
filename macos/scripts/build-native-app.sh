@@ -19,6 +19,7 @@ INSTALL_USER=0
 BUILD_SERVICE=1
 SYSTEM_INSTALL_DIR="${LLAVON_IME_SYSTEM_INSTALL_DIR:-/Library/Input Methods}"
 SYSTEM_PAYLOAD_DIR="${LLAVON_IME_SYSTEM_PAYLOAD_DIR:-/Library/Application Support/llavon-ime/payload}"
+TIS_TOOL="${BUILD_DIR}/llavon-ime-tis"
 
 for argument in "$@"; do
     case "${argument}" in
@@ -68,6 +69,16 @@ if [[ ! -x "${ROOT_DIR}/vcpkg/vcpkg" ]]; then
     echo "Bootstrapping vcpkg..."
     "${ROOT_DIR}/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
 fi
+
+# Registers/enables the input source after the bundle is replaced. The package
+# builds the same helper from packaging/macos/tools/tis.c.
+build_tis_tool() {
+    if [[ -x "${TIS_TOOL}" && "${TIS_TOOL}" -nt "${ROOT_DIR}/packaging/macos/tools/tis.c" ]]; then
+        return 0
+    fi
+    xcrun clang -O2 -Wall -Wextra -framework Carbon \
+        -o "${TIS_TOOL}" "${ROOT_DIR}/packaging/macos/tools/tis.c"
+}
 
 echo "Building the engine..."
 cmake -S "${ROOT_DIR}/engine" -B "${ENGINE_BUILD_DIR}" \
@@ -144,6 +155,7 @@ fi
 if [[ "${INSTALL}" == "1" ]]; then
     if [[ "${INSTALL_USER}" == "1" ]]; then
         install_dir="${HOME}/Library/Input Methods"
+        user_destination=""
     else
         # The package installs the app here. A second copy in the home
         # directory with the same bundle identifier shadows the system one
@@ -151,12 +163,30 @@ if [[ "${INSTALL}" == "1" ]]; then
         # copy first.
         install_dir="${SYSTEM_INSTALL_DIR}"
         user_destination="${HOME}/Library/Input Methods/${APP_NAME}.app"
-        if [[ -e "${user_destination}" ]]; then
-            echo "Removing the user-level copy at ${user_destination}..."
-            sudo rm -rf "${user_destination}"
-        fi
     fi
     destination="${install_dir}/${APP_NAME}.app"
+
+    # The helper re-registers the input source after the bundle moves, and it
+    # also tells whether the source was known before the install: that decides
+    # whether the source is put back in the input menu below.
+    have_tis_tool=0
+    if build_tis_tool 2>/dev/null; then
+        have_tis_tool=1
+    else
+        echo "warning: could not build the input source helper; add 「拉風輸入法」 manually if it is missing." >&2
+    fi
+
+    previous_sources="$(defaults read com.apple.HIToolbox AppleEnabledInputSources 2>/dev/null || true)"
+    previous_sources+="$(defaults read com.apple.HIToolbox AppleSelectedInputSources 2>/dev/null || true)"
+    restore_input_source=0
+    if [[ "${previous_sources}" == *"${BUNDLE_ID}"* ]]; then
+        restore_input_source=1
+    elif [[ "${have_tis_tool}" == "1" ]] && "${TIS_TOOL}" list "${BUNDLE_ID}" >/dev/null 2>&1; then
+        # Registered before but no longer in the input menu, which is what a
+        # moved bundle leaves behind; put it back.
+        restore_input_source=1
+    fi
+
     if [[ "${INSTALL_USER}" == "1" ]]; then
         echo "Installing to ${destination}..."
     else
@@ -166,24 +196,45 @@ if [[ "${INSTALL}" == "1" ]]; then
     if [[ "${INSTALL_USER}" == "1" ]]; then
         mkdir -p "${install_dir}"
         rm -rf "${destination}"
-        cp -R "${APP_DIR}" "${destination}"
+        ditto "${APP_DIR}" "${destination}"
+        if [[ -d "${SYSTEM_INSTALL_DIR}/${APP_NAME}.app" ]]; then
+            echo "warning: ${SYSTEM_INSTALL_DIR}/${APP_NAME}.app also exists and may shadow this copy." >&2
+        fi
     else
         sudo mkdir -p "${install_dir}"
         sudo rm -rf "${destination}"
-        sudo cp -R "${APP_DIR}" "${destination}"
+        sudo ditto "${APP_DIR}" "${destination}"
         # Keep the bundle readable for every user, like the package does.
         sudo chmod -R a+rX "${destination}"
+        if [[ -n "${user_destination}" && -e "${user_destination}" ]]; then
+            # Only the bundle that is left when the input source is registered
+            # below is the one the text input system picks up.
+            echo "Removing the user-level copy at ${user_destination}..."
+            sudo rm -rf "${user_destination}"
+        fi
     fi
-    killall TextInputMenuAgent 2>/dev/null || true
-    # TextInputSwitcher and CursorUIViewService ignore SIGTERM and cache input
-    # source icons in memory, so a stale instance keeps showing an icon-less
-    # switcher HUD / caret indicator.
+
+    # Replacing (and moving) the bundle makes the text input system drop the
+    # enabled input source, which is what leaves the input menu without
+    # 拉風輸入法 after an install. Register the new bundle, enable the source
+    # again, and put it back in the menu when it was there before.
+    if [[ "${have_tis_tool}" == "1" ]]; then
+        "${TIS_TOOL}" register "${destination}" >/dev/null 2>&1 || true
+        "${TIS_TOOL}" enable "${BUNDLE_ID}" >/dev/null 2>&1 || true
+        if [[ "${restore_input_source}" == "1" ]]; then
+            "${TIS_TOOL}" select "${BUNDLE_ID}.Default" >/dev/null 2>&1 || true
+        fi
+    fi
+
+    # TextInputSwitcher caches input source icons in memory and ignores
+    # SIGTERM, so a stale instance keeps showing an icon-less switcher HUD.
+    # The menu agent and CursorUIViewService are left alone: killing them takes
+    # the input menu and the caret UI down with it.
     killall -9 TextInputSwitcher 2>/dev/null || true
-    killall -9 CursorUIViewService 2>/dev/null || true
     cat <<'EOF'
 Installed. Select 「拉風輸入法」 under System Settings > Keyboard > Input Sources.
-The input method restarts on next use, so the settings menu entries appear
-without logging out. If it does not appear, log out and back in once.
+The input source is re-registered on install; if it does not appear, log out
+and back in once, then add it again.
 EOF
 fi
 

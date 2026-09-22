@@ -17,10 +17,15 @@ if [ -n "${console_user}" ] && id "${console_user}" >/dev/null 2>&1; then
     /usr/bin/pkill -x -u "${uid}" LlavonIME >/dev/null 2>&1 || true
 
     # Best effort: ask the text input system to pick up the new source in the
-    # console user's session. macOS still requires the user to select and
-    # approve the input source in System Settings on first use.
+    # console user's session, and enable it so it is listed under System
+    # Settings without having to be found first. macOS still asks for approval
+    # and the user still adds it to the input menu.
     if [ -x "${TIS_TOOL}" ]; then
+        bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+            "${APP}/Contents/Info.plist" 2>/dev/null || true)"
+        bundle_id="${bundle_id:-com.llavon.inputmethod.LlavonIME}"
         /bin/launchctl asuser "${uid}" "${TIS_TOOL}" register "${APP}" >/dev/null 2>&1 || true
+        /bin/launchctl asuser "${uid}" "${TIS_TOOL}" enable "${bundle_id}" >/dev/null 2>&1 || true
     fi
 
     echo "llavon-ime: add 「拉風輸入法」 in System Settings > Keyboard > Input Sources."
