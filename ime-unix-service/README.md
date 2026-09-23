@@ -1,7 +1,7 @@
 # IME Unix Service
 
 Unix socket service for Llavon IME on Linux and macOS. It provides
-session-based inference to frontend processes such as `ime-fcitx5`.
+session-based inference to the Linux Fcitx5 addon and native macOS app.
 Model loading, tokenization, and llama.cpp inference are provided by the
 `ime-core` submodule at the repository root.
 

@@ -22,7 +22,7 @@ jobs:
     runs-on: macos-26
 
     steps:
-      - name: Checkout ime-fcitx5
+      - name: Checkout ime-unix
         uses: actions/checkout@v4
         with:
           submodules: true

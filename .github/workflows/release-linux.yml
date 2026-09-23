@@ -54,7 +54,7 @@ jobs:
             fcitx5-devel file gcc-c++ git glib2-devel ninja-build patchelf pkgconf-pkg-config \
             python3 rpm-build tar unzip vulkan-loader zip
 
-      - name: Checkout ime-fcitx5
+      - name: Checkout ime-unix
         uses: actions/checkout@v4
         with:
           submodules: recursive

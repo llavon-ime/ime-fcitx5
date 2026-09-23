@@ -46,7 +46,7 @@ brew install --cask llavon-ime
 「系統設定 › 鍵盤 › 輸入方式」把它加入，macOS 會詢問是否允許這個第三方
 輸入法。首次安裝需登出再登入（或重開機），輸入來源才會出現。
 
-也可以從 [Releases](https://github.com/llavon-ime/ime-fcitx5/releases/latest)
+也可以從 [Releases](https://github.com/llavon-ime/ime-unix/releases/latest)
 下載 `llavon-ime-<版本>-arm64.pkg` 安裝；未簽名，若被 Gatekeeper 阻擋請右鍵
 選擇「打開」。目前僅提供 arm64 安裝檔。
 
@@ -125,8 +125,8 @@ McBopomofo 的使用者詞彙檔相容，例如：
 Linux:
 
 ```bash
-git clone --recurse-submodules https://github.com/llavon-ime/ime-fcitx5.git
-cd ime-fcitx5
+git clone --recurse-submodules https://github.com/llavon-ime/ime-unix.git
+cd ime-unix
 ./vcpkg/bootstrap-vcpkg.sh
 
 cd ime-unix-service

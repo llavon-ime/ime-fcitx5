@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout ime-fcitx5
+      - name: Checkout ime-unix
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -76,7 +76,7 @@ jobs:
       - name: Install build dependencies
         run: pacman -Syu --noconfirm cmake fcitx5 git ninja nlohmann-json pkgconf
 
-      - name: Checkout ime-fcitx5
+      - name: Checkout ime-unix
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -96,11 +96,11 @@ jobs:
     needs:
       - build-service
       - build-addon
-    if: github.event_name == 'push' && github.repository == 'llavon-ime/ime-fcitx5' && github.ref == 'refs/heads/preview'
+    if: github.event_name == 'push' && github.repository == 'llavon-ime/ime-unix' && github.ref == 'refs/heads/preview'
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout ime-fcitx5
+      - name: Checkout ime-unix
         uses: actions/checkout@v4
         with:
           fetch-depth: 0

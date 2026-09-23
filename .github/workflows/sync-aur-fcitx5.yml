@@ -16,11 +16,11 @@ env:
 jobs:
   publish-aur:
     name: Publish package to AUR
-    if: github.repository == 'llavon-ime/ime-fcitx5' && github.ref == 'refs/heads/main'
+    if: github.repository == 'llavon-ime/ime-unix' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout ime-fcitx5
+      - name: Checkout ime-unix
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
