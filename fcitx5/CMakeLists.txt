@@ -16,7 +16,7 @@ set(LLAVON_IME_DISPLAY_VERSION "${PROJECT_VERSION}" CACHE STRING "Version displa
 set(LLAVON_IME_FCITX_PLUGIN_DIR "plugin" CACHE STRING "macOS fcitx5-macos plugin metadata install directory")
 set(LLAVON_IME_INSTALLED_MODEL_PATH "" CACHE FILEPATH "Installed default GGUF model path")
 set(LLAVON_IME_TABLE_SOURCE_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/../ime-unix-service/ime-core/table"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../ime-core/table"
     CACHE PATH
     "Source directory for the canonical ime-core tables"
 )

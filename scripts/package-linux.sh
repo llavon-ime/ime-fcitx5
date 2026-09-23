@@ -58,6 +58,10 @@ if [[ "${FORMAT}" == "rpm" ]] && ! command -v rpmbuild >/dev/null 2>&1; then
     exit 2
 fi
 
+if [[ ! -f "${ROOT_DIR}/ime-core/CMakeLists.txt" ||
+      ! -f "${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" ]]; then
+    git -C "${ROOT_DIR}" submodule update --init ime-core vcpkg
+fi
 if [[ ! -x "${ROOT_DIR}/vcpkg/vcpkg" ]]; then
     rm -f "${ROOT_DIR}/vcpkg/vcpkg"
     "${ROOT_DIR}/vcpkg/bootstrap-vcpkg.sh" -disableMetrics

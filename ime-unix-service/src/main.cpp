@@ -66,7 +66,7 @@ std::filesystem::path default_tables_dir(const char* executable) {
 
     const auto cwd = std::filesystem::current_path();
     for (const auto& candidate : {cwd / "ime-core" / "table",
-                                  cwd / "ime-unix-service" / "ime-core" / "table", cwd / "tables"}) {
+                                  cwd.parent_path() / "ime-core" / "table", cwd / "tables"}) {
         if (has_required_tables(candidate)) return candidate;
     }
 

@@ -4,7 +4,7 @@ set -euo pipefail
 BIN=${LLAVON_IME_SERVICE_BIN:-/usr/bin/llavon-ime-unix-service}
 SOCKET=${LLAVON_IME_SOCKET:-/run/user/$(id -u)/llavon-ime/ime.sock}
 MODEL=${LLAVON_IME_MODEL:-/usr/share/llavon-ime/models/llavon-ime-llama-250m-Q4_K_M.gguf}
-TABLES=${LLAVON_IME_TABLES:-/home/billy/coding/ime-fcitx5/ime-unix-service/ime-core/table}
+TABLES=${LLAVON_IME_TABLES:-/usr/share/llavon-ime/tables}
 LOG=${LLAVON_IME_LOG:-$HOME/.local/state/llavon-ime/ime-unix-service.log}
 
 mkdir -p "$(dirname "$SOCKET")" "$(dirname "$LOG")"

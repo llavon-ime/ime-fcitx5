@@ -14,6 +14,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMAGE="${LLAVON_IME_SWIFT_VERIFY_IMAGE:-llavon-ime-swift-verify}"
 
+if [[ ! -f "${ROOT_DIR}/ime-core/CMakeLists.txt" ]]; then
+    git -C "${ROOT_DIR}" submodule update --init ime-core
+fi
+
 if ! command -v docker >/dev/null 2>&1; then
     echo "Docker is required for this verification." >&2
     exit 2

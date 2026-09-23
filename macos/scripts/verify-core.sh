@@ -8,6 +8,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="${LLAVON_IME_CORE_VERIFY_BUILD_DIR:-${ROOT_DIR}/build/verify-core}"
 
+if [[ ! -f "${ROOT_DIR}/ime-core/table/bopomofo_char.json" ]]; then
+    echo "ime-core is missing; run git submodule update --init ime-core" >&2
+    exit 2
+fi
+
 GENERATOR_ARGS=()
 if command -v ninja >/dev/null 2>&1; then
     GENERATOR_ARGS=(-G Ninja)
@@ -47,5 +52,5 @@ swiftc -O -parse-as-library \
     "${STANDARD_LIBRARY_FLAG}" \
     -o "${BUILD_DIR}/core-tests"
 
-LLAVON_IME_TABLE_PATH="${LLAVON_IME_TABLE_PATH:-${ROOT_DIR}/ime-unix-service/ime-core/table/bopomofo_char.json}" \
+LLAVON_IME_TABLE_PATH="${LLAVON_IME_TABLE_PATH:-${ROOT_DIR}/ime-core/table/bopomofo_char.json}" \
     "${BUILD_DIR}/core-tests"

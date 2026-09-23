@@ -13,11 +13,12 @@ option(LLAVON_IME_DEBUG "Compile in debug logging (predict/timing messages)" OFF
 
 set(IME_UNIX_SERVICE_TARGET llavon-ime-unix-service)
 
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ime-core/CMakeLists.txt")
+set(IME_CORE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../ime-core")
+if(NOT EXISTS "${IME_CORE_SOURCE_DIR}/CMakeLists.txt")
     message(FATAL_ERROR "ime-core submodule is missing; run git submodule update --init --recursive")
 endif()
 
-add_subdirectory(ime-core EXCLUDE_FROM_ALL)
+add_subdirectory("${IME_CORE_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/ime-core" EXCLUDE_FROM_ALL)
 find_package(Threads REQUIRED)
 
 add_executable(${IME_UNIX_SERVICE_TARGET}
@@ -45,11 +46,11 @@ if(LLAVON_IME_DEBUG)
 endif()
 
 install(TARGETS ${IME_UNIX_SERVICE_TARGET} RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/ime-core/table/"
+install(DIRECTORY "${IME_CORE_SOURCE_DIR}/table/"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/llavon-ime/tables")
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/ime-unix-service")
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/ime-core/LICENSE"
+install(FILES "${IME_CORE_SOURCE_DIR}/LICENSE"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/ime-unix-service"
     RENAME ime-core-LICENSE.txt)
 
@@ -66,7 +67,7 @@ if(IME_UNIX_SERVICE_BUILD_TESTS)
     target_compile_features(ime_unix_service_tests PRIVATE cxx_std_23)
     target_include_directories(ime_unix_service_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_compile_definitions(ime_unix_service_tests PRIVATE
-        IME_UNIX_SERVICE_TEST_TABLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/ime-core/table")
+        IME_UNIX_SERVICE_TEST_TABLE_DIR="${IME_CORE_SOURCE_DIR}/table")
     target_link_libraries(ime_unix_service_tests PRIVATE ime-core::ime-core Threads::Threads)
     add_test(NAME ime_unix_service_tests COMMAND ime_unix_service_tests)
 endif()

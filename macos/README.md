@@ -141,7 +141,7 @@ swiftc -O -parse-as-library \
   -lc++ -framework Foundation \
   -o /tmp/llavon-ime-smoke
 
-LLAVON_IME_TABLE_PATH=ime-unix-service/ime-core/table/bopomofo_char.json \
+LLAVON_IME_TABLE_PATH=ime-core/table/bopomofo_char.json \
   /tmp/llavon-ime-smoke
 ```
 

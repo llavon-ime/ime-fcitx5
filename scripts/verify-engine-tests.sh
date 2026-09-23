@@ -11,6 +11,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${LLAVON_IME_ENGINE_TEST_BUILD_DIR:-${ROOT_DIR}/build/engine-tests}"
 
+if [[ ! -f "${ROOT_DIR}/ime-core/CMakeLists.txt" ]]; then
+    git -C "${ROOT_DIR}" submodule update --init ime-core
+fi
+
 GENERATOR_ARGS=()
 if command -v ninja >/dev/null 2>&1; then
     GENERATOR_ARGS=(-G Ninja)

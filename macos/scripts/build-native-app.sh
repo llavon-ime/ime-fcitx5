@@ -71,6 +71,10 @@ if [[ ! -f "${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" ]]; then
     echo "Initializing the vcpkg submodule..."
     git -C "${ROOT_DIR}" submodule update --init vcpkg
 fi
+if [[ ! -f "${ROOT_DIR}/ime-core/CMakeLists.txt" ]]; then
+    echo "Initializing the ime-core submodule..."
+    git -C "${ROOT_DIR}" submodule update --init ime-core
+fi
 if [[ ! -x "${ROOT_DIR}/vcpkg/vcpkg" ]]; then
     echo "Bootstrapping vcpkg..."
     "${ROOT_DIR}/vcpkg/bootstrap-vcpkg.sh" -disableMetrics

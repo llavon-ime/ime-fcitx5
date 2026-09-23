@@ -64,7 +64,7 @@ if ! command -v ninja >/dev/null 2>&1; then
 fi
 
 if [[ ! -f "${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" ||
-      ! -f "${ROOT_DIR}/ime-unix-service/CMakeLists.txt" ]]; then
+      ! -f "${ROOT_DIR}/ime-core/CMakeLists.txt" ]]; then
     echo "Initializing git submodules..."
     git -C "${ROOT_DIR}" submodule update --init --recursive
 fi

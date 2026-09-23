@@ -3,15 +3,16 @@
 Unix socket service for Llavon IME on Linux and macOS. It provides
 session-based inference to frontend processes such as `ime-fcitx5`.
 Model loading, tokenization, and llama.cpp inference are provided by the
-`ime-core` submodule.
+`ime-core` submodule at the repository root.
 
 ## Build
 
-Initialize the nested submodule, then pass the vcpkg toolchain from the build
-environment, CI, or parent build orchestration:
+From the repository root, initialize its submodules and pass the vcpkg toolchain
+from the build environment or CI:
 
 ```bash
 git submodule update --init --recursive
+cd ime-unix-service
 cmake --preset linux \
   -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
   -DIME_UNIX_SERVICE_BUILD_TESTS=ON
@@ -21,11 +22,11 @@ cmake --install build/linux
 ```
 
 The install output includes the service and the canonical tables from
-`ime-core`:
+`ime-core` (under the configured install prefix):
 
 ```text
-dist/bin/llavon-ime-unix-service
-dist/share/llavon-ime/tables/
+bin/llavon-ime-unix-service
+share/llavon-ime/tables/
 ```
 
 ## Run
@@ -40,5 +41,5 @@ dist/bin/llavon-ime-unix-service \
 
 The service also accepts configuration through the `LLAVON_IME_MODEL_PATH`,
 `LLAVON_IME_TABLES_DIR`, and `LLAVON_IME_UNIX_SOCKET_PATH` environment
-variables. The parent project should consume the installed executable instead
-of adding this project as a CMake subdirectory.
+variables. Frontends consume the installed executable rather than adding the
+service as a CMake subdirectory.

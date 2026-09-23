@@ -2,7 +2,7 @@
 # not depend on fcitx5 or any other host toolkit.
 if(NOT LLAVON_IME_TABLE_SOURCE_DIR)
     set(LLAVON_IME_TABLE_SOURCE_DIR
-        "${CMAKE_CURRENT_SOURCE_DIR}/../../ime-unix-service/ime-core/table")
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../ime-core/table")
 endif()
 
 set(LLAVON_IME_ENGINE_TEST_SOURCES

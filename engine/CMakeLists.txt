@@ -22,7 +22,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     option(LLAVON_IME_DEBUG "Compile in debug logging (LLAVON_DEBUG_LOG)" OFF)
     set(LLAVON_IME_INSTALLED_MODEL_PATH "" CACHE FILEPATH "Installed default GGUF model path")
     set(LLAVON_IME_TABLE_SOURCE_DIR
-        "${CMAKE_CURRENT_SOURCE_DIR}/../ime-unix-service/ime-core/table"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../ime-core/table"
         CACHE PATH
         "Source directory for the canonical ime-core tables")
     if(LLAVON_IME_ENGINE_BUILD_TESTS)

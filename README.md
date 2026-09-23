@@ -1,7 +1,8 @@
-# Llavon IME Fcitx5 前端
+# Llavon IME
 
-Llavon IME 的 Linux 與 macOS Fcitx5 前端。推論由 `ime-unix-service` 子模組以
-獨立處理程序 `llavon-ime-unix-service` 執行，透過 Unix socket 與附加元件通訊。
+Llavon IME 的 Linux Fcitx5 前端、macOS 原生輸入法與 `ime-unix-service/` 預測服務
+均在此儲存庫。推論由獨立處理程序 `llavon-ime-unix-service` 執行，透過 Unix
+socket 與前端通訊；`ime-core/` 是共用的上游 Git submodule。
 
 ## 安裝
 
