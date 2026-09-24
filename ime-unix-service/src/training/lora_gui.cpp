@@ -50,7 +50,7 @@ constexpr std::string_view page = R"LLAVON(<!doctype html>
 <style>
 :root{
   color:#26221e;background:#f7f4ee;
-  font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  font-family:system-ui,-apple-system,"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
   font-synthesis:none;text-rendering:optimizeLegibility;line-height:1.5;
   --ink:#26221e;--muted:#665e55;--paper:#fff;--line:#ded7cd;--line-strong:#a99d90;
   --accent:#a34825;--accent-dark:#7b321b;--accent-soft:#f7e7dc;
@@ -105,13 +105,14 @@ select:focus-visible,input:not([type=checkbox]):focus{border-color:var(--accent)
 .record-head .actions{margin-left:auto;display:flex;gap:6px}
 .align{padding:3px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent-dark);font-size:9px;font-weight:800}
 .align.partial{background:var(--warning-soft);color:var(--warning)}
-.sentence{margin:0;color:var(--ink);font-family:"Noto Serif TC","PMingLiU",serif;font-size:clamp(18px,3.1vw,22px);line-height:2.05;overflow-wrap:anywhere}
+.sentence{margin:0;color:var(--ink);font-family:"Noto Serif TC","Songti TC","PMingLiU","Noto Serif CJK TC",ui-serif,serif;font-size:clamp(18px,3.1vw,22px);line-height:1.95;overflow-wrap:anywhere}
 .sentence .context{color:var(--muted);white-space:pre-wrap}
-.answer{padding:2px 4px 3px;border-radius:5px;background:var(--accent-soft);color:var(--accent-dark);box-decoration-break:clone;-webkit-box-decoration-break:clone;font-weight:800}
-.answer ruby{ruby-align:center}
-.answer ruby.manual{background:#eed3c1;border-radius:4px}
-.answer rt{color:var(--accent-dark);font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;font-size:9px;font-weight:800;letter-spacing:.02em}
-.answer rt.unresolved{color:var(--warning)}
+.answer{padding:.62em 7px 4px;border-radius:6px;background:var(--accent-soft);color:var(--accent-dark);box-decoration-break:clone;-webkit-box-decoration-break:clone;font-weight:800}
+.syllable{position:relative;display:inline-block;vertical-align:bottom;line-height:1.15}
+.syllable .reading{position:absolute;left:50%;bottom:100%;transform:translateX(-50%);font-family:inherit;font-size:.36em;font-weight:800;letter-spacing:.01em;color:var(--accent-dark);white-space:nowrap;margin-bottom:1px}
+.syllable .character{font-size:1em}
+.syllable.manual{background:#eed3c1;border-radius:5px}
+.syllable .reading.unresolved{color:var(--warning)}
 .record-foot{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding-top:8px;border-top:1px solid #f1e8e2;font-size:10px;color:var(--muted)}
 .record-foot .readings{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
 .record-foot .readings strong{margin-left:6px;color:#55463c;font-weight:700}
@@ -284,17 +285,17 @@ function composed(item){
   characters.forEach((character,index)=>{
     const known=tableReadings(character);
     const reading=readings[index]||known[0];
-    const ruby=document.createElement('ruby');
-    if(manual[index])ruby.classList.add('manual');
-    const text=document.createElement('span');text.textContent=character;
-    const annotation=document.createElement('rt');
+    const syllable=document.createElement('span');syllable.className='syllable';
+    if(manual[index])syllable.classList.add('manual');
+    const annotation=document.createElement('span');annotation.className='reading';
     annotation.textContent=reading||'待選';
     // The character table decides whether the recorded reading is plausible;
     // a reading outside it is flagged instead of silently rendered.
     const normalized=value=>(value||'').replace(/\s+$/,'');
     if(reading&&known.length&&!known.some(item=>normalized(item)===normalized(reading)))annotation.classList.add('unresolved');
-    if(known.length)ruby.title=character+'：'+known.join('、');
-    ruby.append(text,annotation);answer.append(ruby);
+    if(known.length)syllable.title=character+'：'+known.join('、');
+    const text=document.createElement('span');text.className='character';text.textContent=character;
+    syllable.append(annotation,text);answer.append(syllable);
   });
   sentence.append(answer);
   return sentence;
