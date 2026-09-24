@@ -125,6 +125,7 @@ select:focus-visible,input:not([type=checkbox]):focus{border-color:var(--accent)
 .chip.trained{background:var(--accent-soft);color:var(--accent-dark)}
 .chip.excluded{background:#eee8e1;color:var(--muted)}
 .tag{padding:4px 8px;border-radius:999px;background:#f2ede7;color:var(--muted);font-size:9px;font-weight:800}
+.tag.error{background:var(--danger-soft);color:var(--danger)}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .options{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:14px 16px;margin-bottom:16px}
 .field{display:flex;flex-direction:column;gap:6px}
@@ -168,6 +169,8 @@ progress{width:100%;height:6px;accent-color:var(--accent);border:none;border-rad
         <div class="toolbar">
           <label for="record-state">顯示</label>
           <select id="record-state"><option value="pending">待訓練</option><option value="excluded">已排除</option><option value="trained">已訓練</option></select>
+          <button id="select-all" class="ghost tiny">全選</button>
+          <button id="clear-all" class="ghost tiny">全部取消</button>
           <button id="previous" class="ghost tiny">上一頁</button>
           <button id="next" class="ghost tiny">下一頁</button>
           <span id="page-summary"></span>
@@ -219,6 +222,7 @@ const selectedIds=new Map();
 let pendingIds=[];
 let reviewedIds=null;
 let readingsTable={};
+let activeModelPath='';
 function updateEstimate(){
   const count=pendingIds.filter(id=>selectedIds.get(id)!==false).length;
   document.getElementById('selection-summary').textContent=`已選 ${count} / ${pendingIds.length} 筆`;
@@ -353,19 +357,36 @@ function runCard(item){
       '本次 '+item.record_count+' 筆','累計 '+item.cumulative_count+' 筆','步數 '+item.optimizer_steps]){
     const tag=document.createElement('span');tag.className='tag';tag.textContent=text;tags.append(tag);
   }
-  const button=document.createElement('button');button.className='ghost tiny';button.textContent='使用此模型 →';
-  button.onclick=()=>act('use-model',{id:item.id});
-  top.append(time,tags,button);card.append(top);
+  if(item.model_path===activeModelPath){
+    // Mirrors the Windows manager: a completed model that is already the
+    // configured one shows the loaded state instead of another reload button.
+    const loaded=document.createElement('span');loaded.className='tag';loaded.textContent='使用中・載入成功';
+    top.append(time,tags,loaded);
+  }else{
+    const button=document.createElement('button');button.className='ghost tiny';
+    button.textContent='使用此模型 →';
+    button.onclick=async()=>{
+      try{await api('use-model',{id:item.id});await refresh();}
+      catch(error){
+        let status=top.querySelector('.run-error');
+        if(!status){status=document.createElement('span');status.className='tag error run-error';top.insertBefore(status,button);}
+        status.textContent=error.message;
+      }
+    };
+    top.append(time,tags,button);
+  }
+  card.append(top);
   const path=document.createElement('div');path.className='path';path.textContent=item.model_path;card.append(path);
   return card;
 }
 async function refresh() {
   try {
     const state=await api('state');
+    activeModelPath=state.active_model_path||'';
     const job=state.job;
     message.className='notice'+(job.state==='failed'?' error':'');
     message.textContent=job.state==='running' ? ({fetch:'正在下載模型',check:'正在檢查模型更新',install:'正在安裝 Trainer',train:'正在訓練及匯出模型'}[job.kind])+(job.progress?'・'+job.progress:'')
-      : job.state==='idle'?'目前沒有工作':job.kind+'：'+({completed:'完成',failed:'失敗',cancelled:'已取消'}[job.state]||job.state);
+      : job.state==='idle'?'目前沒有工作':job.kind==='train'&&job.state==='completed'?'個人化模型已完成':job.kind+'：'+({completed:'完成',failed:'失敗',cancelled:'已取消'}[job.state]||job.state);
     document.getElementById('log').textContent=job.log || '';
     document.getElementById('log').style.display=job.log?'block':'none';
     const progress=document.getElementById('progress');progress.style.display=job.state==='running'?'block':'none';
@@ -428,6 +449,8 @@ document.getElementById('train').onclick=async()=>{
 document.getElementById('cancel').onclick=()=>act('cancel',{});
 document.getElementById('record-state').onchange=()=>{recordOffset=0;refresh();};
 document.getElementById('reload-records').onclick=()=>{recordOffset=0;refresh();};
+document.getElementById('select-all').onclick=()=>{for(const id of reviewedIds||[])selectedIds.set(id,true);refresh();};
+document.getElementById('clear-all').onclick=()=>{for(const id of reviewedIds||[])selectedIds.set(id,false);refresh();};
 document.getElementById('previous').onclick=()=>{recordOffset=Math.max(0,recordOffset-PAGE_SIZE);refresh();};
 document.getElementById('next').onclick=()=>{recordOffset+=PAGE_SIZE;refresh();};
 if (!token) {message.textContent='請從輸入法選單重新開啟管理頁面。';}
@@ -731,6 +754,33 @@ fs::path config_file() {
     const fs::path root = std::getenv("XDG_CONFIG_HOME") ? fs::path(std::getenv("XDG_CONFIG_HOME")) : fs::path(home) / ".config";
     return root / "fcitx5" / "conf" / "llavon-ime.conf";
 #endif
+}
+
+// The model the input method currently points at; the history uses it to mark
+// the run that is already loaded (Windows shows 載入成功 the same way).
+std::string configured_model_path() {
+    try {
+        const auto config = config_file();
+        std::ifstream input(config);
+        if (!input) return {};
+#ifdef __APPLE__
+        return json::parse(input).value("model_path", std::string{});
+#else
+        std::string line;
+        while (std::getline(input, line)) {
+            if (!line.starts_with("ModelPath=")) continue;
+            auto value = trim(line.substr(std::string("ModelPath=").size()));
+            if (value.size() >= 2 && value.front() == '"' && value.back() == '"') value = value.substr(1, value.size() - 2);
+            std::string unescaped;
+            for (std::size_t index = 0; index < value.size(); ++index) {
+                if (value[index] == '\\' && index + 1 < value.size()) ++index;
+                unescaped += value[index];
+            }
+            return unescaped;
+        }
+        return {};
+#endif
+    } catch (...) { return {}; }
 }
 
 void use_model(const fs::path& path) {
@@ -1180,6 +1230,7 @@ private:
         return {{"job", {{"kind",job_.kind}, {"state",job_.state}, {"progress",progress}, {"percent",percent}, {"log",data}}},
                 {"model_ready", ready}, {"revision", ready ? revision : ""},
                 {"model_update_available", update},
+                {"active_model_path", configured_model_path()},
                 {"trainer_ready", trainer_ready(options_.trainer, options_.state)}};
     }
 

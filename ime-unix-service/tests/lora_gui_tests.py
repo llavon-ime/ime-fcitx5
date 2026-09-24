@@ -128,6 +128,7 @@ else:
             assert '@@LOGO@@' not in page
             with urlopen(Request(url + '/', headers={'Host': url.split('//', 1)[1]}), timeout=3) as response:
                 assert "img-src 'self' data:" in response.headers.get('Content-Security-Policy', '')
+            assert 'id="select-all"' in page and 'id="clear-all"' in page
             readings = json.loads(request('/api/readings'))
             assert 'ㄋㄧˇ' in readings['你'] and '€' not in readings
             for rejected in [lambda: request('/api/records', auth=False),
@@ -273,9 +274,11 @@ else:
                 original = 'SelectionKeysCount=9\nModelPath="/old/model.gguf"\n'
             config.parent.mkdir(parents=True)
             config.write_text(original)
+            assert json.loads(request('/api/state'))['active_model_path'] == '/old/model.gguf'
             request('/api/use-model', {'id': run['id']})
             request('/api/use-model', {'id': run['id']})  # reapplying replaces the path
             settings = config.read_text()
+            assert json.loads(request('/api/state'))['active_model_path'] == str(gguf)
             if sys.platform == 'darwin':
                 assert json.loads(settings) == {'candidate_page_size': 9, 'model_path': str(gguf)}
             else:
