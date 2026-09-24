@@ -264,6 +264,37 @@ bool test_concurrent_access() {
     return check(provider->sequence() == 1000, "concurrent publishes keep a monotonic sequence");
 }
 
+bool test_failed_start_is_not_retried() {
+    ScopedEnv disable("LLAVON_IME_DISABLE_ATSPI", nullptr);
+    ScopedEnv sample("LLAVON_IME_CONTEXT_SAMPLE_FILE", nullptr);
+    ScopedEnv legacy("LLAVON_IME_ATSPI_SAMPLE_FILE", nullptr);
+    auto provider = make_provider(64);
+    bool ok = true;
+    if (provider->start()) {
+        ok &= check(provider->running(), "a started backend reports running");
+    } else {
+        // libatspi cannot be initialised twice in one process: a failed
+        // backend must stay failed instead of being retried on the next
+        // configuration reload.
+        ok &= check(!provider->start(), "a failed backend is not retried");
+        ok &= check(!provider->running(), "a failed backend stays stopped");
+    }
+    return ok;
+}
+
+bool test_max_code_units_can_be_retuned() {
+    ScopedEnv disable("LLAVON_IME_DISABLE_ATSPI", "1");
+    ScopedEnv sample("LLAVON_IME_CONTEXT_SAMPLE_FILE", nullptr);
+    ScopedEnv legacy("LLAVON_IME_ATSPI_SAMPLE_FILE", nullptr);
+    auto provider = make_provider(64);
+    bool ok = check(provider->max_code_units() == 64, "the initial sampling bound is reported");
+    // The engine retunes the bound on a configuration change instead of
+    // rebuilding the backend.
+    provider->set_max_code_units(256);
+    ok &= check(provider->max_code_units() == 256, "the sampling bound can be updated in place");
+    return ok;
+}
+
 }  // namespace
 }  // namespace llavon::ime
 
@@ -274,6 +305,8 @@ int run_accessibility_context_tests() {
     ok &= test_disabled_start();
     ok &= test_availability_missing_library();
     ok &= test_missing_library_is_graceful();
+    ok &= test_failed_start_is_not_retried();
+    ok &= test_max_code_units_can_be_retuned();
     ok &= test_file_backed_sample();
     ok &= test_legacy_sample_alias();
     ok &= test_file_sample_bounded_utf16();

@@ -221,6 +221,10 @@ public:
 
     bool start() {
         if (running_.load()) return true;
+        // libatspi cannot be initialised twice in one process: a failed start
+        // (missing a11y bus, failed listener, or a browser-style reload) must
+        // not be retried, or the next attempt crashes inside libatspi.
+        if (attempted_.load()) return false;
         stop();
         return start_backend();
     }
@@ -468,6 +472,7 @@ private:
             g_main_context_pop_thread_default(context_);
             g_main_context_unref(context_);
             context_ = nullptr;
+            if (api_.is_initialized()) api_.exit();
             running_.store(false);
             return;
         }
@@ -496,6 +501,7 @@ private:
             owner_.set_availability(AccessibilityAvailability::Unavailable, "libatspi-missing");
             return false;
         }
+        attempted_.store(true);
         {
             std::lock_guard lock(ready_mutex_);
             ready_ = false;
@@ -519,6 +525,7 @@ private:
     size_t max_code_units_ = 0;
     AtspiLibrary api_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> attempted_{false};
     GMainContext* context_ = nullptr;
     GMainLoop* loop_ = nullptr;
     std::thread backend_thread_;

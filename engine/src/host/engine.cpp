@@ -431,17 +431,16 @@ void Engine::apply_context_sources() {
     }
 
     const std::size_t limit = static_cast<std::size_t>(std::max(1, config_.context_length));
-    if (accessibility_context_ && accessibility_max_code_units_ != limit) {
-        accessibility_context_->stop();
-        accessibility_context_.reset();
-        accessibility_max_code_units_ = 0;
-        accessibility_base_sequence_ = 0;
-    }
     if (!accessibility_context_) {
         accessibility_context_ = create_accessibility_context_provider(limit);
-        accessibility_max_code_units_ = limit;
         accessibility_base_sequence_ = 0;
+    } else if (accessibility_max_code_units_ != limit) {
+        // A configuration change must not rebuild the backend: tearing down
+        // and re-initialising libatspi in one process crashes the input
+        // method, so only the sampling bound is updated.
+        accessibility_context_->set_max_code_units(limit);
     }
+    accessibility_max_code_units_ = limit;
     (void)accessibility_context_->start();
 }
 
