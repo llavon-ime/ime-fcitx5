@@ -43,15 +43,22 @@ home directory instead, for machines without sudo.
 
 Moving the bundle makes the text input system drop the input source, which is
 what leaves the input menu without 「拉風輸入法」 after an install. The step
-therefore re-registers and re-enables the input source with the same helper the
-package builds (`packaging/macos/tools/tis.c`), and puts it back in the input
-menu when it was in use before (or when it is still registered but was dropped
-from the menu). The package postinstall does the same and launches the app once
-after the payload is installed, so an upgrade keeps working without a log out.
-Then enable 「拉風輸入法」 under
-System Settings › Keyboard › Input Sources. If it does not show up, log out
-and back in once. macOS only registers input methods whose bundle identifier
-contains `.inputmethod.` (the default bundle ID is
+therefore re-registers the input source with the same helper the package builds
+(`packaging/macos/tools/tis.c`) and, on macOS 15 and earlier, adds the bundle to
+the user's enabled input sources (`AppleEnabledInputSources` in
+`com.apple.HIToolbox`, which is what the input menu is rebuilt from at login).
+It does not use `TISEnableInputSource` for that: the call returns noErr but
+writes nothing for third-party input methods.
+
+macOS 26 (Tahoe) keeps the enabled third-party input sources in a protected
+store (`com.apple.inputsources`) that only System Settings writes, and writing
+the old HIToolbox list there makes the input menu lose its source list until
+the next login, so the helper leaves it alone: on macOS 26 the source has to be
+added once under System Settings › Keyboard › Input Sources (or by logging in
+after an install). The package postinstall does the same and launches the app
+once after the payload is installed, so an upgrade keeps working without a log
+out, on every version. macOS only registers input methods whose bundle
+identifier contains `.inputmethod.` (the default bundle ID is
 `com.llavon.inputmethod.LlavonIME`).
 
 ## Caps Lock switching

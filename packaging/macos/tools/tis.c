@@ -1,6 +1,19 @@
 #include <Carbon/Carbon.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/sysctl.h>
+
+// Major version of the running macOS, from kern.osproductversion ("15.6",
+// "26.7", ...). Returns 0 when it cannot be determined.
+static int os_major_version(void) {
+    char version[64] = {0};
+    size_t size = sizeof(version);
+    if (sysctlbyname("kern.osproductversion", version, &size, NULL, 0) != 0) {
+        return 0;
+    }
+    return atoi(version);
+}
 
 static int register_app(const char *app_path) {
     CFURLRef url = CFURLCreateFromFileSystemRepresentation(
@@ -18,44 +31,88 @@ static int register_app(const char *app_path) {
     return 0;
 }
 
+// On macOS 15 and earlier the enabled input sources live in the user's
+// com.apple.HIToolbox preferences, and writing the parent bundle entry there
+// is what makes a freshly installed third-party input source show up at the
+// next login: TISEnableInputSource returns noErr for third-party input
+// methods but writes nothing, so it cannot be used for this.
+//
+// macOS 26 moved the enabled third-party input sources to
+// com.apple.inputsources, a store owned by the system's input source service.
+// Writing the old com.apple.HIToolbox list there makes the input menu lose
+// its source list until the next login, and the new store rejects writes from
+// other processes, so on macOS 26 the source can only be added in System
+// Settings (or by logging in after an install that left it in the store).
 static int enable_input_source(const char *bundle_id) {
+    const int os_major = os_major_version();
+    if (os_major >= 26) {
+        printf("%s deferred (macOS %d keeps third-party input sources in a protected store)\n",
+               bundle_id, os_major);
+        return 0;
+    }
+
     CFStringRef bundle = CFStringCreateWithCString(NULL, bundle_id, kCFStringEncodingUTF8);
     if (bundle == NULL) {
         fprintf(stderr, "invalid bundle id: %s\n", bundle_id);
         return 1;
     }
 
-    // Match every input mode of the bundle, not just the entry whose input
-    // source id happens to equal the bundle id.
-    const void *keys[] = { kTISPropertyBundleID };
-    const void *values[] = { bundle };
-    CFDictionaryRef conditions = CFDictionaryCreate(
-        NULL, keys, values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-    CFRelease(bundle);
-    if (conditions == NULL) {
-        fprintf(stderr, "failed to build input source filter\n");
-        return 1;
-    }
+    CFStringRef domain = CFSTR("com.apple.HIToolbox");
+    CFStringRef key = CFSTR("AppleEnabledInputSources");
+    CFStringRef bundle_key = CFSTR("Bundle ID");
+    CFArrayRef existing =
+        (CFArrayRef)CFPreferencesCopyValue(key, domain, kCFPreferencesCurrentUser,
+                                           kCFPreferencesAnyHost);
 
-    CFArrayRef sources = TISCreateInputSourceList(conditions, true);
-    CFRelease(conditions);
-    if (sources == NULL) {
-        return 0;
-    }
-
-    int enabled = 0;
-    CFIndex count = CFArrayGetCount(sources);
-    for (CFIndex i = 0; i < count; ++i) {
-        TISInputSourceRef source = (TISInputSourceRef)CFArrayGetValueAtIndex(sources, i);
-        if (source != NULL && TISEnableInputSource(source) == noErr) {
-            ++enabled;
+    bool present = false;
+    CFIndex count = existing != NULL ? CFArrayGetCount(existing) : 0;
+    for (CFIndex i = 0; i < count && !present; ++i) {
+        CFDictionaryRef entry = (CFDictionaryRef)CFArrayGetValueAtIndex(existing, i);
+        if (entry == NULL || CFGetTypeID(entry) != CFDictionaryGetTypeID()) {
+            continue;
+        }
+        CFStringRef entry_bundle = (CFStringRef)CFDictionaryGetValue(entry, bundle_key);
+        if (entry_bundle != NULL &&
+            CFStringCompare(entry_bundle, bundle, 0) == kCFCompareEqualTo) {
+            present = true;
         }
     }
-    CFRelease(sources);
-    if (enabled == 0) {
-        fprintf(stderr, "no input source matched %s\n", bundle_id);
-        return 1;
+
+    if (!present) {
+        CFMutableArrayRef updated =
+            existing != NULL ? CFArrayCreateMutableCopy(NULL, count + 1, existing)
+                             : CFArrayCreateMutable(NULL, 1, &kCFTypeArrayCallBacks);
+        if (updated == NULL) {
+            if (existing != NULL) CFRelease(existing);
+            CFRelease(bundle);
+            fprintf(stderr, "failed to build the enabled input source list\n");
+            return 1;
+        }
+        const void *entry_keys[] = { bundle_key, CFSTR("InputSourceKind") };
+        const void *entry_values[] = { bundle, CFSTR("Keyboard Input Method") };
+        CFDictionaryRef entry = CFDictionaryCreate(NULL, entry_keys, entry_values, 2,
+                                                   &kCFTypeDictionaryKeyCallBacks,
+                                                   &kCFTypeDictionaryValueCallBacks);
+        if (entry != NULL) {
+            CFArrayAppendValue(updated, entry);
+            CFRelease(entry);
+        }
+        CFPreferencesSetValue(key, updated, domain, kCFPreferencesCurrentUser,
+                              kCFPreferencesAnyHost);
+        CFRelease(updated);
+        if (!CFPreferencesSynchronize(domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)) {
+            if (existing != NULL) CFRelease(existing);
+            CFRelease(bundle);
+            fprintf(stderr, "could not write AppleEnabledInputSources\n");
+            return 1;
+        }
     }
+    if (existing != NULL) {
+        CFRelease(existing);
+    }
+
+    printf("%s enabled=1 %s\n", bundle_id, present ? "present" : "added");
+    CFRelease(bundle);
     return 0;
 }
 
@@ -135,6 +192,9 @@ static int print_status(const char *bundle_id) {
         }
         const bool enabled =
             TISGetInputSourceProperty(source, kTISPropertyInputSourceIsEnabled) == kCFBooleanTrue;
+        const bool enable_capable =
+            TISGetInputSourceProperty(source, kTISPropertyInputSourceIsEnableCapable) ==
+            kCFBooleanTrue;
         const bool selectable =
             TISGetInputSourceProperty(source, kTISPropertyInputSourceIsSelectCapable) == kCFBooleanTrue;
         const bool selected =
@@ -148,8 +208,8 @@ static int print_status(const char *bundle_id) {
                 CFRelease(path);
             }
         }
-        printf("%s enabled=%d selectable=%d selected=%d icon=%s\n", id, enabled ? 1 : 0,
-               selectable ? 1 : 0, selected ? 1 : 0, icon);
+        printf("%s enabled=%d enable_capable=%d selectable=%d selected=%d icon=%s\n", id,
+               enabled ? 1 : 0, enable_capable ? 1 : 0, selectable ? 1 : 0, selected ? 1 : 0, icon);
     }
     CFRelease(sources);
     return count > 0 ? 0 : 1;

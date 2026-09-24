@@ -20,17 +20,6 @@ if [ -n "${console_user}" ] && id "${console_user}" >/dev/null 2>&1; then
         "${APP}/Contents/Info.plist" 2>/dev/null || true)"
     bundle_id="${bundle_id:-com.llavon.inputmethod.LlavonIME}"
 
-    # Whether the input source was known before the install decides whether it
-    # is put back in the input menu below; the same check build-native-app.sh
-    # makes. Read before the running input method is stopped, while the text
-    # input system still lists the source.
-    previous_sources="$(as_user /usr/bin/defaults read com.apple.HIToolbox AppleEnabledInputSources 2>/dev/null || true)"
-    previous_sources="${previous_sources}$(as_user /usr/bin/defaults read com.apple.HIToolbox AppleSelectedInputSources 2>/dev/null || true)"
-    restore_input_source=0
-    case "${previous_sources}" in
-        *"${bundle_id}"*) restore_input_source=1 ;;
-    esac
-
     # Stop the running input method so the replaced bundle is picked up, and
     # wait for it to exit: `open` would otherwise activate the dying process
     # instead of launching the new bundle.
@@ -42,41 +31,45 @@ if [ -n "${console_user}" ] && id "${console_user}" >/dev/null 2>&1; then
         sleep 1
     done
 
-    # Terminate the text input menu agent before registering so the relaunched
-    # agent picks up the newly registered input source; this is what keeps a
-    # first install from needing a log out (the same step vChewing's package
-    # takes). The agent belongs to the console user's GUI session, so it is
-    # killed with the user's privileges. Only this agent is targeted: killing
-    # imklaunchagent would cut every running app off from its input method
-    # until the app is restarted.
-    as_user /usr/bin/killall TextInputMenuAgent >/dev/null 2>&1 || true
-    sleep 0.5
+    # Launch the input method once before touching the input source: a
+    # replaced bundle leaves the text input system pointing at the old one,
+    # and the app's own registration is what makes the new bundle current.
+    # Launching it here also makes the input method usable without logging
+    # out.
+    if as_user /usr/bin/open "${APP}" 2>/dev/null; then
+        for _ in 1 2 3 4 5; do
+            /usr/bin/pgrep -x -u "${uid}" LlavonIME >/dev/null 2>&1 && break
+            sleep 1
+        done
+    else
+        echo "llavon-ime: could not launch 「拉風輸入法」 now; switch to it once and macOS will start it." >&2
+    fi
 
     # Replacing the bundle makes the text input system drop the enabled input
     # source, which is what leaves the input menu without 「拉風輸入法」 after an
-    # install. Register the new bundle, enable the source again, and put it
-    # back in the menu when it was there before. macOS still asks for approval
-    # the first time.
+    # install. Register the new bundle and, where the OS allows it, enable the
+    # source again. TISEnableInputSource is a no-op for third-party input
+    # methods, so `enable` writes the enabled-sources preference directly on
+    # macOS 15 and earlier; the source then shows up at the next login, when
+    # the input menu is rebuilt from it. macOS 26 keeps the enabled
+    # third-party sources in a protected store that only System Settings
+    # writes, so there the source has to be added there once. An upgrade
+    # keeps the state it already has and needs nothing.
     if [ -x "${TIS_TOOL}" ]; then
-        as_user "${TIS_TOOL}" register "${APP}" >/dev/null 2>&1 || true
-        as_user "${TIS_TOOL}" enable "${bundle_id}" >/dev/null 2>&1 || true
-        if [ "${restore_input_source}" = "1" ]; then
-            # TIS needs a moment to publish a freshly registered source, so
-            # select, verify, and retry instead of trusting a silent failure.
-            status_output=""
-            for _ in 1 2 3; do
-                as_user "${TIS_TOOL}" select "${bundle_id}.Default" >/dev/null 2>&1 || true
-                status_output="$(as_user "${TIS_TOOL}" status "${bundle_id}" 2>/dev/null || true)"
-                case "${status_output}" in
-                    *selected=1*) break ;;
-                esac
-                sleep 1
-            done
-            case "${status_output}" in
-                *selected=1*) ;;
-                *) echo "llavon-ime: 「拉風輸入法」 is not in the input menu yet; add it under System Settings > Keyboard > Input Sources." >&2 ;;
+        as_user "${TIS_TOOL}" register "${APP}" || true
+
+        enable_output=""
+        for _ in 1 2 3; do
+            enable_output="$(as_user "${TIS_TOOL}" enable "${bundle_id}" 2>&1 || true)"
+            case "${enable_output}" in
+                *enabled=1*|*deferred*) break ;;
             esac
-        fi
+            sleep 1
+        done
+        case "${enable_output}" in
+            *enabled=1*|*deferred*) ;;
+            *) echo "llavon-ime: could not enable 「拉風輸入法」 (${enable_output}); add it under System Settings > Keyboard > Input Sources." >&2 ;;
+        esac
     fi
 
     # TextInputSwitcher caches input source icons in memory and ignores
@@ -85,18 +78,8 @@ if [ -n "${console_user}" ] && id "${console_user}" >/dev/null 2>&1; then
     # with it.
     /usr/bin/killall -9 -u "${console_user}" TextInputSwitcher >/dev/null 2>&1 || true
 
-    # Launch the input method once. A replaced bundle leaves the text input
-    # system pointing at the old one, so switching to the input source
-    # silently does nothing until the app runs and re-registers itself.
-    # Launching it here makes the input method usable without logging out.
-    if as_user /usr/bin/open "${APP}" 2>/dev/null; then
-        sleep 1
-    else
-        echo "llavon-ime: could not launch 「拉風輸入法」 now; switch to it once and macOS will start it." >&2
-    fi
-
-    echo "llavon-ime: select 「拉風輸入法」 under System Settings > Keyboard > Input Sources."
-    echo "llavon-ime: if it is not listed, log out and back in once, then add it again."
+    echo "llavon-ime: 「拉風輸入法」 is installed."
+    echo "llavon-ime: if it is not in the input menu, add it under System Settings > Keyboard > Input Sources."
 else
     echo "llavon-ime: no active user found; add 「拉風輸入法」 in System Settings > Keyboard > Input Sources."
 fi

@@ -176,25 +176,12 @@ if [[ "${INSTALL}" == "1" ]]; then
     fi
     destination="${install_dir}/${APP_NAME}.app"
 
-    # The helper re-registers the input source after the bundle moves, and it
-    # also tells whether the source was known before the install: that decides
-    # whether the source is put back in the input menu below.
+    # The helper re-registers the input source after the bundle moves.
     have_tis_tool=0
     if build_tis_tool 2>/dev/null; then
         have_tis_tool=1
     else
         echo "warning: could not build the input source helper; add 「拉風輸入法」 manually if it is missing." >&2
-    fi
-
-    previous_sources="$(defaults read com.apple.HIToolbox AppleEnabledInputSources 2>/dev/null || true)"
-    previous_sources+="$(defaults read com.apple.HIToolbox AppleSelectedInputSources 2>/dev/null || true)"
-    restore_input_source=0
-    if [[ "${previous_sources}" == *"${BUNDLE_ID}"* ]]; then
-        restore_input_source=1
-    elif [[ "${have_tis_tool}" == "1" ]] && "${TIS_TOOL}" list "${BUNDLE_ID}" >/dev/null 2>&1; then
-        # Registered before but no longer in the input menu, which is what a
-        # moved bundle leaves behind; put it back.
-        restore_input_source=1
     fi
 
     if [[ "${INSTALL_USER}" == "1" ]]; then
@@ -224,27 +211,42 @@ if [[ "${INSTALL}" == "1" ]]; then
         fi
     fi
 
+    # Launch the input method once before touching the input source: a moved
+    # bundle leaves the text input system pointing at the old path, and the
+    # app's own registration is what makes the new bundle current. Launching
+    # it here also makes the input method usable without logging out.
+    if open "${destination}" 2>/dev/null; then
+        for _ in 1 2 3 4 5; do
+            pgrep -x "${APP_NAME}" >/dev/null 2>&1 && break
+            sleep 1
+        done
+    else
+        echo "note: could not launch 「拉風輸入法」 now; switch to it once and macOS will start it." >&2
+    fi
+
     # Replacing (and moving) the bundle makes the text input system drop the
     # enabled input source, which is what leaves the input menu without
-    # 拉風輸入法 after an install. Register the new bundle, enable the source
-    # again, and put it back in the menu when it was there before.
+    # 拉風輸入法 after an install. Register the new bundle and, where the OS
+    # allows it, enable the source again. TISEnableInputSource is a no-op for
+    # third-party input methods, so `enable` writes the enabled-sources
+    # preference directly on macOS 15 and earlier; the source then shows up at
+    # the next login, when the input menu is rebuilt from it. macOS 26 keeps
+    # the enabled third-party sources in a protected store that only System
+    # Settings writes, so there the source has to be added there once. An
+    # upgrade keeps the state it already has and needs nothing.
     if [[ "${have_tis_tool}" == "1" ]]; then
         "${TIS_TOOL}" register "${destination}" >/dev/null 2>&1 || true
-        "${TIS_TOOL}" enable "${BUNDLE_ID}" >/dev/null 2>&1 || true
-        if [[ "${restore_input_source}" == "1" ]]; then
-            # TIS needs a moment to publish a freshly registered source, so
-            # select, verify, and retry instead of trusting a silent failure.
-            for _ in 1 2 3; do
-                "${TIS_TOOL}" select "${BUNDLE_ID}.Default" >/dev/null 2>&1 || true
-                status_output="$("${TIS_TOOL}" status "${BUNDLE_ID}" 2>/dev/null || true)"
-                if [[ "${status_output}" == *"selected=1"* ]]; then
-                    break
-                fi
-                sleep 1
-            done
-            if [[ "${status_output}" != *"selected=1"* ]]; then
-                echo "warning: 「拉風輸入法」 is not in the input menu yet; add it under System Settings > Keyboard > Input Sources." >&2
+
+        enable_output=""
+        for _ in 1 2 3; do
+            enable_output="$("${TIS_TOOL}" enable "${BUNDLE_ID}" 2>&1 || true)"
+            if [[ "${enable_output}" == *"enabled=1"* || "${enable_output}" == *"deferred"* ]]; then
+                break
             fi
+            sleep 1
+        done
+        if [[ "${enable_output}" != *"enabled=1"* && "${enable_output}" != *"deferred"* ]]; then
+            echo "warning: could not enable 「拉風輸入法」 (${enable_output}); add it under System Settings > Keyboard > Input Sources." >&2
         fi
     fi
 
@@ -253,16 +255,6 @@ if [[ "${INSTALL}" == "1" ]]; then
     # The menu agent and CursorUIViewService are left alone: killing them takes
     # the input menu and the caret UI down with it.
     killall -9 TextInputSwitcher 2>/dev/null || true
-
-    # Launch the input method once. A moved bundle leaves the text input system
-    # pointing at the old path, so switching to the input source silently does
-    # nothing until the app runs and re-registers itself. Launching it here also
-    # makes the input method usable without logging out.
-    if open "${destination}" 2>/dev/null; then
-        sleep 1
-    else
-        echo "note: could not launch 「拉風輸入法」 now; switch to it once and macOS will start it." >&2
-    fi
 
     cat <<'EOF'
 Installed. Select 「拉風輸入法」 under System Settings > Keyboard > Input Sources.
