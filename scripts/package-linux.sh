@@ -204,9 +204,13 @@ for binary in "${elf_files[@]}"; do
 done
 
 echo "Bundling the pinned LoRA Trainer release..."
-"${ROOT_DIR}/scripts/install-lora-trainer.sh" \
-    "${SERVICE_BUILD_DIR}/llavon-ime-lora" \
-    "${private_root}/tools/lora"
+trainer_staging="$(mktemp -d "${TMPDIR:-/tmp}/llavon-lora-package.XXXXXX")"
+trap 'rm -rf "${trainer_staging}"' EXIT
+"${SERVICE_BUILD_DIR}/llavon-ime-lora" install-trainer --output-dir "${trainer_staging}"
+mkdir -p "${private_root}/tools/lora"
+cp -a "${trainer_staging}/." "${private_root}/tools/lora/"
+chmod -R a+rX "${private_root}/tools/lora"
+chmod 0644 "${private_root}/tools/lora/trainer-release.json"
 for trainer_file in "${private_root}/tools/lora/llavon-lora" "${private_root}/tools/lora/trainer-release.json"; do
     if [[ ! -f "${trainer_file}" ]]; then
         echo "Missing packaged LoRA Trainer file: ${trainer_file}" >&2

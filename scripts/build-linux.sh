@@ -123,9 +123,13 @@ echo "Installing ime-unix-service, fcitx5 addon, and model..."
 
 if [[ -z "${LLAVON_IME_SKIP_LORA_TRAINER:-}" ]]; then
     echo "Downloading the pinned LoRA Trainer release..."
+    # The manager installs the whole verified release; the system copy needs
+    # readable modes because it is shared by every user.
     "${SUDO[@]}" mkdir -p "${LORA_TRAINER_DIR}"
-    "${SUDO[@]}" "${ROOT_DIR}/scripts/install-lora-trainer.sh" \
-        "${ROOT_DIR}/ime-unix-service/build/linux/llavon-ime-lora" "${LORA_TRAINER_DIR}"
+    "${SUDO[@]}" "${ROOT_DIR}/ime-unix-service/build/linux/llavon-ime-lora" \
+        install-trainer --output-dir "${LORA_TRAINER_DIR}"
+    "${SUDO[@]}" chmod -R a+rX "${LORA_TRAINER_DIR}"
+    "${SUDO[@]}" chmod 0644 "${LORA_TRAINER_DIR}/trainer-release.json"
 else
     echo "Skipping the LoRA Trainer download (LLAVON_IME_SKIP_LORA_TRAINER is set)."
 fi

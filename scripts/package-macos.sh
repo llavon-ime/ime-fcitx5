@@ -164,9 +164,13 @@ xcrun clang -O2 -Wall -Wextra -framework Carbon \
     "${ROOT_DIR}/packaging/macos/tools/tis.c"
 
 echo "Bundling the pinned LoRA Trainer release..."
-"${ROOT_DIR}/scripts/install-lora-trainer.sh" \
-    "${SERVICE_BUILD_DIR}/llavon-ime-lora" \
-    "${tool_root}/lora"
+trainer_staging="$(mktemp -d "${TMPDIR:-/tmp}/llavon-lora-package.XXXXXX")"
+"${SERVICE_BUILD_DIR}/llavon-ime-lora" install-trainer --output-dir "${trainer_staging}"
+mkdir -p "${tool_root}/lora"
+cp -a "${trainer_staging}/." "${tool_root}/lora/"
+chmod -R a+rX "${tool_root}/lora"
+chmod 0644 "${tool_root}/lora/trainer-release.json"
+rm -rf "${trainer_staging}"
 
 # The uninstaller cleans the files the cask's uninstall does not know about
 # (the legacy fcitx5 payload) and asks before removing a leftover Fcitx5.app.

@@ -73,9 +73,14 @@ package() {
     install -Dm644 "${srcdir}/${_model_file}" \
         "${pkgdir}/usr/share/llavon-ime/models/${_model_file}"
     if [[ "${CARCH}" == "x86_64" ]]; then
-        "${srcdir}/${_srcname}/scripts/install-lora-trainer.sh" \
-            "${srcdir}/unix-service-build/llavon-ime-lora" \
-            "${pkgdir}/usr/lib/llavon-ime/tools/lora"
+        local trainer_staging
+        trainer_staging="$(mktemp -d)"
+        "${srcdir}/unix-service-build/llavon-ime-lora" install-trainer --output-dir "${trainer_staging}"
+        mkdir -p "${pkgdir}/usr/lib/llavon-ime/tools/lora"
+        cp -a "${trainer_staging}/." "${pkgdir}/usr/lib/llavon-ime/tools/lora/"
+        chmod -R a+rX "${pkgdir}/usr/lib/llavon-ime/tools/lora"
+        chmod 0644 "${pkgdir}/usr/lib/llavon-ime/tools/lora/trainer-release.json"
+        rm -rf "${trainer_staging}"
     else
         echo "No pinned LoRA Trainer release exists for ${CARCH}; install it from the input method settings instead." >&2
     fi
