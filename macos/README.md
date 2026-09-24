@@ -46,7 +46,9 @@ what leaves the input menu without 「拉風輸入法」 after an install. The s
 therefore re-registers and re-enables the input source with the same helper the
 package builds (`packaging/macos/tools/tis.c`), and puts it back in the input
 menu when it was in use before (or when it is still registered but was dropped
-from the menu). Then enable 「拉風輸入法」 under
+from the menu). The package postinstall does the same and launches the app once
+after the payload is installed, so an upgrade keeps working without a log out.
+Then enable 「拉風輸入法」 under
 System Settings › Keyboard › Input Sources. If it does not show up, log out
 and back in once. macOS only registers input methods whose bundle identifier
 contains `.inputmethod.` (the default bundle ID is
