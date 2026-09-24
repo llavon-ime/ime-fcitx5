@@ -44,6 +44,9 @@ namespace {
 volatile sig_atomic_t stop_requested = 0;
 void request_stop(int) { stop_requested = 1; }
 
+// Records shown per page; the page script steps its offset by the same value.
+constexpr int kRecordsPerPage = 20;
+
 constexpr std::string_view page = R"LLAVON(<!doctype html>
 <html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer"><link rel="icon" type="image/png" href="@@LOGO@@"><title>拉風輸入法・個人化訓練</title>
@@ -167,6 +170,7 @@ progress{width:100%;height:6px;accent-color:var(--accent);border:none;border-rad
           <select id="record-state"><option value="pending">待訓練</option><option value="excluded">已排除</option><option value="trained">已訓練</option></select>
           <button id="previous" class="ghost tiny">上一頁</button>
           <button id="next" class="ghost tiny">下一頁</button>
+          <span id="page-summary"></span>
           <span id="selection-summary"></span>
         </div>
       </div>
@@ -210,6 +214,7 @@ const token = location.hash.slice(1) || sessionStorage.getItem('llavon-token');
 if (location.hash) { sessionStorage.setItem('llavon-token', token); history.replaceState(null, '', '/'); }
 const message = document.getElementById('message');
 let recordOffset=0;
+const PAGE_SIZE=20;
 const selectedIds=new Map();
 let pendingIds=[];
 let reviewedIds=null;
@@ -390,6 +395,9 @@ async function refresh() {
     pendingIds=fresh;
     updateEstimate();
     const listing=await api('records?state='+selected+'&offset='+recordOffset);
+    const page=Math.floor(recordOffset/PAGE_SIZE)+1;
+    const pages=Math.max(1,Math.ceil((listing.total||0)/PAGE_SIZE));
+    document.getElementById('page-summary').textContent='第 '+page+' / '+pages+' 頁・共 '+(listing.total||0)+' 筆';
     document.getElementById('previous').disabled=recordOffset===0;
     document.getElementById('next').disabled=!listing.has_more;
     const records=listing.rows;
@@ -420,8 +428,8 @@ document.getElementById('train').onclick=async()=>{
 document.getElementById('cancel').onclick=()=>act('cancel',{});
 document.getElementById('record-state').onchange=()=>{recordOffset=0;refresh();};
 document.getElementById('reload-records').onclick=()=>{recordOffset=0;refresh();};
-document.getElementById('previous').onclick=()=>{recordOffset=Math.max(0,recordOffset-200);refresh();};
-document.getElementById('next').onclick=()=>{recordOffset+=200;refresh();};
+document.getElementById('previous').onclick=()=>{recordOffset=Math.max(0,recordOffset-PAGE_SIZE);refresh();};
+document.getElementById('next').onclick=()=>{recordOffset+=PAGE_SIZE;refresh();};
 if (!token) {message.textContent='請從輸入法選單重新開啟管理頁面。';}
 else {
   // The character table decides the readings shown for each character.
@@ -1059,7 +1067,8 @@ private:
             throw std::runtime_error("invalid record state");
         auto rows = query_database(db_,
             ("WITH recent AS (SELECT id,committed_at,context,answer FROM commits WHERE state='" + state + "' "
-            "ORDER BY committed_at DESC,id DESC LIMIT 201 OFFSET " + std::to_string(offset) + ") "
+            "ORDER BY committed_at DESC,id DESC LIMIT " + std::to_string(kRecordsPerPage + 1) + " OFFSET " +
+            std::to_string(offset) + ") "
             "SELECT c.id,c.committed_at,c.context,c.answer,r.reading,r.manually_selected FROM recent c "
             "LEFT JOIN readings r ON r.commit_id=c.id ORDER BY c.committed_at DESC,c.id DESC,r.position").c_str(), 6);
         json entries = json::array();
@@ -1072,9 +1081,12 @@ private:
                 entries.back()["manual"].push_back(row[5] == "1");
             }
         }
-        const bool has_more = entries.size() > 200;
+        const bool has_more = entries.size() > kRecordsPerPage;
         if (has_more) entries.erase(entries.end() - 1);
-        return {{"rows",entries}, {"has_more",has_more}};
+        const auto counted = query_database(db_,
+            ("SELECT COUNT(*) FROM commits WHERE state='" + state + "'").c_str(), 1);
+        const int total = counted.empty() ? 0 : std::stoi(counted[0][0].get<std::string>());
+        return {{"rows",entries}, {"has_more",has_more}, {"total",total}};
     }
 
     json runs() const {

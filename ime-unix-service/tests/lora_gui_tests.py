@@ -176,9 +176,11 @@ else:
                 db.executemany("INSERT INTO commits (id,context,answer) VALUES (?,?,?)",
                                [(f'{i:032x}', '上下文', '你') for i in range(1, 202)])
             first_page = json.loads(request('/api/records?offset=0'))
-            second_page = json.loads(request('/api/records?offset=200'))
-            assert len(first_page['rows']) == 200 and first_page['has_more']
-            assert len(second_page['rows']) == 1 and not second_page['has_more']
+            second_page = json.loads(request('/api/records?offset=20'))
+            last_page = json.loads(request('/api/records?offset=200'))
+            assert len(first_page['rows']) == 20 and first_page['has_more'] and first_page['total'] == 201
+            assert len(second_page['rows']) == 20 and second_page['has_more']
+            assert len(last_page['rows']) == 1 and not last_page['has_more'] and last_page['total'] == 201
 
             request('/api/check', {})
             for _ in range(40):
