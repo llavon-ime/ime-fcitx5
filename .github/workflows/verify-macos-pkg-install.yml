@@ -1,0 +1,164 @@
+name: Verify macOS package install
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/verify-macos-pkg-install.yml"
+      - "macos/**"
+      - "packaging/macos/**"
+      - "scripts/package-macos.sh"
+  pull_request:
+    paths:
+      - ".github/workflows/verify-macos-pkg-install.yml"
+      - "macos/**"
+      - "packaging/macos/**"
+      - "scripts/package-macos.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-macos-pkg-install-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install:
+    name: Install the package and verify the input source
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout ime-unix
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-native-${{ hashFiles('vcpkg-configuration.json', 'engine/vcpkg.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-vcpkg-
+
+      - name: Install build prerequisites
+        run: brew install pkg-config
+
+      - name: Build the app
+        run: macos/scripts/build-native-app.sh
+
+      - name: Build the test package
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/pkgroot"
+          payload="${root}/Library/Application Support/llavon-ime"
+          rm -rf "${root}"
+          mkdir -p "${root}/Library/Input Methods" \
+                   "${payload}/tools" \
+                   "${payload}/share/llavon-ime/tables"
+          ditto "dist/macos/LlavonIME.app" "${root}/Library/Input Methods/LlavonIME.app"
+          clang -O2 -Wall -Wextra -framework Carbon \
+            -o "${payload}/tools/llavon-ime-tis" packaging/macos/tools/tis.c
+          cp ime-core/table/bopomofo_char.json "${payload}/share/llavon-ime/tables/"
+          pkgbuild \
+            --root "${root}" \
+            --scripts packaging/macos/scripts \
+            --component-plist packaging/macos/LlavonIME-component.plist \
+            --identifier llavon-ime-install-check \
+            --version 0.0.0 \
+            --install-location / \
+            "${RUNNER_TEMP}/llavon-ime-install-check.pkg"
+
+      - name: Check the runner session
+        run: |
+          set -euo pipefail
+          console_user="$(stat -f %Su /dev/console)"
+          echo "console user: ${console_user}"
+          test "${console_user}" != "root"
+          test "${console_user}" != "loginwindow"
+          pgrep -x TextInputMenuAgent
+
+      - name: Install the package
+        run: sudo installer -pkg "${RUNNER_TEMP}/llavon-ime-install-check.pkg" -target /
+
+      - name: Verify the install enabled the source and launched the input method
+        run: |
+          set -euo pipefail
+          console_user="$(stat -f %Su /dev/console)"
+          app="/Library/Input Methods/LlavonIME.app"
+          tis="/Library/Application Support/llavon-ime/tools/llavon-ime-tis"
+
+          test -x "${app}/Contents/MacOS/LlavonIME"
+
+          # The postinstall launches the app so the text input system finds the
+          # replaced bundle without a log out.
+          for _ in 1 2 3 4 5; do
+            pgrep -x LlavonIME >/dev/null 2>&1 && break
+            sleep 1
+          done
+          pid="$(pgrep -x LlavonIME | head -1)"
+          test -n "${pid}"
+          test "$(ps -o user= -p "${pid}" | tr -d ' ')" = "${console_user}"
+
+          # The input source is registered, enabled and selected in the console
+          # user's session.
+          status="$("${tis}" status com.llavon.inputmethod.LlavonIME)"
+          echo "${status}"
+          echo "${status}" | grep -q "enabled=1"
+          echo "${status}" | grep -q "selected=1"
+          defaults read com.apple.HIToolbox AppleEnabledInputSources \
+            | grep -q com.llavon.inputmethod.LlavonIME
+          defaults read com.apple.HIToolbox AppleSelectedInputSources \
+            | grep -q com.llavon.inputmethod.LlavonIME
+
+      - name: Verify an upgrade keeps working without a log out
+        run: |
+          set -euo pipefail
+          tis="/Library/Application Support/llavon-ime/tools/llavon-ime-tis"
+          before="$(pgrep -x LlavonIME | head -1)"
+          menu_agent_before="$(pgrep -x TextInputMenuAgent | head -1)"
+
+          sudo installer -pkg "${RUNNER_TEMP}/llavon-ime-install-check.pkg" -target /
+
+          after=""
+          for _ in 1 2 3 4 5; do
+            after="$(pgrep -x LlavonIME | head -1 || true)"
+            if [ -n "${after}" ] && [ "${after}" != "${before}" ]; then
+              break
+            fi
+            sleep 1
+          done
+          test -n "${after}"
+          test "${after}" != "${before}"
+
+          # The postinstall restarts TextInputMenuAgent so it re-reads the
+          # input source list instead of keeping the pre-upgrade one.
+          menu_agent_after="$(pgrep -x TextInputMenuAgent | head -1 || true)"
+          test -n "${menu_agent_after}"
+          test "${menu_agent_after}" != "${menu_agent_before}"
+
+          status="$("${tis}" status com.llavon.inputmethod.LlavonIME)"
+          echo "${status}"
+          echo "${status}" | grep -q "selected=1"
+
+      - name: Show diagnostics on failure
+        if: failure()
+        run: |
+          set -x
+          ls -la "/Library/Input Methods" "/Library/Application Support/llavon-ime" || true
+          ls -la "/Library/Application Support/llavon-ime/tools" || true
+          pgrep -l -x LlavonIME || true
+          pgrep -l -x TextInputMenuAgent || true
+          defaults read com.apple.HIToolbox AppleEnabledInputSources || true
+          defaults read com.apple.HIToolbox AppleSelectedInputSources || true
+          log show --last 15m --predicate 'eventMessage CONTAINS[c] "llavon"' --style compact || true
+
+      - name: Uninstall
+        if: always()
+        run: |
+          sudo pkill -x LlavonIME || true
+          sudo rm -rf "/Library/Input Methods/LlavonIME.app" \
+                      "/Library/Application Support/llavon-ime"
+          sudo pkgutil --forget llavon-ime-install-check || true
