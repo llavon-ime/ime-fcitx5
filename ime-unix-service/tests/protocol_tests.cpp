@@ -13,6 +13,8 @@
 #include <utility>
 #include <unistd.h>
 
+#include <iostream>
+
 namespace {
 
 bool protocol_test() {
@@ -119,13 +121,51 @@ bool commit_test() {
 
     const auto directory = std::filesystem::temp_directory_path() /
                            ("llavon-commit-store-test-" + std::to_string(::getpid()));
+    std::filesystem::remove_all(directory);
     std::filesystem::create_directories(directory);
     const auto path = directory / "commits.sqlite3";
+    const std::string password = "correct horse battery";
+    const std::string legacy_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     bool good = false;
+    sqlite3* db = nullptr;
     try {
+        // A database written before encrypted recording existed. Its readable
+        // rows must convert in place when the password is set.
+        {
+            sqlite3* legacy = nullptr;
+            if (sqlite3_open_v2(path.c_str(), &legacy, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr) != SQLITE_OK)
+                throw std::runtime_error("could not create legacy database");
+            const char* schema =
+                "CREATE TABLE commits (id TEXT PRIMARY KEY, context TEXT NOT NULL, answer TEXT NOT NULL, "
+                "state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','excluded','trained')), "
+                "committed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));"
+                "CREATE TABLE readings (commit_id TEXT NOT NULL REFERENCES commits(id) ON DELETE CASCADE, "
+                "position INTEGER NOT NULL, reading TEXT NOT NULL, character INTEGER NOT NULL, "
+                "manually_selected INTEGER NOT NULL CHECK(manually_selected IN (0,1)), PRIMARY KEY(commit_id,position));"
+                "INSERT INTO commits (id,context,answer,state) VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','早安','你好','trained');"
+                "INSERT INTO readings VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',0,'ㄋㄧˇ',20320,1),"
+                "('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,'ㄏㄠˇ',22909,0);";
+            char* message = nullptr;
+            if (sqlite3_exec(legacy, schema, nullptr, nullptr, &message) != SQLITE_OK) {
+                const std::string error = message ? message : "legacy schema failed";
+                sqlite3_free(message);
+                sqlite3_close(legacy);
+                throw std::runtime_error(error);
+            }
+            sqlite3_close(legacy);
+        }
         {
             CommitStore store(path);
-            if (!store.record(request) || store.record(request)) throw std::runtime_error("duplicate commit");
+            if (store.protection_status().configured || store.recording_enabled())
+                throw std::runtime_error("fresh store claims protection");
+            // Without a password nothing is stored, so typing never reaches
+            // the database in readable form.
+            if (store.record(request)) throw std::runtime_error("stored a commit without a password");
+            store.configure_password(password);
+            const auto status = store.protection_status();
+            if (!status.configured || !status.enabled) throw std::runtime_error("password was not stored");
+            if (!store.record(request)) throw std::runtime_error("could not record commit");
+            if (store.record(request)) throw std::runtime_error("duplicate commit");
             auto bad = request; bad.event_id[0]++; bad.answer = u"不符";
             try { (void)store.record(bad); throw std::runtime_error("invalid commit accepted"); }
             catch (const std::invalid_argument&) {}
@@ -138,15 +178,65 @@ bool commit_test() {
             long_context.event_id[0] += 3;
             long_context.context.assign(500, u'你');
             if (!store.record(long_context)) throw std::runtime_error("could not record long context");
+            // Disabling stops storage without touching what is already there.
+            store.set_recording_enabled(false);
+            auto disabled = request;
+            disabled.event_id[0] += 4;
+            if (store.record(disabled)) throw std::runtime_error("stored while collection was disabled");
+            store.set_recording_enabled(true);
         }
-        sqlite3* db = nullptr;
         if (sqlite3_open_v2(path.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK)
             throw std::runtime_error("could not inspect commit database");
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(db, "SELECT (SELECT COUNT(*) FROM commits), (SELECT COUNT(*) FROM readings)",
-                               -1, &stmt, nullptr) == SQLITE_OK && sqlite3_step(stmt) == SQLITE_ROW)
-            good = sqlite3_column_int(stmt, 0) == 3 && sqlite3_column_int(stmt, 1) == 5;
-        sqlite3_finalize(stmt);
+        {
+            sqlite3_stmt* stmt = nullptr;
+            if (sqlite3_prepare_v2(db,
+                    "SELECT (SELECT COUNT(*) FROM commits), (SELECT COUNT(*) FROM readings), "
+                    "(SELECT COUNT(*) FROM commits WHERE schema_version=2), "
+                    "(SELECT COUNT(*) FROM commits WHERE answer='你好' OR context='早安'), "
+                    "(SELECT COUNT(*) FROM readings WHERE reading='ㄋㄧˇ' OR character != 0)",
+                    -1, &stmt, nullptr) != SQLITE_OK || sqlite3_step(stmt) != SQLITE_ROW)
+                throw std::runtime_error("could not inspect commit database");
+            good = sqlite3_column_int(stmt, 0) == 4 && sqlite3_column_int(stmt, 1) == 7 &&
+                   sqlite3_column_int(stmt, 2) == 4 && sqlite3_column_int(stmt, 3) == 0 && sqlite3_column_int(stmt, 4) == 0;
+            sqlite3_finalize(stmt);
+        }
+        {
+            const auto find = [](const std::vector<CommitRecord>& records, const std::string& id) -> const CommitRecord* {
+                for (const auto& record : records) if (record.id == id) return &record;
+                return nullptr;
+            };
+            CommitCipher locked;
+            bool refused = false;
+            try { (void)read_commits(db, "pending", locked, 0, 10); }
+            catch (const std::runtime_error&) { refused = true; }
+            if (!refused) throw std::runtime_error("read sealed records without a password");
+            bool wrong = false;
+            try { CommitCipher cipher; cipher.unlock(db, "wrong password"); }
+            catch (const std::runtime_error&) { wrong = true; }
+            if (!wrong) throw std::runtime_error("wrong password was accepted");
+            CommitCipher cipher;
+            cipher.unlock(db, password);
+            std::vector<CommitRecord> pending, migrated;
+            try { pending = read_commits(db, "pending", cipher, 0, 10); }
+            catch (const std::exception& error) {
+                throw std::runtime_error(std::string("pending read failed: ") + error.what());
+            }
+            std::string recorded_id = "45";
+            recorded_id.append(30, '0');
+            const auto* recorded = find(pending, recorded_id);
+            if (recorded == nullptr || recorded->context != "早安" || recorded->answer != "你好" ||
+                recorded->readings.size() != 2 || recorded->readings.front() != "ㄋㄧˇ" ||
+                recorded->manual.front() || !recorded->manual.back())
+                throw std::runtime_error("decrypted records differ");
+            try { migrated = read_commits(db, "trained", cipher, 0, 10); }
+            catch (const std::exception& error) {
+                throw std::runtime_error(std::string("migrated read failed: ") + error.what());
+            }
+            if (migrated.size() != 1 || migrated.front().id != legacy_id ||
+                migrated.front().context != "早安" || migrated.front().answer != "你好" ||
+                migrated.front().readings.size() != 2)
+                throw std::runtime_error("legacy rows were not converted");
+        }
         const auto config = directory / "config.json";
         std::ofstream(config) << R"({"vocab_size":18546,"max_position_embeddings":384})";
         nlohmann::json vocab = nlohmann::json::array();
@@ -162,7 +252,12 @@ bool commit_test() {
         }
         std::ofstream(directory / "ime_vocab.json") << nlohmann::json{{"tokens", vocab}}.dump();
         const auto output = directory / "training.jsonl";
-        const auto dataset = write_numeric_dataset(db, IME_UNIX_SERVICE_TEST_TABLE_DIR, config, output, 384);
+        CommitCipher cipher;
+        cipher.unlock(db, password);
+        const auto decryption = cipher.decryption();
+        NumericDataset dataset;
+        try { dataset = write_numeric_dataset(db, IME_UNIX_SERVICE_TEST_TABLE_DIR, config, output, 384, nullptr, &decryption); }
+        catch (const std::exception& error) { throw std::runtime_error(std::string("dataset failed: ") + error.what()); }
         if (dataset.included_ids.size() != 2 || dataset.skipped != 1 || dataset.pad_token_id != 0) good = false;
         std::ifstream input(output);
         nlohmann::json row;
@@ -180,11 +275,30 @@ bool commit_test() {
         vocab[1427] = "wrong token";  // "你" is token 1427 in this checkpoint.
         std::ofstream(directory / "ime_vocab.json") << nlohmann::json{{"tokens", vocab}}.dump();
         bool mismatched = false;
-        try { (void)write_numeric_dataset(db, IME_UNIX_SERVICE_TEST_TABLE_DIR, config, output, 384); }
+        try { (void)write_numeric_dataset(db, IME_UNIX_SERVICE_TEST_TABLE_DIR, config, output, 384, nullptr, &decryption); }
         catch (const std::runtime_error&) { mismatched = true; }
         good = good && mismatched;
+        // A locked reader cannot turn sealed rows into a dataset.
+        bool sealed_refused = false;
+        {
+            const CommitCipher locked;
+            const auto decryption = locked.decryption();
+            try { (void)write_numeric_dataset(db, IME_UNIX_SERVICE_TEST_TABLE_DIR, config, output, 384, nullptr, &decryption); }
+            catch (const std::runtime_error&) { sealed_refused = true; }
+        }
+        good = good && sealed_refused;
+        // Forgetting the password removes the conversation records and the
+        // keys; the database stays usable.
+        {
+            CommitStore store(path);
+            store.reset_conversation_data();
+            const CommitCipher locked;
+            if (store.protection_status().configured ||
+                !read_commits(db, "pending", locked, 0, 10).empty()) good = false;
+        }
         sqlite3_close(db);
-    } catch (...) { good = false; }
+    } catch (const std::exception& error) { std::cerr << "commit test: " << error.what() << '\n'; good = false; }
+    catch (...) { std::cerr << "commit test: unknown error\n"; good = false; }
     std::filesystem::remove_all(directory);
     return good;
 }
@@ -192,6 +306,14 @@ bool commit_test() {
 }  // namespace
 
 int main() {
-    return protocol_test() && core_adapter_test() && core_runtime_test() && session_test() && commit_test() ? EXIT_SUCCESS
-                                                                                           : EXIT_FAILURE;
+    struct Case { const char* name; bool (*run)(); };
+    const Case cases[] = {{"protocol", protocol_test}, {"core-adapter", core_adapter_test},
+                          {"core-runtime", core_runtime_test}, {"session", session_test}, {"commit", commit_test}};
+    bool good = true;
+    for (const auto& item : cases) {
+        if (item.run()) continue;
+        std::cerr << "failed: " << item.name << '\n';
+        good = false;
+    }
+    return good ? EXIT_SUCCESS : EXIT_FAILURE;
 }

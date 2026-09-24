@@ -3,11 +3,15 @@
 #include <sqlite3.h>
 #include <utf8/cpp20.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#include "commit_crypto.hpp"
 
 namespace ime::unix_service {
 namespace {
@@ -30,6 +34,7 @@ public:
     void integer(int index, std::int64_t value) { check(sqlite3_bind_int64(stmt_, index, value), db_); }
     void step() { check(sqlite3_step(stmt_), db_); }
     void reset() { check(sqlite3_reset(stmt_), db_); check(sqlite3_clear_bindings(stmt_), db_); }
+    sqlite3_stmt* get() const { return stmt_; }
 private:
     sqlite3* db_;
     sqlite3_stmt* stmt_ = nullptr;
@@ -60,7 +65,45 @@ void validate(const protocol::RecordCommitRequest& request) {
         throw std::invalid_argument("commit answer does not match readings");
 }
 
+std::string column_text(sqlite3_stmt* statement, int column) {
+    const auto* value = sqlite3_column_text(statement, column);
+    return value == nullptr ? std::string{} : std::string(reinterpret_cast<const char*>(value));
+}
+
+CommitProtectionStatus protection_status_of(sqlite3* db) {
+    sqlite3_stmt* statement = nullptr;
+    // A database written before encrypted recording has no table at all.
+    if (sqlite3_prepare_v2(db, "SELECT enabled FROM commit_protection WHERE id=1", -1, &statement, nullptr) != SQLITE_OK)
+        return {};
+    const bool row = sqlite3_step(statement) == SQLITE_ROW;
+    const auto result = row ? CommitProtectionStatus{true, sqlite3_column_int(statement, 0) != 0}
+                            : CommitProtectionStatus{};
+    sqlite3_finalize(statement);
+    return result;
+}
+
+commit_crypto::PublicParameters parameters_of(sqlite3* db) {
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(db, "SELECT version,salt,public_key FROM commit_protection WHERE id=1", -1, &statement, nullptr) != SQLITE_OK) {
+        sqlite3_finalize(statement);
+        throw std::runtime_error("commit password is not configured");
+    }
+    if (sqlite3_step(statement) != SQLITE_ROW || sqlite3_column_int(statement, 0) != 1) {
+        sqlite3_finalize(statement);
+        throw std::runtime_error("commit password is not configured");
+    }
+    commit_crypto::PublicParameters parameters;
+    commit_crypto::unhex(column_text(statement, 1),
+                         {reinterpret_cast<unsigned char*>(parameters.salt.data()), parameters.salt.size()});
+    commit_crypto::unhex(column_text(statement, 2),
+                         {reinterpret_cast<unsigned char*>(parameters.key.data()), parameters.key.size()});
+    sqlite3_finalize(statement);
+    return parameters;
+}
+
 }  // namespace
+
+CommitProtectionStatus read_commit_protection(sqlite3* db) { return protection_status_of(db); }
 
 std::filesystem::path CommitStore::default_path() {
     if (const char* path = std::getenv("LLAVON_IME_TRAINING_DATABASE_PATH"); path && *path) return path;
@@ -73,6 +116,35 @@ std::filesystem::path CommitStore::default_path() {
 #else
     return std::filesystem::path(home) / ".local" / "state" / "llavon-ime" / "training" / "commits.sqlite3";
 #endif
+}
+
+void initialize_commit_database(sqlite3* db) {
+    execute(db, "PRAGMA journal_mode=WAL");
+    execute(db, "CREATE TABLE IF NOT EXISTS commits (id TEXT PRIMARY KEY, context TEXT NOT NULL, answer TEXT NOT NULL, "
+                "state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','excluded','trained')), "
+                "schema_version INTEGER NOT NULL DEFAULT 1, "
+                "committed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))) ");
+    execute(db, "CREATE TABLE IF NOT EXISTS readings (commit_id TEXT NOT NULL REFERENCES commits(id) ON DELETE CASCADE, "
+                "position INTEGER NOT NULL, reading TEXT NOT NULL, character INTEGER NOT NULL, "
+                "manually_selected INTEGER NOT NULL CHECK(manually_selected IN (0,1)), "
+                "PRIMARY KEY(commit_id,position))");
+    execute(db, "CREATE INDEX IF NOT EXISTS commits_state_time ON commits(state,committed_at,id)");
+    execute(db, "CREATE TABLE IF NOT EXISTS lora_runs (id INTEGER PRIMARY KEY, base_revision TEXT NOT NULL, "
+                "adapter_path TEXT NOT NULL, model_path TEXT NOT NULL, record_count INTEGER NOT NULL, "
+                "completed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))");
+    execute(db, "CREATE TABLE IF NOT EXISTS commit_protection (id INTEGER PRIMARY KEY CHECK(id=1), "
+                "version INTEGER NOT NULL CHECK(version=1), salt TEXT NOT NULL, public_key TEXT NOT NULL, "
+                "enabled INTEGER NOT NULL CHECK(enabled IN (0,1)))");
+    // Databases created before encrypted recording lack the marker; the
+    // registration is idempotent.
+    {
+        Statement info(db, "PRAGMA table_info(commits)");
+        bool marker = false;
+        while (sqlite3_step(info.get()) == SQLITE_ROW) {
+            if (column_text(info.get(), 1) == "schema_version") { marker = true; break; }
+        }
+        if (!marker) execute(db, "ALTER TABLE commits ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1");
+    }
 }
 
 CommitStore::CommitStore(std::filesystem::path path) {
@@ -91,44 +163,207 @@ CommitStore::CommitStore(std::filesystem::path path) {
         if (::chmod(path.c_str(), 0600) != 0) throw std::runtime_error("cannot protect training database");
         sqlite3_busy_timeout(db_, 3000);
         execute(db_, "PRAGMA foreign_keys=ON");
-        execute(db_, "PRAGMA journal_mode=WAL");
-        execute(db_, "CREATE TABLE IF NOT EXISTS commits (id TEXT PRIMARY KEY, context TEXT NOT NULL, answer TEXT NOT NULL, "
-                     "state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','excluded','trained')), "
-                     "committed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))) ");
-        execute(db_, "CREATE TABLE IF NOT EXISTS readings (commit_id TEXT NOT NULL REFERENCES commits(id) ON DELETE CASCADE, "
-                     "position INTEGER NOT NULL, reading TEXT NOT NULL, character INTEGER NOT NULL, "
-                     "manually_selected INTEGER NOT NULL CHECK(manually_selected IN (0,1)), "
-                     "PRIMARY KEY(commit_id,position))");
-        execute(db_, "CREATE INDEX IF NOT EXISTS commits_state_time ON commits(state,committed_at,id)");
-        execute(db_, "CREATE TABLE IF NOT EXISTS lora_runs (id INTEGER PRIMARY KEY, base_revision TEXT NOT NULL, "
-                     "adapter_path TEXT NOT NULL, model_path TEXT NOT NULL, record_count INTEGER NOT NULL, "
-                     "completed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))");
+        initialize_commit_database(db_);
+        commit_crypto::initialize();
     } catch (...) { sqlite3_close(db_); db_ = nullptr; throw; }
 }
 
 CommitStore::~CommitStore() { if (db_) sqlite3_close(db_); }
 
+CommitProtectionStatus CommitStore::protection_status() const { return protection_status_of(db_); }
+
+bool CommitStore::recording_enabled() const {
+    const auto status = protection_status_of(db_);
+    return status.configured && status.enabled;
+}
+
 bool CommitStore::record(const protocol::RecordCommitRequest& request) {
     validate(request);
+    if (!recording_enabled()) return false;
+    const auto parameters = parameters_of(db_);
     const auto id = event_id(request.event_id);
+    const auto context = commit_crypto::seal(utf8::utf16to8(request.context), commit_crypto::field_identity(id, "context"), parameters);
+    const auto answer = commit_crypto::seal(utf8::utf16to8(request.answer), commit_crypto::field_identity(id, "answer"), parameters);
     execute(db_, "BEGIN IMMEDIATE");
     try {
-        Statement insert(db_, "INSERT OR IGNORE INTO commits(id,context,answer) VALUES (?,?,?)");
-        insert.text(1, id); insert.text(2, utf8::utf16to8(request.context));
-        insert.text(3, utf8::utf16to8(request.answer)); insert.step();
+        Statement insert(db_, "INSERT OR IGNORE INTO commits(id,context,answer,schema_version) VALUES (?,?,?,2)");
+        insert.text(1, id); insert.text(2, context); insert.text(3, answer); insert.step();
         const bool inserted = sqlite3_changes(db_) != 0;
         if (inserted) {
             Statement reading(db_, "INSERT INTO readings(commit_id,position,reading,character,manually_selected) VALUES (?,?,?,?,?)");
             for (std::size_t i = 0; i < request.entries.size(); ++i) {
+                // The character code would leak the answer, so encrypted rows
+                // keep it zero and derive it from the decrypted answer.
+                const auto ciphertext = commit_crypto::seal(utf8::utf16to8(request.entries[i].reading),
+                                                            commit_crypto::reading_identity(id, static_cast<int>(i)), parameters);
                 reading.text(1, id); reading.integer(2, static_cast<std::int64_t>(i));
-                reading.text(3, utf8::utf16to8(request.entries[i].reading));
-                reading.integer(4, request.entries[i].character);
+                reading.text(3, ciphertext); reading.integer(4, 0);
                 reading.integer(5, request.entries[i].manually_selected); reading.step(); reading.reset();
             }
         }
         execute(db_, "COMMIT");
         return inserted;
     } catch (...) { sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr); throw; }
+}
+
+void CommitStore::configure_password(const std::string& password) {
+    if (protection_status_of(db_).configured) throw std::runtime_error("password already configured");
+    commit_crypto::PublicParameters parameters;
+    randombytes_buf(parameters.salt.data(), parameters.salt.size());
+    commit_crypto::PrivateKey private_key;
+    commit_crypto::derive(password, parameters, private_key, false);
+
+    execute(db_, "PRAGMA secure_delete=ON");
+    execute(db_, "BEGIN IMMEDIATE");
+    // Updating a table while a statement scans it can visit a row twice, which
+    // would seal it again; the plaintext is read first and wiped afterwards.
+    struct PlainRow {
+        std::string id, context, answer, reading;
+        int position = 0;
+    };
+    std::vector<PlainRow> commits, readings;
+    const auto wipe = [](std::vector<PlainRow>& rows) {
+        for (auto& row : rows) {
+            sodium_memzero(row.context.data(), row.context.size());
+            sodium_memzero(row.answer.data(), row.answer.size());
+            sodium_memzero(row.reading.data(), row.reading.size());
+        }
+        rows.clear();
+    };
+    try {
+        Statement insert(db_, "INSERT INTO commit_protection(id,version,salt,public_key,enabled) VALUES (1,1,?,?,1)");
+        insert.text(1, commit_crypto::hex(parameters.salt));
+        insert.text(2, commit_crypto::hex(parameters.key));
+        insert.step();
+        // Convert every existing plaintext row in place; the records and their
+        // state are preserved.
+        {
+            Statement select(db_, "SELECT id,context,answer FROM commits WHERE schema_version=1");
+            while (sqlite3_step(select.get()) == SQLITE_ROW)
+                commits.push_back({column_text(select.get(), 0), column_text(select.get(), 1),
+                                   column_text(select.get(), 2)});
+        }
+        Statement update(db_, "UPDATE commits SET schema_version=2,context=?,answer=? WHERE id=?");
+        for (const auto& row : commits) {
+            update.reset();
+            update.text(1, commit_crypto::seal(row.context, commit_crypto::field_identity(row.id, "context"), parameters));
+            update.text(2, commit_crypto::seal(row.answer, commit_crypto::field_identity(row.id, "answer"), parameters));
+            update.text(3, row.id);
+            update.step();
+        }
+        {
+            Statement select(db_, "SELECT commit_id,position,reading FROM readings");
+            while (sqlite3_step(select.get()) == SQLITE_ROW)
+                readings.push_back({.id = column_text(select.get(), 0),
+                                    .reading = column_text(select.get(), 2),
+                                    .position = sqlite3_column_int(select.get(), 1)});
+        }
+        Statement update_reading(db_, "UPDATE readings SET reading=?,character=0 WHERE commit_id=? AND position=?");
+        for (const auto& row : readings) {
+            update_reading.reset();
+            update_reading.text(1, commit_crypto::seal(row.reading,
+                commit_crypto::reading_identity(row.id, row.position), parameters));
+            update_reading.text(2, row.id);
+            update_reading.integer(3, row.position);
+            update_reading.step();
+        }
+        wipe(commits); wipe(readings);
+        execute(db_, "COMMIT");
+    } catch (...) {
+        wipe(commits); wipe(readings);
+        sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
+        throw;
+    }
+    execute(db_, "VACUUM");
+    if (sqlite3_wal_checkpoint_v2(db_, nullptr, SQLITE_CHECKPOINT_TRUNCATE, nullptr, nullptr) != SQLITE_OK)
+        throw std::runtime_error(sqlite3_errmsg(db_));
+}
+
+void CommitStore::set_recording_enabled(bool enabled) {
+    if (enabled) (void)parameters_of(db_);
+    Statement update(db_, "UPDATE commit_protection SET enabled=? WHERE id=1");
+    update.integer(1, enabled ? 1 : 0);
+    update.step();
+}
+
+void CommitStore::reset_conversation_data() {
+    execute(db_, "PRAGMA secure_delete=ON");
+    execute(db_, "BEGIN IMMEDIATE");
+    try {
+        execute(db_, "DELETE FROM commits");
+        execute(db_, "DELETE FROM commit_protection");
+        execute(db_, "COMMIT");
+    } catch (...) { sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr); throw; }
+    execute(db_, "VACUUM");
+    if (sqlite3_wal_checkpoint_v2(db_, nullptr, SQLITE_CHECKPOINT_TRUNCATE, nullptr, nullptr) != SQLITE_OK)
+        throw std::runtime_error(sqlite3_errmsg(db_));
+}
+
+void CommitCipher::unlock(sqlite3* db, const std::string& password) {
+    parameters_ = parameters_of(db);
+    commit_crypto::derive(password, parameters_, private_key_, true);
+    unlocked_ = true;
+}
+
+commit_crypto::Decryption CommitCipher::decryption() const {
+    return {.configured = unlocked_, .parameters = &parameters_, .private_key = &private_key_};
+}
+
+std::string CommitCipher::open(const std::string& ciphertext, const std::string& identity) const {
+    if (!unlocked_) throw std::runtime_error("password required");
+    return commit_crypto::open(ciphertext, identity, parameters_, private_key_);
+}
+
+namespace {
+
+// Columns: id, committed_at, state, context, answer, schema_version.
+CommitRecord load_record(sqlite3* db, sqlite3_stmt* query, const CommitCipher& cipher) {
+    CommitRecord record{.id = column_text(query, 0), .committed_at = column_text(query, 1),
+                        .state = column_text(query, 2)};
+    const auto schema_version = sqlite3_column_int(query, 5);
+    if (cipher.unlocked()) {
+        if (schema_version != 2) throw std::runtime_error("unencrypted training record blocked");
+        record.context = cipher.open(column_text(query, 3), commit_crypto::field_identity(record.id, "context"));
+        record.answer = cipher.open(column_text(query, 4), commit_crypto::field_identity(record.id, "answer"));
+    } else {
+        if (schema_version != 1) throw std::runtime_error("training password required");
+        record.context = column_text(query, 3);
+        record.answer = column_text(query, 4);
+    }
+    Statement readings(db, "SELECT position,reading,manually_selected FROM readings WHERE commit_id=? ORDER BY position");
+    readings.text(1, record.id);
+    while (sqlite3_step(readings.get()) == SQLITE_ROW) {
+        record.readings.push_back(cipher.unlocked()
+            ? cipher.open(column_text(readings.get(), 1),
+                          commit_crypto::reading_identity(record.id, sqlite3_column_int(readings.get(), 0)))
+            : column_text(readings.get(), 1));
+        record.manual.push_back(sqlite3_column_int(readings.get(), 2) != 0);
+    }
+    record.text_available = true;
+    return record;
+}
+
+}  // namespace
+
+std::vector<CommitRecord> read_commits(sqlite3* db, const std::string& state,
+                                       const CommitCipher& cipher, int offset, int limit) {
+    Statement query(db, "SELECT id,committed_at,state,context,answer,schema_version FROM commits WHERE state=? "
+                        "ORDER BY committed_at DESC,id DESC LIMIT ? OFFSET ?");
+    query.text(1, state); query.integer(2, std::max(1, limit)); query.integer(3, std::max(0, offset));
+    std::vector<CommitRecord> result;
+    while (sqlite3_step(query.get()) == SQLITE_ROW) result.push_back(load_record(db, query.get(), cipher));
+    return result;
+}
+
+std::vector<CommitRecord> read_commits_by_id(sqlite3* db, const std::vector<std::string>& ids,
+                                             const CommitCipher& cipher) {
+    std::vector<CommitRecord> result;
+    for (const auto& id : ids) {
+        Statement query(db, "SELECT id,committed_at,state,context,answer,schema_version FROM commits WHERE id=?");
+        query.text(1, id);
+        if (sqlite3_step(query.get()) == SQLITE_ROW) result.push_back(load_record(db, query.get(), cipher));
+    }
+    return result;
 }
 
 }  // namespace ime::unix_service

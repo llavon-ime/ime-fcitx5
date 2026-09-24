@@ -1,5 +1,7 @@
 #pragma once
 
+#include "training/commit_crypto.hpp"
+
 #include <filesystem>
 #include <string>
 #include <unordered_set>
@@ -20,6 +22,7 @@ struct NumericDataset {
 NumericDataset write_numeric_dataset(sqlite3* db, const std::filesystem::path& tables,
                                       const std::filesystem::path& model_config,
                                       const std::filesystem::path& output, int max_sequence_length,
-                                      const std::unordered_set<std::string>* selected_ids = nullptr);
+                                      const std::unordered_set<std::string>* selected_ids = nullptr,
+                                      const commit_crypto::Decryption* decryption = nullptr);
 
 }  // namespace ime::unix_service

@@ -27,6 +27,7 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <termios.h>
 #include <unistd.h>
 #include <vector>
 
@@ -77,6 +78,66 @@ double real_option(const Options& options, const char* key, double fallback, dou
     if (end != text.c_str() + text.size() || !std::isfinite(value) || value < minimum || value > maximum)
         throw std::invalid_argument(std::string("invalid ") + key);
     return value;
+}
+
+// Passwords never travel in argv, where any local process could read them.
+// They come from an environment variable, a private file, or the terminal.
+std::string password_option(const Options& options) {
+    if (options.contains("--password-env")) {
+        const char* value = std::getenv(require(options, "--password-env").c_str());
+        if (value == nullptr || *value == '\0') throw std::runtime_error("password environment variable is not set");
+        return value;
+    }
+    if (options.contains("--password-file")) {
+        std::ifstream input(require(options, "--password-file"));
+        if (!input) throw std::runtime_error("cannot read password file");
+        std::string line;
+        std::getline(input, line);
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+        if (line.empty()) throw std::runtime_error("password file is empty");
+        return line;
+    }
+    if (options.contains("--password-fd")) {
+        const auto text = require(options, "--password-fd");
+        int fd = 0;
+        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), fd);
+        if (parsed.ec != std::errc() || parsed.ptr != text.data() + text.size() || fd < 3)
+            throw std::invalid_argument("invalid --password-fd");
+        std::string line;
+        char ch = 0;
+        while (true) {
+            const auto count = ::read(fd, &ch, 1);
+            if (count == 1) { if (ch == '\n') break; line.push_back(ch); continue; }
+            if (count < 0 && errno == EINTR) continue;
+            break;
+        }
+        ::close(fd);
+        if (line.empty()) throw std::runtime_error("password was not provided");
+        return line;
+    }
+    if (::isatty(STDIN_FILENO)) {
+        std::cerr << "password: " << std::flush;
+        termios original{};
+        const bool hidden = ::tcgetattr(STDIN_FILENO, &original) == 0;
+        if (hidden) {
+            termios masked = original;
+            masked.c_lflag &= ~ECHO;
+            ::tcsetattr(STDIN_FILENO, TCSAFLUSH, &masked);
+        }
+        std::string line;
+        std::getline(std::cin, line);
+        if (hidden) ::tcsetattr(STDIN_FILENO, TCSAFLUSH, &original);
+        std::cerr << '\n';
+        if (line.empty()) throw std::runtime_error("password required");
+        return line;
+    }
+    throw std::runtime_error("password required; pass --password-env or --password-file");
+}
+
+// A locked cipher still serves legacy plaintext rows; a configured password
+// always demands a matching one.
+void unlock(ime::unix_service::CommitCipher& cipher, sqlite3* db, const Options& options) {
+    if (ime::unix_service::read_commit_protection(db).configured) cipher.unlock(db, password_option(options));
 }
 
 std::string as_argument(double value) {
@@ -134,6 +195,7 @@ public:
         }
         sqlite3_busy_timeout(db_, 3000);
         exec("PRAGMA foreign_keys=ON");
+        ime::unix_service::initialize_commit_database(db_);
     }
     ~Database() { sqlite3_close(db_); }
     sqlite3* get() const { return db_; }
@@ -456,15 +518,18 @@ void fetch_model(const fs::path& output) {
     } catch (...) { fs::remove(metadata); throw; }
 }
 
-void list(sqlite3* db) {
-    Statement query(db, "SELECT c.id,c.committed_at,c.context,c.answer, "
-                        "(SELECT group_concat(reading,' ') FROM (SELECT reading FROM readings "
-                        "WHERE commit_id=c.id ORDER BY position)) "
-                        "FROM commits c WHERE c.state='pending' ORDER BY c.committed_at,c.id");
-    while (query.next() == SQLITE_ROW) {
-        std::cout << nlohmann::json{{"id", query.text(0)}, {"committed_at", query.text(1)},
-                                   {"context", query.text(2)}, {"answer", query.text(3)},
-                                   {"readings", query.text(4)}}.dump() << '\n';
+void list(sqlite3* db, const Options& options) {
+    ime::unix_service::CommitCipher cipher;
+    unlock(cipher, db, options);
+    for (const auto& record : ime::unix_service::read_commits(db, "pending", cipher, 0, 1000000)) {
+        std::string readings;
+        for (const auto& reading : record.readings) {
+            if (!readings.empty()) readings += ' ';
+            readings += reading;
+        }
+        std::cout << nlohmann::json{{"id", record.id}, {"committed_at", record.committed_at},
+                                    {"context", record.context}, {"answer", record.answer},
+                                    {"readings", readings}}.dump() << '\n';
     }
 }
 
@@ -478,8 +543,16 @@ void change_state(Database& db, std::string_view action, const std::string& id) 
     if (sqlite3_changes(db.get()) != 1) throw std::runtime_error("record not found or not eligible for exclusion");
 }
 
-void ensure_run_history(Database& db) {
-    std::set<std::string> columns;
+// Removes the readable training dataset (and any partial file) as soon as a
+// run no longer needs it. Only these two application-owned files are touched.
+void discard_plaintext_dataset(const fs::path& dataset) {
+    std::error_code error;
+    fs::remove(dataset, error);
+    auto partial = dataset; partial += ".partial";
+    fs::remove(partial, error);
+}
+
+void ensure_run_history(Database& db) {    std::set<std::string> columns;
     Statement info(db.get(), "PRAGMA table_info(lora_runs)");
     while (info.next() == SQLITE_ROW) columns.insert(info.text(1));
     for (const auto& [name, definition] : std::vector<std::pair<std::string, std::string>>{
@@ -531,7 +604,7 @@ void publish_run(Database& db, const ime::unix_service::NumericDataset& dataset,
 }
 
 void train(Database& db, const Options& options, const fs::path& model_dir, const fs::path& tables,
-            const fs::path& output, const fs::path& db_path) {
+            const fs::path& output, const fs::path& db_path, const ime::unix_service::CommitCipher& cipher) {
     if (options.contains("--trainer"))
         throw std::invalid_argument("--trainer is no longer supported; use the pinned trainer installer");
     const fs::path trainer = installed_trainer(db_path);
@@ -630,46 +703,56 @@ void train(Database& db, const Options& options, const fs::path& model_dir, cons
     if (trainer_version.at("trainerApi").get<int>() != 2)
         throw std::runtime_error("trainer API is incompatible (expected 2)");
     const auto dataset_path = output / "training.jsonl";
+    const auto decryption = cipher.decryption();
     const auto dataset = ime::unix_service::write_numeric_dataset(db.get(), tables, training_model_dir / "config.json",
-        dataset_path, max_length, options.contains("--selected-ids") ? &selected : nullptr);
+        dataset_path, max_length, options.contains("--selected-ids") ? &selected : nullptr, &decryption);
     std::cout << "trainable=" << dataset.included_ids.size() << " skipped=" << dataset.skipped << std::endl;
-    run(trainer, {"validate", "--train-data", dataset_path.string(), "--vocab-size",
-                   std::to_string(dataset.vocab_size), "--max-seq-length", std::to_string(max_length)});
     const auto adapter = output / "adapter";
-    std::vector<std::string> args{
-        "train", "--model-config", (training_model_dir / "config.json").string(), "--model", training_model_dir.string(),
-        "--train-data", dataset_path.string(), "--output-dir", adapter.string(),
-        "--target-modules", modules, "--pad-token-id", std::to_string(dataset.pad_token_id),
-        "--max-seq-length", std::to_string(max_length), "--rank", std::to_string(rank),
-        "--alpha", as_argument(alpha), "--dropout", as_argument(dropout),
-        "--batch-size", std::to_string(batch), "--gradient-accumulation", std::to_string(accumulation),
-        "--epochs", std::to_string(epochs), "--max-steps", std::to_string(max_steps),
-        "--learning-rate", as_argument(learning_rate), "--weight-decay", as_argument(weight_decay),
-        "--warmup-steps", std::to_string(warmup), "--max-grad-norm", as_argument(norm),
-        "--save-every", std::to_string(save_every), "--seed", std::to_string(seed),
-        "--device", device, "--dtype", dtype
-    };
-    if (!shuffle) args.push_back("--no-shuffle");
-    {
-        Statement previous(db.get(), "SELECT base_revision,adapter_path FROM lora_runs ORDER BY id DESC LIMIT 1");
-        if (previous.next() == SQLITE_ROW) {
-            if (revision != previous.text(0)) throw std::runtime_error("previous adapter uses a different base revision");
-            const fs::path path = previous.text(1);
-            if (!fs::is_regular_file(path / "adapter_model.safetensors"))
-                throw std::runtime_error("previous adapter is missing");
-            args.insert(args.end(), {"--resume-adapter", path.string()});
-        }
-    }
-    run(trainer, args);
     const auto f16 = output / "personalized-f16.gguf";
     const auto gguf = output / "personalized-Q4_K_M.gguf";
-    run(trainer, {"export-gguf", "--model-config", (training_model_dir / "config.json").string(),
-                  "--model", training_model_dir.string(), "--vocab-file", (training_model_dir / "ime_vocab.json").string(),
-                  "--adapter", adapter.string(), "--outfile", f16.string(), "--outtype", "f16",
-                   "--quantize", "Q4_K_M", "--quantized-outfile", gguf.string(), "--force"});
-    if (!fs::is_regular_file(gguf) || fs::file_size(gguf) == 0)
-        throw std::runtime_error("trainer did not produce a GGUF model");
-    fs::remove(f16);
+    // The numeric dataset is readable text, so it only lives while this run
+    // needs it; a killed process leaves at most the partial file, which the
+    // next run and the manager remove.
+    try {
+        run(trainer, {"validate", "--train-data", dataset_path.string(), "--vocab-size",
+                       std::to_string(dataset.vocab_size), "--max-seq-length", std::to_string(max_length)});
+        std::vector<std::string> args{
+            "train", "--model-config", (training_model_dir / "config.json").string(), "--model", training_model_dir.string(),
+            "--train-data", dataset_path.string(), "--output-dir", adapter.string(),
+            "--target-modules", modules, "--pad-token-id", std::to_string(dataset.pad_token_id),
+            "--max-seq-length", std::to_string(max_length), "--rank", std::to_string(rank),
+            "--alpha", as_argument(alpha), "--dropout", as_argument(dropout),
+            "--batch-size", std::to_string(batch), "--gradient-accumulation", std::to_string(accumulation),
+            "--epochs", std::to_string(epochs), "--max-steps", std::to_string(max_steps),
+            "--learning-rate", as_argument(learning_rate), "--weight-decay", as_argument(weight_decay),
+            "--warmup-steps", std::to_string(warmup), "--max-grad-norm", as_argument(norm),
+            "--save-every", std::to_string(save_every), "--seed", std::to_string(seed),
+            "--device", device, "--dtype", dtype
+        };
+        if (!shuffle) args.push_back("--no-shuffle");
+        {
+            Statement previous(db.get(), "SELECT base_revision,adapter_path FROM lora_runs ORDER BY id DESC LIMIT 1");
+            if (previous.next() == SQLITE_ROW) {
+                if (revision != previous.text(0)) throw std::runtime_error("previous adapter uses a different base revision");
+                const fs::path path = previous.text(1);
+                if (!fs::is_regular_file(path / "adapter_model.safetensors"))
+                    throw std::runtime_error("previous adapter is missing");
+                args.insert(args.end(), {"--resume-adapter", path.string()});
+            }
+        }
+        run(trainer, args);
+        run(trainer, {"export-gguf", "--model-config", (training_model_dir / "config.json").string(),
+                      "--model", training_model_dir.string(), "--vocab-file", (training_model_dir / "ime_vocab.json").string(),
+                      "--adapter", adapter.string(), "--outfile", f16.string(), "--outtype", "f16",
+                       "--quantize", "Q4_K_M", "--quantized-outfile", gguf.string(), "--force"});
+        if (!fs::is_regular_file(gguf) || fs::file_size(gguf) == 0)
+            throw std::runtime_error("trainer did not produce a GGUF model");
+        fs::remove(f16);
+        discard_plaintext_dataset(dataset_path);
+    } catch (...) {
+        discard_plaintext_dataset(dataset_path);
+        throw;
+    }
     publish_run(db, dataset, adapter, gguf, revision, rank, alpha, dropout, modules);
     std::cout << "model=" << gguf << '\n';
 }
@@ -679,7 +762,7 @@ void train(Database& db, const Options& options, const fs::path& model_dir, cons
 int main(int argc, char** argv) {
     try {
         ::umask(0077);  // Datasets and adapter outputs contain user typing.
-        if (argc < 2) throw std::invalid_argument("usage: llavon-ime-lora check-model|fetch-model|install-trainer|list|exclude|delete|dataset|train [--option value ...]");
+        if (argc < 2) throw std::invalid_argument("usage: llavon-ime-lora check-model|fetch-model|install-trainer|protection-status|configure-password|set-recording|reset-conversation-data|list|exclude|delete|dataset|train [--option value ...]");
         const auto options = parse(argc, argv);
         if (std::string_view(argv[1]) == "install-trainer") {
             install_trainer(fs::absolute(require(options, "--output-dir")));
@@ -695,17 +778,48 @@ int main(int argc, char** argv) {
         }
         const auto db_path = optional(options, "--db", "");
         const auto database = db_path.empty() ? ime::unix_service::CommitStore::default_path() : fs::path(db_path);
-        Database db(database);
         const std::string_view action = argv[1];
-        if (action == "list") list(db.get());
+        if (action == "protection-status") {
+            ime::unix_service::CommitStore store(database);
+            const auto status = store.protection_status();
+            std::cout << nlohmann::json{{"configured", status.configured}, {"enabled", status.enabled}}.dump() << '\n';
+            return EXIT_SUCCESS;
+        }
+        if (action == "configure-password") {
+            ime::unix_service::CommitStore store(database);
+            store.configure_password(password_option(options));
+            std::cout << "configured=1 enabled=1\n";
+            return EXIT_SUCCESS;
+        }
+        if (action == "set-recording") {
+            const auto enabled = require(options, "--enabled");
+            if (enabled != "0" && enabled != "1") throw std::invalid_argument("invalid --enabled");
+            ime::unix_service::CommitStore store(database);
+            store.set_recording_enabled(enabled == "1");
+            std::cout << "enabled=" << enabled << '\n';
+            return EXIT_SUCCESS;
+        }
+        if (action == "reset-conversation-data") {
+            ime::unix_service::CommitStore store(database);
+            store.reset_conversation_data();
+            std::cout << "cleared=1\n";
+            return EXIT_SUCCESS;
+        }
+        Database db(database);
+        if (action == "list") list(db.get(), options);
         else if (action == "exclude" || action == "delete") change_state(db, action, require(options, "--id"));
         else if (action == "dataset" || action == "train") {
             const fs::path model_dir = fs::absolute(require(options, "--model-dir"));
             const fs::path tables = fs::absolute(require(options, "--tables-dir"));
-            if (action == "train") train(db, options, model_dir, tables, fs::absolute(require(options, "--output-dir")), database);
+            ime::unix_service::CommitCipher cipher;
+            unlock(cipher, db.get(), options);
+            if (action == "train") train(db, options, model_dir, tables, fs::absolute(require(options, "--output-dir")),
+                                          database, cipher);
             else {
+                const auto decryption = cipher.decryption();
                 const auto dataset = ime::unix_service::write_numeric_dataset(
-                    db.get(), tables, model_dir / "config.json", require(options, "--output"), 384);
+                    db.get(), tables, model_dir / "config.json", require(options, "--output"), 384, nullptr,
+                    &decryption);
                 std::cout << "trainable=" << dataset.included_ids.size() << " skipped=" << dataset.skipped << '\n';
             }
         } else throw std::invalid_argument("unknown action");

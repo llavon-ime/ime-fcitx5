@@ -71,7 +71,8 @@ else:sys.exit(2)
         args = json.loads(Path(str(trainer) + '.args').read_text())
         assert '--no-shuffle' in args and args[args.index('--max-steps') + 1] == '1'
         assert args[args.index('--device') + 1] == 'auto'
-        assert len((output/'training.jsonl').read_text().splitlines()) == 3
+        assert not (output/'training.jsonl').exists(), 'the readable dataset must be removed after training'
+        assert (output/'adapter').is_dir()
         with sqlite3.connect(db) as connection:
             assert connection.execute("SELECT state FROM commits WHERE id LIKE 'aaaa%'").fetchone()[0] == 'trained'
             assert connection.execute("SELECT state FROM commits WHERE id LIKE 'bbbb%'").fetchone()[0] == 'excluded'

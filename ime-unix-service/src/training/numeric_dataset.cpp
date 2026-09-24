@@ -124,7 +124,17 @@ std::vector<int> tokenize_context(const std::string& text, const Tables& tables)
     return tokens;
 }
 
-struct Row { std::string id, context, answer; std::vector<std::pair<std::string, char32_t>> entries; bool manually_selected = false; };
+struct Row {
+    std::string id, context, answer;
+    std::vector<std::pair<std::string, char32_t>> entries;
+    bool manually_selected = false;
+    int schema_version = 1;
+};
+
+std::string column_text(sqlite3_stmt* statement, int column) {
+    const auto* value = sqlite3_column_text(statement, column);
+    return value == nullptr ? std::string{} : std::string(reinterpret_cast<const char*>(value));
+}
 
 std::optional<json> build_row(const Row& row, const Tables& tables, int max_length) {
     const auto answer = utf8::utf8to32(row.answer);
@@ -177,7 +187,8 @@ std::optional<json> build_row(const Row& row, const Tables& tables, int max_leng
 NumericDataset write_numeric_dataset(sqlite3* db, const std::filesystem::path& tables_dir,
                                       const std::filesystem::path& model_config,
                                       const std::filesystem::path& output, int max_sequence_length,
-                                      const std::unordered_set<std::string>* selected_ids) {
+                                      const std::unordered_set<std::string>* selected_ids,
+                                      const commit_crypto::Decryption* decryption) {
     const auto config = load(model_config);
     NumericDataset result;
     result.vocab_size = config.at("vocab_size").get<int>();
@@ -187,9 +198,19 @@ NumericDataset write_numeric_dataset(sqlite3* db, const std::filesystem::path& t
     const auto tables = load_tables(tables_dir, result.vocab_size, model_config.parent_path() / "ime_vocab.json");
     result.pad_token_id = tables.special.at("<PAD>");
     sqlite3_stmt* query = nullptr;
-    if (sqlite3_prepare_v2(db, "SELECT c.id,c.context,c.answer,r.reading,r.character,r.manually_selected FROM commits c "
-                               "JOIN readings r ON r.commit_id=c.id WHERE c.state='pending' ORDER BY c.id,r.position",
+    if (sqlite3_prepare_v2(db, "SELECT c.id,c.context,c.answer,r.reading,r.position,r.character,r.manually_selected,"
+                               "c.schema_version FROM commits c JOIN readings r ON r.commit_id=c.id "
+                               "WHERE c.state='pending' ORDER BY c.id,r.position",
                            -1, &query, nullptr) != SQLITE_OK) throw std::runtime_error(sqlite3_errmsg(db));
+    // Only rows sealed after the password was configured are trainable; a
+    // password-verified caller must never see a plaintext row slip through.
+    const bool decrypt = decryption != nullptr && decryption->configured;
+    auto field = [&](const std::string& id, std::string_view name, int column) {
+        const auto value = column_text(query, column);
+        if (!decrypt) return value;
+        return commit_crypto::open(value, commit_crypto::field_identity(id, name),
+                                   *decryption->parameters, *decryption->private_key);
+    };
     auto partial = output; partial += ".partial";
     if (!output.parent_path().empty()) std::filesystem::create_directories(output.parent_path());
     std::filesystem::remove(partial);
@@ -208,15 +229,26 @@ NumericDataset write_numeric_dataset(sqlite3* db, const std::filesystem::path& t
         };
         int status;
         while ((status = sqlite3_step(query)) == SQLITE_ROW) {
-            const std::string id = reinterpret_cast<const char*>(sqlite3_column_text(query, 0));
+            const std::string id = column_text(query, 0);
             if (row.id != id) {
-                flush(); row = Row{id,
-                    reinterpret_cast<const char*>(sqlite3_column_text(query, 1)),
-                    reinterpret_cast<const char*>(sqlite3_column_text(query, 2)), {}};
+                flush();
+                row = Row{};
+                row.id = id;
+                row.schema_version = sqlite3_column_int(query, 7);
+                if (decrypt && row.schema_version != 2)
+                    throw std::runtime_error("unencrypted training record blocked");
+                if (!decrypt && row.schema_version == 2)
+                    throw std::runtime_error("training password required");
+                row.context = field(id, "context", 1);
+                row.answer = field(id, "answer", 2);
             }
-            row.entries.emplace_back(reinterpret_cast<const char*>(sqlite3_column_text(query, 3)),
-                                      static_cast<char32_t>(sqlite3_column_int64(query, 4)));
-            row.manually_selected |= sqlite3_column_int(query, 5) != 0;
+            const auto position = sqlite3_column_int(query, 4);
+            const auto reading = decrypt
+                ? commit_crypto::open(column_text(query, 3), commit_crypto::reading_identity(id, position),
+                                      *decryption->parameters, *decryption->private_key)
+                : column_text(query, 3);
+            row.entries.emplace_back(reading, static_cast<char32_t>(sqlite3_column_int64(query, 5)));
+            row.manually_selected |= sqlite3_column_int(query, 6) != 0;
         }
         if (status != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db));
         flush();

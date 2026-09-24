@@ -1,3 +1,5 @@
+#include "commit_store.hpp"
+
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
 
@@ -28,6 +30,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -144,6 +147,11 @@ progress{width:100%;height:6px;accent-color:var(--accent);border:none;border-rad
 .tagrow{display:flex;gap:6px;flex-wrap:wrap}
 .path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:var(--muted);overflow-wrap:anywhere}
 .empty{margin:0;color:var(--muted);font-size:12px}
+.protection{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
+.protection .hint{color:var(--muted);font-size:11px}
+.protection input[type=password]{width:150px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:12px}
+.protection-setup{display:grid;gap:8px;margin-bottom:10px;padding:12px;border:1px dashed var(--accent);border-radius:10px;background:var(--paper)}
+.locked-note{margin:0;color:var(--muted);font-size:12px}
 </style>
 <div class="site-shell">
 <header class="topbar">
@@ -159,7 +167,7 @@ progress{width:100%;height:6px;accent-color:var(--accent);border:none;border-rad
 <main class="page-content">
   <div class="page-heading">
     <h1>個人化訓練</h1>
-    <p>收集開關仍在輸入法設定中。基礎模型 <span class="mono">tony65535/llavon-ime-llama-250m</span>（約 1 GB，CC-BY-NC-4.0）。</p>
+    <p>在輸入法設定開啟收集，並在下方設定密碼後才會加密保存。基礎模型 <span class="mono">tony65535/llavon-ime-llama-250m</span>（約 1 GB，CC-BY-NC-4.0）。</p>
   </div>
   <div id="message" class="notice">連線中…</div>
   <section class="form-card">
@@ -176,6 +184,13 @@ progress{width:100%;height:6px;accent-color:var(--accent);border:none;border-rad
           <span id="page-summary"></span>
           <span id="selection-summary"></span>
         </div>
+      </div>
+      <div id="protection" class="protection"></div>
+      <div id="password-setup" class="protection-setup" hidden>
+        <label class="field"><span>密碼</span><input id="setup-password" type="password" autocomplete="new-password"></label>
+        <label class="field"><span>再次輸入密碼</span><input id="setup-confirmation" type="password" autocomplete="new-password"></label>
+        <p class="field-hint">密碼不會被系統保存；忘記密碼只能清除已保存的對話資料，模型與訓練歷程會保留。</p>
+        <div class="row"><button id="setup-cancel" class="ghost tiny">取消</button><button id="setup-confirm" class="primary tiny">設定並開始收集</button></div>
       </div>
       <div id="records" class="records"></div>
     </div>
@@ -196,6 +211,8 @@ progress{width:100%;height:6px;accent-color:var(--accent);border:none;border-rad
         <span class="field-label"><span class="field-index">03</span>訓練設定</span>
       </div>
       <div id="training-options" class="options"></div>
+      <label class="field" id="train-password-field" hidden><span>訓練密碼</span><input id="train-password" type="password" autocomplete="current-password"></label>
+      <p class="field-hint" id="train-password-hint" hidden>「檢視與選擇」與「開始訓練」各自要求密碼，兩者不共用解鎖狀態。</p>
       <div class="estimate"><span id="estimated-steps">預計 steps：0</span><progress id="progress" max="100" style="display:none"></progress></div>
       <div class="row"><button id="install-trainer" class="ghost">安裝／更新 LoRA Trainer</button><button id="cancel" class="ghost">取消目前工作</button><button id="train" class="primary">開始訓練 →</button></div>
       <small id="trainer-status" class="hint"></small>
@@ -223,6 +240,7 @@ let pendingIds=[];
 let reviewedIds=null;
 let readingsTable={};
 let activeModelPath='';
+let protectionInfo={configured:false,enabled:false,unlocked:false};
 function updateEstimate(){
   const count=pendingIds.filter(id=>selectedIds.get(id)!==false).length;
   document.getElementById('selection-summary').textContent=`已選 ${count} / ${pendingIds.length} 筆`;
@@ -268,6 +286,51 @@ function stateChip(state){
   const chip=document.createElement('span');chip.className='chip '+(state==='pending'?'':state);
   chip.textContent={pending:'待訓練',excluded:'已排除',trained:'已訓練'}[state]||state;
   return chip;
+}
+function renderProtection(info){
+  const bar=document.getElementById('protection');bar.replaceChildren();
+  const chip=document.createElement('span');chip.className='chip '+((info.configured&&info.enabled)?'trained':'');
+  chip.textContent=!info.configured?'尚未設定密碼':(info.enabled?'加密收集已啟用':'加密收集已停用');
+  bar.append(chip);
+  const note=document.createElement('span');note.className='hint';
+  document.getElementById('password-setup').hidden=true;
+  document.getElementById('train-password-field').hidden=!info.configured;
+  document.getElementById('train-password-hint').hidden=!info.configured;
+  if(!info.configured){
+    note.textContent='設定密碼後才會加密記錄你送出的句子；資料只留在本機。';
+    const setup=document.createElement('button');setup.className='primary tiny';setup.textContent='設定密碼並開始收集';
+    setup.onclick=()=>{const panel=document.getElementById('password-setup');panel.hidden=!panel.hidden;
+      if(!panel.hidden)document.getElementById('setup-password').focus();};
+    bar.append(note,setup);
+    return;
+  }
+  if(info.unlocked){
+    note.textContent='已解鎖，可檢視與選擇。';
+    const lock=document.createElement('button');lock.className='ghost tiny';lock.textContent='鎖定';
+    lock.onclick=()=>act('lock',{});bar.append(note,lock);
+  }else{
+    note.textContent='內容已加密，輸入密碼後才能檢視。';
+    const password=document.createElement('input');password.type='password';password.placeholder='密碼';
+    password.autocomplete='current-password';
+    const unlock=document.createElement('button');unlock.className='primary tiny';unlock.textContent='解鎖檢視';
+    unlock.onclick=async()=>{
+      try{await api('unlock',{password:password.value});password.value='';await refresh();}
+      catch(error){message.className='notice error';message.textContent=error.message;}
+    };
+    password.onkeydown=event=>{if(event.key==='Enter')unlock.click();};
+    bar.append(note,password,unlock);
+  }
+  const toggle=document.createElement('button');toggle.className='ghost tiny';
+  toggle.textContent=info.enabled?'停用收集':'啟用收集';
+  toggle.onclick=()=>act('protection',{action:info.enabled?'disable':'enable'});
+  const forget=document.createElement('button');forget.className='ghost tiny danger';
+  forget.textContent='忘記密碼，清除所有對話資料';
+  forget.onclick=async()=>{
+    if(!confirm('將停止收集並清除所有已保存的對話紀錄；模型與訓練歷程會保留。要繼續嗎？'))return;
+    if(!confirm('再次確認：清除後無法復原已保存的對話。'))return;
+    await act('protection',{action:'forget'});
+  };
+  bar.append(toggle,forget);
 }
 function tableReadings(character){
   const known=readingsTable[character];
@@ -321,9 +384,6 @@ function recordCard(item, viewState){
   }
   const time=document.createElement('span');time.className='time';time.textContent=item.committed_at;
   head.append(time,stateChip(viewState));
-  const aligned=(item.readings||[]).length>=Array.from(item.answer||'').length;
-  const alignment=document.createElement('span');alignment.className='align'+(aligned?'':' partial');
-  alignment.textContent=aligned?'已完整對齊':'部分對齊';head.append(alignment);
   const actions=document.createElement('div');actions.className='actions';
   const buttons=viewState==='pending'?[['排除','exclude'],['刪除','delete']]:[['刪除','delete']];
   for(const [label,action] of buttons){
@@ -334,6 +394,15 @@ function recordCard(item, viewState){
     actions.append(button);
   }
   head.append(actions);
+  if(item.text===false){
+    // Sealed records keep their selection controls; only the text needs the
+    // password, and the manager never returns it without one.
+    const note=document.createElement('p');note.className='locked-note';note.textContent='內容已加密・解鎖後才能檢視';
+    card.append(head,note);return card;
+  }
+  const aligned=(item.readings||[]).length>=Array.from(item.answer||'').length;
+  const alignment=document.createElement('span');alignment.className='align'+(aligned?'':' partial');
+  alignment.textContent=aligned?'已完整對齊':'部分對齊';head.append(alignment);
   const foot=document.createElement('div');foot.className='record-foot';
   if((item.manual||[]).some(Boolean)){
     // Windows marks records that contain a manual candidate choice and gives
@@ -383,6 +452,8 @@ async function refresh() {
   try {
     const state=await api('state');
     activeModelPath=state.active_model_path||'';
+    protectionInfo=await api('protection');
+    renderProtection(protectionInfo);
     const job=state.job;
     message.className='notice'+(job.state==='failed'?' error':'');
     message.textContent=job.state==='running' ? ({fetch:'正在下載模型',check:'正在檢查模型更新',install:'正在安裝 Trainer',train:'正在訓練及匯出模型'}[job.kind])+(job.progress?'・'+job.progress:'')
@@ -438,12 +509,30 @@ document.getElementById('train').onclick=async()=>{
   try{
     const ids=reviewedIds.filter(id=>selectedIds.get(id)!==false);
     if(!ids.length)throw Error('請至少選取一筆訓練紀錄');
+    let password='';
+    if(protectionInfo.configured){
+      // Training asks for its own password; it never reuses the review unlock.
+      password=document.getElementById('train-password').value;
+      if(!password)throw Error('請先輸入訓練密碼');
+    }
     const options=Object.fromEntries(fields.map(([name])=>[name,document.getElementById(name).value]));
     options.device=document.getElementById('device').value;
     options.dtype=document.getElementById('dtype').value;
     options.shuffle=document.getElementById('shuffle').checked?'1':'0';
     if(!confirm(`以 ${ids.length} 筆資料開始訓練？未勾選的紀錄將被排除。`))return;
-    await act('train',{ids,reviewed:reviewedIds,options});
+    await act('train',{ids,reviewed:reviewedIds,options,password});
+    document.getElementById('train-password').value='';
+  }catch(error){message.className='notice error';message.textContent=error.message;}
+};
+document.getElementById('setup-cancel').onclick=()=>{document.getElementById('password-setup').hidden=true;};
+document.getElementById('setup-confirm').onclick=async()=>{
+  const password=document.getElementById('setup-password').value;
+  const confirmation=document.getElementById('setup-confirmation').value;
+  try{
+    await api('protection',{action:'set-password',password,confirmation});
+    document.getElementById('setup-password').value='';document.getElementById('setup-confirmation').value='';
+    document.getElementById('password-setup').hidden=true;
+    await refresh();
   }catch(error){message.className='notice error';message.textContent=error.message;}
 };
 document.getElementById('cancel').onclick=()=>act('cancel',{});
@@ -864,8 +953,7 @@ bool trainer_ready(const fs::path& executable, const fs::path& state) {
     return trainer_usable(executable);
 }
 
-json query_database(const fs::path& path, const char* sql, int columns) {
-    if (!fs::is_regular_file(path)) return json::array();
+json query_database(const fs::path& path, const char* sql, int columns) {    if (!fs::is_regular_file(path)) return json::array();
     sqlite3* db = nullptr;
     if (sqlite3_open_v2(path.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         const std::string error = db ? sqlite3_errmsg(db) : "cannot open training database";
@@ -895,6 +983,28 @@ struct Options {
     fs::path state, db, cli, tables, trainer;
     bool browser = true;
     int idle_seconds = 120;
+};
+
+// The encrypted store helpers need a live connection, and the manager keeps no
+// long-lived handle; one connection serves each request.
+class DatabaseHandle {
+public:
+    explicit DatabaseHandle(const fs::path& path) {
+        if (!fs::is_regular_file(path)) throw std::runtime_error("找不到訓練資料庫");
+        if (sqlite3_open_v2(path.c_str(), &db_, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
+            const std::string error = db_ ? sqlite3_errmsg(db_) : "cannot open training database";
+            sqlite3_close(db_); db_ = nullptr; throw std::runtime_error(error);
+        }
+        sqlite3_busy_timeout(db_, 1000);
+        ime::unix_service::initialize_commit_database(db_);
+    }
+    ~DatabaseHandle() { if (db_) sqlite3_close(db_); }
+    DatabaseHandle(const DatabaseHandle&) = delete;
+    DatabaseHandle& operator=(const DatabaseHandle&) = delete;
+    sqlite3* get() const { return db_; }
+
+private:
+    sqlite3* db_ = nullptr;
 };
 
 // Windows exposes the same override for its dev/test asset root.
@@ -1071,15 +1181,28 @@ private:
         job_.pid = -1;
     }
 
-    void start_job(const std::string& kind, std::vector<std::string> args, fs::path output) {
+    // The training password never reaches argv or the environment: it travels
+    // through a private pipe that the CLI reads from descriptor 3.
+    void start_job(const std::string& kind, std::vector<std::string> args, fs::path output,
+                   const std::string& password = {}) {
         update_job();
         if (job_.pid >= 0) throw std::runtime_error("已有工作進行中");
         job_ = Job{.kind = kind, .state = "running", .log = options_.state / "gui-job.log", .output = std::move(output)};
         std::ofstream(job_.log, std::ios::trunc).close();
+        int password_pipe[2] = {-1, -1};
+        if (!password.empty() && ::pipe(password_pipe) != 0) throw std::runtime_error("cannot pass the training password");
         const pid_t child = ::fork();
-        if (child < 0) throw std::runtime_error("cannot start CLI");
+        if (child < 0) {
+            if (password_pipe[0] >= 0) { ::close(password_pipe[0]); ::close(password_pipe[1]); }
+            throw std::runtime_error("cannot start CLI");
+        }
         if (child == 0) {
             ::setsid();
+            if (password_pipe[0] >= 0) {
+                if (::dup2(password_pipe[0], 3) < 0) _exit(127);
+                ::close(password_pipe[0]);
+                ::close(password_pipe[1]);
+            }
             if (kind == "train") ::setenv("LLAVON_IME_LORA_CLI_PATH", options_.trainer.c_str(), 1);
             const int log = ::open(job_.log.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0600);
             if (log < 0 || ::dup2(log, STDOUT_FILENO) < 0 || ::dup2(log, STDERR_FILENO) < 0) _exit(127);
@@ -1092,7 +1215,81 @@ private:
             ::execv(argv[0], argv.data());
             _exit(127);
         }
+        if (password_pipe[0] >= 0) {
+            ::close(password_pipe[0]);
+            std::string line = password + "\n";
+            const auto written = ::write(password_pipe[1], line.data(), line.size());
+            const bool complete = written == static_cast<ssize_t>(line.size());
+            if (written > 0) sodium_memzero(line.data(), static_cast<std::size_t>(written));
+            ::close(password_pipe[1]);
+            if (!complete) { (void)::kill(-child, SIGTERM); (void)::waitpid(child, nullptr, 0); job_.pid = -1;
+                             throw std::runtime_error("cannot pass the training password"); }
+        }
         job_.pid = child;
+    }
+
+    // Encrypted collection: the manager never returns typed text without a
+    // password, and it forgets the derived key as soon as it is locked.
+    json protection() const {
+        json status{{"configured", false}, {"enabled", false}, {"unlocked", false}};
+        if (fs::is_regular_file(db_)) {
+            DatabaseHandle handle(db_);
+            const auto stored = ime::unix_service::read_commit_protection(handle.get());
+            status["configured"] = stored.configured;
+            status["enabled"] = stored.enabled;
+        }
+        status["unlocked"] = cipher_.has_value() && cipher_->unlocked();
+        return status;
+    }
+
+    void unlock_review(const std::string& password) {
+        if (password.empty()) throw std::runtime_error("請輸入密碼");
+        DatabaseHandle handle(db_);
+        if (!ime::unix_service::read_commit_protection(handle.get()).configured)
+            throw std::runtime_error("尚未設定密碼");
+        cipher_.emplace();
+        try { cipher_->unlock(handle.get(), password); }
+        catch (...) { cipher_.reset(); throw; }
+        discard_plaintext_datasets();
+    }
+
+    void lock_review() { cipher_.reset(); }
+
+    void configure_password(const std::string& password, const std::string& confirmation) {
+        if (password.empty()) throw std::runtime_error("密碼不可為空");
+        if (password != confirmation) throw std::runtime_error("兩次輸入的密碼不同");
+        ime::unix_service::CommitStore store(db_);
+        store.configure_password(password);
+        discard_plaintext_datasets();
+    }
+
+    void set_recording(bool enabled) {
+        ime::unix_service::CommitStore store(db_);
+        store.set_recording_enabled(enabled);
+        if (!enabled) cipher_.reset();
+    }
+
+    // Keeps the LoRA models and the training history; only the conversation
+    // records and the derived keys go away.
+    void forget_conversation_data() {
+        if (job_.pid >= 0) throw std::runtime_error("請先等待目前工作結束或取消");
+        ime::unix_service::CommitStore store(db_);
+        store.reset_conversation_data();
+        cipher_.reset();
+        discard_plaintext_datasets();
+    }
+
+    // A training run only needs its readable dataset while it runs, and a
+    // killed process can leave one behind. Only application-owned filenames
+    // inside a real run directory are removed; symlinks are never followed.
+    void discard_plaintext_datasets() const {
+        std::error_code error;
+        for (const auto& entry : fs::directory_iterator(runs_root(options_), error)) {
+            if (entry.is_symlink() || !entry.is_directory()) continue;
+            std::error_code ignored;
+            fs::remove(entry.path() / "training.jsonl", ignored);
+            fs::remove(entry.path() / "training.jsonl.partial", ignored);
+        }
     }
 
     json records(const std::string& requested) const {
@@ -1115,27 +1312,40 @@ private:
         }
         if (state != "pending" && state != "excluded" && state != "trained")
             throw std::runtime_error("invalid record state");
-        auto rows = query_database(db_,
-            ("WITH recent AS (SELECT id,committed_at,context,answer FROM commits WHERE state='" + state + "' "
-            "ORDER BY committed_at DESC,id DESC LIMIT " + std::to_string(kRecordsPerPage + 1) + " OFFSET " +
-            std::to_string(offset) + ") "
-            "SELECT c.id,c.committed_at,c.context,c.answer,r.reading,r.manually_selected FROM recent c "
-            "LEFT JOIN readings r ON r.commit_id=c.id ORDER BY c.committed_at DESC,c.id DESC,r.position").c_str(), 6);
-        json entries = json::array();
-        for (const auto& row : rows) {
-            if (entries.empty() || entries.back().at("id") != row[0])
-                entries.push_back({{"id",row[0]}, {"committed_at",row[1]}, {"context",row[2]},
-                                   {"answer",row[3]}, {"readings",json::array()}, {"manual",json::array()}});
-            if (!row[4].get<std::string>().empty()) {
-                entries.back()["readings"].push_back(row[4]);
-                entries.back()["manual"].push_back(row[5] == "1");
-            }
-        }
-        const bool has_more = entries.size() > kRecordsPerPage;
-        if (has_more) entries.erase(entries.end() - 1);
         const auto counted = query_database(db_,
             ("SELECT COUNT(*) FROM commits WHERE state='" + state + "'").c_str(), 1);
         const int total = counted.empty() ? 0 : std::stoi(counted[0][0].get<std::string>());
+        if (!fs::is_regular_file(db_)) return {{"rows",json::array()}, {"has_more",false}, {"total",total}};
+        const bool unlocked = cipher_.has_value() && cipher_->unlocked();
+        DatabaseHandle handle(db_);
+        const bool configured = ime::unix_service::read_commit_protection(handle.get()).configured;
+        if (configured && !unlocked) {
+            // Sealed records: the page learns that they exist, never what they
+            // say. Selection only needs the IDs, so reviewing stays possible.
+            const auto rows = query_database(db_,
+                ("SELECT id,committed_at FROM commits WHERE state='" + state + "' "
+                 "ORDER BY committed_at DESC,id DESC LIMIT " + std::to_string(kRecordsPerPage + 1) + " OFFSET " +
+                 std::to_string(offset)).c_str(), 2);
+            json locked_rows = json::array();
+            for (const auto& row : rows)
+                locked_rows.push_back({{"id",row[0]}, {"committed_at",row[1]}, {"context",""}, {"answer",""},
+                                        {"readings",json::array()}, {"manual",json::array()}, {"text",false}});
+            const bool sealed_more = locked_rows.size() > kRecordsPerPage;
+            if (sealed_more) locked_rows.erase(locked_rows.end() - 1);
+            return {{"rows",locked_rows}, {"has_more",sealed_more}, {"total",total}, {"locked",true}};
+        }
+        ime::unix_service::CommitCipher locked;
+        const auto& cipher = unlocked ? *cipher_ : locked;
+        json entries = json::array();
+        for (const auto& item : ime::unix_service::read_commits(handle.get(), state, cipher, offset, kRecordsPerPage + 1)) {
+            json readings = json::array(), manual = json::array();
+            for (const auto& reading : item.readings) readings.push_back(reading);
+            for (const bool value : item.manual) manual.push_back(value);
+            entries.push_back({{"id",item.id}, {"committed_at",item.committed_at}, {"context",item.context},
+                               {"answer",item.answer}, {"readings",readings}, {"manual",manual}, {"text",true}});
+        }
+        const bool has_more = entries.size() > kRecordsPerPage;
+        if (has_more) entries.erase(entries.end() - 1);
         return {{"rows",entries}, {"has_more",has_more}, {"total",total}};
     }
 
@@ -1264,12 +1474,14 @@ private:
         last_seen_ = Clock::now();
         if (request.method == "GET") {
             const json result = request.path == "/api/state" ? state() :
+                                request.path == "/api/protection" ? protection() :
                                 request.path == "/api/pending-ids" ? pending_ids() :
                                 request.path == "/api/readings" ? readings_table() :
                                 request.path.starts_with("/api/records?") || request.path == "/api/records" ? records(request.path) :
                                 request.path == "/api/runs" ? runs() : json{{"error","not found"}};
             respond(fd, request.path.starts_with("/api/") && request.path != "/api/state" &&
-                        request.path != "/api/pending-ids" && request.path != "/api/readings" &&
+                        request.path != "/api/protection" && request.path != "/api/pending-ids" &&
+                        request.path != "/api/readings" &&
                         request.path != "/api/records" && !request.path.starts_with("/api/records?") &&
                         request.path != "/api/runs" ? 404 : 200,
                     "application/json", result.dump()); return;
@@ -1284,6 +1496,23 @@ private:
             start_job("check", {"check-model", "--output-dir", assets_root(options_).string()}, {});
         } else if (request.path == "/api/install-trainer") {
             start_job("install", {"install-trainer", "--output-dir", (options_.state / "tools" / "lora").string()}, {});
+        } else if (request.path == "/api/unlock") {
+            const auto text = [&](const char* key) {
+                return body.contains(key) && body[key].is_string() ? body[key].get<std::string>() : std::string{};
+            };
+            unlock_review(text("password"));
+        } else if (request.path == "/api/lock") {
+            lock_review();
+        } else if (request.path == "/api/protection") {
+            const auto text = [&](const char* key) {
+                return body.contains(key) && body[key].is_string() ? body[key].get<std::string>() : std::string{};
+            };
+            const auto action = text("action");
+            if (action == "set-password") configure_password(text("password"), text("confirmation"));
+            else if (action == "enable") set_recording(true);
+            else if (action == "disable") set_recording(false);
+            else if (action == "forget") forget_conversation_data();
+            else throw std::runtime_error("unknown protection action");
         } else if (request.path == "/api/train") {
             if (!trainer_ready(options_.trainer, options_.state))
                 throw std::runtime_error("LoRA Trainer 尚未安裝或版本不符，請安裝／更新 LoRA Trainer");
@@ -1315,6 +1544,19 @@ private:
             { std::ofstream selected(selected_file, std::ios::trunc);
               selected << json{{"selected", ids}, {"reviewed", reviewed}}.dump();
               if (!selected) throw std::runtime_error("無法儲存選取的紀錄"); }
+            // Training asks for its own password; it is never shared with the
+            // review unlock. The CLI decrypts the records on its own.
+            std::string password;
+            if (body.contains("password") && body["password"].is_string())
+                password = body["password"].get<std::string>();
+            {
+                DatabaseHandle handle(db_);
+                if (ime::unix_service::read_commit_protection(handle.get()).configured) {
+                    if (password.empty()) throw std::runtime_error("請先輸入訓練密碼");
+                    ime::unix_service::CommitCipher verify;
+                    verify.unlock(handle.get(), password);  // wrong password fails before the job starts
+                }
+            }
             std::vector<std::string> args{"train", "--db", db_.string(), "--model-dir", (assets / revision).string(),
                 "--tables-dir", options_.tables.string(), "--output-dir", output.string(),
                 "--revision", revision, "--selected-ids", selected_file.string()};
@@ -1326,7 +1568,8 @@ private:
                 if (value.size() > 100) throw std::runtime_error("訓練參數過長");
                 args.push_back(value);
             }
-            start_job("train", std::move(args), output);
+            if (!password.empty()) args.insert(args.end(), {"--password-fd", "3"});
+            start_job("train", std::move(args), output, password);
         } else if (request.path == "/api/cancel") {
             update_job();
             if (job_.pid < 0) throw std::runtime_error("沒有執行中的工作");
@@ -1363,6 +1606,8 @@ private:
     Clock::time_point last_seen_{};
     json readings_cache_ = json::object();
     bool readings_loaded_ = false;
+    // Only while the review password is entered; locking wipes the key.
+    std::optional<ime::unix_service::CommitCipher> cipher_;
 };
 
 } // namespace

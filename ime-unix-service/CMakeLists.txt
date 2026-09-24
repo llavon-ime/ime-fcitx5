@@ -23,6 +23,7 @@ find_package(Threads REQUIRED)
 find_package(SQLite3 REQUIRED)
 find_package(utf8cpp CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(unofficial-sodium CONFIG REQUIRED)
 
 add_executable(${IME_UNIX_SERVICE_TARGET}
     src/main.cpp
@@ -35,7 +36,8 @@ add_executable(${IME_UNIX_SERVICE_TARGET}
     src/session/session_manager.cpp
     src/training/commit_store.cpp
 )
-target_link_libraries(${IME_UNIX_SERVICE_TARGET} PRIVATE ime-core::ime-core Threads::Threads SQLite3::SQLite3 utf8cpp::utf8cpp)
+target_link_libraries(${IME_UNIX_SERVICE_TARGET} PRIVATE ime-core::ime-core Threads::Threads SQLite3::SQLite3
+    utf8cpp::utf8cpp unofficial-sodium::sodium)
 
 target_compile_features(${IME_UNIX_SERVICE_TARGET} PRIVATE cxx_std_23)
 set_target_properties(${IME_UNIX_SERVICE_TARGET} PROPERTIES
@@ -85,15 +87,16 @@ target_compile_definitions(llavon-ime-lora PRIVATE
     LLAVON_IME_LORA_PINNED_COMMIT="${LLAVON_LORA_COMMIT}"
     LLAVON_IME_INSTALLED_LORA_TRAINER_PATH="${LLAVON_IME_INSTALLED_LORA_TRAINER_PATH}")
 target_include_directories(llavon-ime-lora PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(llavon-ime-lora PRIVATE SQLite3::SQLite3 utf8cpp::utf8cpp nlohmann_json::nlohmann_json)
+target_link_libraries(llavon-ime-lora PRIVATE SQLite3::SQLite3 utf8cpp::utf8cpp nlohmann_json::nlohmann_json unofficial-sodium::sodium)
 install(TARGETS llavon-ime-lora RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
-add_executable(llavon-ime-lora-gui src/training/lora_gui.cpp)
+add_executable(llavon-ime-lora-gui src/training/lora_gui.cpp src/training/commit_store.cpp src/pipe/protocol.cpp)
 target_compile_features(llavon-ime-lora-gui PRIVATE cxx_std_23)
 target_compile_definitions(llavon-ime-lora-gui PRIVATE
     LLAVON_IME_LORA_PINNED_COMMIT="${LLAVON_LORA_COMMIT}"
     LLAVON_IME_INSTALLED_LORA_TRAINER_PATH="${LLAVON_IME_INSTALLED_LORA_TRAINER_PATH}"
     LLAVON_IME_GUI_INSTALLED_TABLES_DIR="${CMAKE_INSTALL_FULL_DATADIR}/llavon-ime/tables")
-target_link_libraries(llavon-ime-lora-gui PRIVATE SQLite3::SQLite3 nlohmann_json::nlohmann_json)
+target_link_libraries(llavon-ime-lora-gui PRIVATE SQLite3::SQLite3 utf8cpp::utf8cpp nlohmann_json::nlohmann_json unofficial-sodium::sodium)
+target_include_directories(llavon-ime-lora-gui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 install(TARGETS llavon-ime-lora-gui RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(DIRECTORY "${IME_CORE_SOURCE_DIR}/table/"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/llavon-ime/tables")
@@ -112,6 +115,9 @@ if(IME_UNIX_SERVICE_BUILD_TESTS)
     add_test(NAME ime_unix_lora_training_options_tests
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/lora_training_options_tests.py"
                 "$<TARGET_FILE:llavon-ime-lora>" "${IME_CORE_SOURCE_DIR}/table" "${LLAVON_LORA_COMMIT}")
+    add_test(NAME ime_unix_lora_protection_tests
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/lora_protection_tests.py"
+                "$<TARGET_FILE:llavon-ime-lora>")
     add_executable(ime_unix_service_tests
         tests/protocol_tests.cpp
         src/pipe/protocol.cpp
@@ -126,6 +132,6 @@ if(IME_UNIX_SERVICE_BUILD_TESTS)
     target_include_directories(ime_unix_service_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_compile_definitions(ime_unix_service_tests PRIVATE
         IME_UNIX_SERVICE_TEST_TABLE_DIR="${IME_CORE_SOURCE_DIR}/table")
-    target_link_libraries(ime_unix_service_tests PRIVATE ime-core::ime-core Threads::Threads SQLite3::SQLite3 utf8cpp::utf8cpp nlohmann_json::nlohmann_json)
+    target_link_libraries(ime_unix_service_tests PRIVATE ime-core::ime-core Threads::Threads SQLite3::SQLite3 utf8cpp::utf8cpp nlohmann_json::nlohmann_json unofficial-sodium::sodium)
     add_test(NAME ime_unix_service_tests COMMAND ime_unix_service_tests)
 endif()
