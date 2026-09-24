@@ -42,6 +42,16 @@ if [ -n "${console_user}" ] && id "${console_user}" >/dev/null 2>&1; then
         sleep 1
     done
 
+    # Terminate the text input menu agent before registering so the relaunched
+    # agent picks up the newly registered input source; this is what keeps a
+    # first install from needing a log out (the same step vChewing's package
+    # takes). The agent belongs to the console user's GUI session, so it is
+    # killed with the user's privileges. Only this agent is targeted: killing
+    # imklaunchagent would cut every running app off from its input method
+    # until the app is restarted.
+    as_user /usr/bin/killall TextInputMenuAgent >/dev/null 2>&1 || true
+    sleep 0.5
+
     # Replacing the bundle makes the text input system drop the enabled input
     # source, which is what leaves the input menu without 「拉風輸入法」 after an
     # install. Register the new bundle, enable the source again, and put it
@@ -71,8 +81,8 @@ if [ -n "${console_user}" ] && id "${console_user}" >/dev/null 2>&1; then
 
     # TextInputSwitcher caches input source icons in memory and ignores
     # SIGTERM, so a stale instance keeps showing an icon-less switcher HUD.
-    # The menu agent and CursorUIViewService are left alone: killing them takes
-    # the input menu and the caret UI down with it.
+    # CursorUIViewService is left alone: killing it takes the caret UI down
+    # with it.
     /usr/bin/killall -9 -u "${console_user}" TextInputSwitcher >/dev/null 2>&1 || true
 
     # Launch the input method once. A replaced bundle leaves the text input
