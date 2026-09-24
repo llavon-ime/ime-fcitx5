@@ -177,6 +177,16 @@ https://huggingface.co/tony65535/llavon-ime-llama-250m-GGUF
 
 舊版 `IME_FCITX5_*` 環境變數名稱仍相容（例如 `IME_FCITX5_MODEL_PATH`）。
 
+### 本機 LoRA 個人化（命令列）
+
+注音提交資料的收集預設關閉；在輸入法設定勾選「收集個人化訓練資料」後，
+可用服務安裝的 `llavon-ime-lora` 列出、排除或刪除待訓練紀錄，並以選配的
+[`lora-trainer`](https://github.com/llavon-ime/lora-trainer) 訓練個人化模型。
+也可從輸入法選單的「管理個人化訓練…」或設定頁面的「使用我的輸入改進模型」按鈕開啟共用的本機網頁介面，
+在瀏覽器檢視紀錄、下載基礎模型與管理訓練工作。
+訓練需要另外下載未量化的基礎 checkpoint；套件內的 Q4 GGUF 只供推論使用。
+完整指令及模型相容性說明見 [Unix 服務文件](ime-unix-service/README.md#optional-local-lora-training)。
+
 ## 預測上下文
 
 - Linux：透過 AT-SPI 取得游標前文字。

@@ -1,6 +1,7 @@
 #include "host/engine.hpp"
 
 #include <algorithm>
+#include <random>
 #include <utility>
 #include <vector>
 
@@ -22,7 +23,8 @@ Engine::Engine(EngineOptions options, Host& host)
       phrase_overrides_(options_.phrase_overrides_path),
       processor_(fallback_, decoder_, phrase_overrides_),
       transport_(options_.transport),
-      config_(options_.config) {
+      config_(options_.config),
+      on_training_commit_(options_.on_training_commit) {
     processor_.set_state_observer([this](InputStateKind previous, InputStateKind next) {
         if (accessibility_context_ == nullptr) return;
         if (previous == InputStateKind::Empty && next == InputStateKind::Inputting) {
@@ -128,6 +130,17 @@ void Engine::set_config(Config config, bool settle_sessions) {
     }
 }
 
+void Engine::set_transport_options(ServiceTransportOptions options) {
+    transport_.reconfigure(std::move(options));
+    // Prediction sessions belonged to the service process that just went away.
+    // Late responses are ignored and each context opens a fresh session on
+    // the next prediction.
+    for (auto& [context, session] : sessions_) {
+        session->prediction.invalidate();
+        session->prediction.session_id = {};
+    }
+}
+
 void Engine::reload_phrase_overrides() {
     (void)phrase_overrides_.load();
 }
@@ -156,7 +169,33 @@ InputSession& Engine::find_or_create(ContextId context) {
 }
 
 void Engine::apply_effect(ContextId context, InputSession& session, const InputEffect& effect) {
-    if (!effect.commit.empty()) host_.commit(context, effect.commit);
+    if (!effect.commit.empty()) {
+        // Capture the context before the host inserts the committed text.
+        // The prediction path already strips client preedit when sampling it.
+        const auto training_context = session.context_text;
+        const bool allow_training = effect.training_sample && config_.collect_training_data &&
+                                    !host_.is_sensitive(context);
+        host_.commit(context, effect.commit);
+        if (allow_training) {
+            try {
+                if (on_training_commit_) {
+                    on_training_commit_(*effect.training_sample, training_context);
+                } else {
+                    protocol::RecordCommitRequest request;
+                    std::random_device random;
+                    for (auto& byte : request.event_id) byte = static_cast<std::uint8_t>(random());
+                    request.context = utf16_tail(training_context, 4096);
+                    request.answer = effect.training_sample->answer;
+                    for (const auto& entry : effect.training_sample->entries) {
+                        request.entries.push_back({entry.reading, entry.character, entry.manually_selected});
+                    }
+                    transport_.record_commit(std::move(request));
+                }
+            } catch (...) {
+                // Recording must never prevent a successful text commit.
+            }
+        }
+    }
     if (effect.request_prediction) request_prediction(context, session);
     if (effect.redraw) host_.update_ui(context);
 }

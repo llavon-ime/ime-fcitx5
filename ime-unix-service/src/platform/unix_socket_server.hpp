@@ -3,6 +3,7 @@
 #include "../engine/core_runtime.hpp"
 #include "../session/session_manager.hpp"
 #include "server_strategy.hpp"
+#include "training/commit_store.hpp"
 
 #include <filesystem>
 #include <atomic>
@@ -43,11 +44,14 @@ private:
     void accept_connections();
     void close_connections() noexcept;
     void cleanup_endpoint() noexcept;
+    bool record_commit(const protocol::RecordCommitRequest& request);
 
     UnixServerOptions options_;
     std::shared_ptr<CoreRuntime> runtime_;
     std::unique_ptr<SessionManager> sessions_;
     std::unique_ptr<WorkerPool> workers_;
+    std::mutex commit_mutex_;
+    std::unique_ptr<CommitStore> commits_;
     int listen_fd_ = -1;
     std::filesystem::path socket_path_;
     std::filesystem::path pid_path_;

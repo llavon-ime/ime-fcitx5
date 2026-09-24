@@ -59,8 +59,9 @@ if [[ "${FORMAT}" == "rpm" ]] && ! command -v rpmbuild >/dev/null 2>&1; then
 fi
 
 if [[ ! -f "${ROOT_DIR}/ime-core/CMakeLists.txt" ||
-      ! -f "${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" ]]; then
-    git -C "${ROOT_DIR}" submodule update --init ime-core vcpkg
+      ! -f "${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" ||
+      ! -f "${ROOT_DIR}/lora-trainer/.git" ]]; then
+    git -C "${ROOT_DIR}" submodule update --init ime-core vcpkg lora-trainer
 fi
 if [[ ! -x "${ROOT_DIR}/vcpkg/vcpkg" ]]; then
     rm -f "${ROOT_DIR}/vcpkg/vcpkg"
@@ -89,7 +90,8 @@ cmake \
     -DVCPKG_TARGET_TRIPLET="${TRIPLET}" \
     -DVCPKG_OVERLAY_TRIPLETS="${ROOT_DIR}/ime-unix-service/triplets" \
     -DVCPKG_MANIFEST_FEATURES=llama-vulkan \
-    -DIME_UNIX_SERVICE_BUILD_TESTS=ON
+    -DIME_UNIX_SERVICE_BUILD_TESTS=ON \
+    -DLLAVON_IME_INSTALLED_LORA_TRAINER_PATH="${PRIVATE_LIBDIR}/llavon-ime/tools/lora/llavon-lora"
 cmake --build "${SERVICE_BUILD_DIR}"
 ctest --test-dir "${SERVICE_BUILD_DIR}" --output-on-failure
 DESTDIR="${PKGROOT}" cmake --install "${SERVICE_BUILD_DIR}"
@@ -163,6 +165,8 @@ cmake \
 addon_path="$(find "${PKGROOT}/usr" -path '*/fcitx5/llavon-ime-addon.so' -print -quit)"
 required_files=(
     "${private_root}/llavon-ime-unix-service"
+    "${private_root}/llavon-ime-lora"
+    "${private_root}/llavon-ime-lora-gui"
     "${private_root}/atspi_probe"
     "${addon_path}"
     "${PKGROOT}/usr/share/fcitx5/addon/llavon-ime.conf"
@@ -196,6 +200,17 @@ for binary in "${elf_files[@]}"; do
             LD_LIBRARY_PATH="${private_root}" ldd "${binary}" >&2
             exit 1
         fi
+    fi
+done
+
+echo "Bundling the pinned LoRA Trainer release..."
+"${ROOT_DIR}/scripts/install-lora-trainer.sh" \
+    "${SERVICE_BUILD_DIR}/llavon-ime-lora" \
+    "${private_root}/tools/lora"
+for trainer_file in "${private_root}/tools/lora/llavon-lora" "${private_root}/tools/lora/trainer-release.json"; do
+    if [[ ! -f "${trainer_file}" ]]; then
+        echo "Missing packaged LoRA Trainer file: ${trainer_file}" >&2
+        exit 1
     fi
 done
 

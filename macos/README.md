@@ -87,6 +87,17 @@ configuration: adding an option to that schema is enough, because JSON/INI
 (de)serialization, the schema export in the C ABI and both config UIs derive
 from it. No Swift or addon code has to change for a new option.
 
+The **使用我的輸入改進模型** settings button (also available as
+**管理個人化訓練…** in the input menu) starts the separate
+`llavon-ime-lora-gui` executable in the installed service payload. It opens
+the same temporary local browser interface used on Linux; the native settings
+window continues to own the static config fields.
+The package bundles the pinned LoRA Trainer release under
+`/Library/Application Support/llavon-ime/tools/lora`; if that directory is
+missing (for example after a manual cleanup), the postinstall script downloads
+it and a failed download is non-fatal because the settings page can install it
+later.
+
 The model path follows the same rule as the fcitx5 addon: the value saved in
 the settings file, otherwise the installed model under
 `/Library/Application Support/llavon-ime/models`. `LLAVON_IME_MODEL_PATH` only

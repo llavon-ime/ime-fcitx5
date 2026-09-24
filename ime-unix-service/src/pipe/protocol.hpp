@@ -28,6 +28,7 @@ enum class MessageType : std::uint8_t {
     Status = 5,
     Shutdown = 6,
     Error = 7,
+    RecordCommit = 8,
 };
 
 enum class ErrorCode : std::uint8_t {
@@ -47,6 +48,18 @@ struct PaddingEntry {
     std::u16string bopomofo;
     char32_t chosen_char = 0;
 };
+struct CommitEntry {
+    std::u16string reading;
+    char32_t character = 0;
+    bool manually_selected = false;
+};
+struct RecordCommitRequest {
+    SessionId event_id{};
+    std::u16string context;
+    std::u16string answer;
+    std::vector<CommitEntry> entries;
+};
+struct RecordCommitResponse { SessionId event_id{}; bool stored = false; };
 
 struct OpenSessionRequest {};
 struct OpenSessionResponse {
@@ -113,7 +126,7 @@ struct Error {
 
 using Message = std::variant<OpenSessionRequest, OpenSessionResponse, PredictRequest, Prediction,
                              CloseSessionRequest, CloseSessionResponse, StatusRequest, StatusResponse,
-                             ShutdownRequest, ShutdownResponse, Error>;
+                             ShutdownRequest, ShutdownResponse, Error, RecordCommitRequest, RecordCommitResponse>;
 
 class ProtocolError : public std::runtime_error {
 public:

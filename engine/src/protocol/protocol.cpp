@@ -126,7 +126,8 @@ private:
 
 MessageType read_type(Reader& reader) {
     const auto raw = reader.read_u8();
-    if (raw < 1 || raw > 7) fail("unknown protocol message type: " + std::to_string(raw));
+    if (raw < 1 || raw > static_cast<std::uint8_t>(MessageType::RecordCommit))
+        fail("unknown protocol message type: " + std::to_string(raw));
     return static_cast<MessageType>(raw);
 }
 void count_ok(const Reader& reader, std::uint32_t count, std::size_t minimum, const char* field) {
@@ -240,6 +241,7 @@ MessageType message_type(const Message& message) {
         else if constexpr (std::is_same_v<T, CloseSessionRequest> || std::is_same_v<T, CloseSessionResponse>) return MessageType::CloseSession;
         else if constexpr (std::is_same_v<T, StatusRequest> || std::is_same_v<T, StatusResponse>) return MessageType::Status;
         else if constexpr (std::is_same_v<T, ShutdownRequest> || std::is_same_v<T, ShutdownResponse>) return MessageType::Shutdown;
+        else if constexpr (std::is_same_v<T, RecordCommitRequest> || std::is_same_v<T, RecordCommitResponse>) return MessageType::RecordCommit;
         else return MessageType::Error;
     }, message);
 }
@@ -264,6 +266,22 @@ ByteVector encode(const Message& message) {
         else if constexpr (std::is_same_v<T, StatusResponse>) { type(payload, MessageType::Status); u8(payload, 1); id(payload, value.service_epoch); u8(payload, value.shutting_down); u8(payload, value.model_loaded); u32(payload, value.active_sessions); u32(payload, value.max_sessions); u8(payload, value.session.has_value()); if (value.session) append_session_status(payload, *value.session); }
         else if constexpr (std::is_same_v<T, ShutdownRequest>) { type(payload, MessageType::Shutdown); u8(payload, 0); }
         else if constexpr (std::is_same_v<T, ShutdownResponse>) { type(payload, MessageType::Shutdown); u8(payload, 1); u8(payload, value.accepted); }
+        else if constexpr (std::is_same_v<T, RecordCommitRequest>) {
+            if (is_zero(value.event_id) || value.entries.empty() || value.entries.size() > 1024 ||
+                value.answer.empty()) fail("invalid commit sample");
+            type(payload, MessageType::RecordCommit); u8(payload, 0); id(payload, value.event_id);
+            text16(payload, value.context, "commit context", 4096);
+            text16(payload, value.answer, "commit answer", 1024);
+            u32(payload, checked(value.entries.size(), "commit entries", 1024));
+            for (const auto& entry : value.entries) {
+                text16(payload, entry.reading, "commit reading", 64);
+                if (entry.character == 0) fail("empty commit character");
+                scalar(payload, entry.character, "commit character"); u8(payload, entry.manually_selected);
+            }
+        }
+        else if constexpr (std::is_same_v<T, RecordCommitResponse>) {
+            type(payload, MessageType::RecordCommit); u8(payload, 1); id(payload, value.event_id); u8(payload, value.stored);
+        }
         else if constexpr (std::is_same_v<T, Error>) { const auto raw = static_cast<std::uint8_t>(value.code); if (raw < 1 || raw > 9) fail("unknown error code"); type(payload, MessageType::Error); u8(payload, raw); id(payload, value.session_id); u64(payload, value.request_id); u64(payload, value.buffer_revision); text8(payload, value.message, "error message"); }
     }, message);
     return make_frame(std::move(payload));
@@ -278,6 +296,29 @@ Message decode(const ByteVector& frame) {
         case MessageType::CloseSession: { const auto kind = reader.read_u8(); if (kind == 0) { CloseSessionRequest value{reader.read_id()}; if (is_zero(value.session_id)) fail("close has no session id"); reader.done(); return value; } if (kind == 1) { CloseSessionResponse value; value.session_id = reader.read_id(); value.closed = reader.read_u8() != 0; if (is_zero(value.session_id)) fail("close response has no session id"); reader.done(); return value; } fail("unknown CloseSession payload kind"); }
         case MessageType::Status: { const auto kind = reader.read_u8(); if (kind == 0) { StatusRequest value; if (reader.read_u8() != 0) value.session_id = reader.read_id(); reader.done(); return value; } if (kind == 1) { StatusResponse value; value.service_epoch = reader.read_id(); value.shutting_down = reader.read_u8() != 0; value.model_loaded = reader.read_u8() != 0; value.active_sessions = reader.read_u32(); value.max_sessions = reader.read_u32(); if (reader.read_u8() != 0) value.session = read_session_status(reader); reader.done(); return value; } fail("unknown Status payload kind"); }
         case MessageType::Shutdown: { const auto kind = reader.read_u8(); if (kind == 0) { reader.done(); return ShutdownRequest{}; } if (kind == 1) { ShutdownResponse value{reader.read_u8() != 0}; reader.done(); return value; } fail("unknown Shutdown payload kind"); }
+        case MessageType::RecordCommit: {
+            const auto kind = reader.read_u8();
+            if (kind == 0) {
+                RecordCommitRequest value; value.event_id = reader.read_id();
+                if (is_zero(value.event_id)) fail("commit has no event id");
+                value.context = reader.read_utf16("commit context", 4096);
+                value.answer = reader.read_utf16("commit answer", 1024);
+                const auto count = reader.read_u32(); count_ok(reader, count, 10, "commit entries");
+                if (count == 0 || count > 1024 || value.answer.empty()) fail("invalid commit sample");
+                for (std::uint32_t i = 0; i < count; ++i) {
+                    CommitEntry entry; entry.reading = reader.read_utf16("commit reading", 64);
+                    entry.character = reader.read_scalar("commit character");
+                    const auto manual = reader.read_u8();
+                    if (entry.reading.empty() || entry.character == 0 || manual > 1) fail("invalid commit entry");
+                    entry.manually_selected = manual != 0; value.entries.push_back(std::move(entry));
+                }
+                reader.done(); return value;
+            }
+            if (kind == 1) {
+                RecordCommitResponse value{reader.read_id(), reader.read_u8() != 0}; reader.done(); return value;
+            }
+            fail("unknown RecordCommit payload kind");
+        }
         case MessageType::Error: { const auto raw = reader.read_u8(); if (raw < 1 || raw > 9) fail("unknown protocol error code"); Error value; value.code = static_cast<ErrorCode>(raw); value.session_id = reader.read_id(); value.request_id = reader.read_u64(); value.buffer_revision = reader.read_u64(); value.message = reader.read_utf8("error message"); reader.done(); return value; }
     }
     fail("unreachable protocol message type");

@@ -30,6 +30,9 @@ struct EngineOptions {
     // creates the AT-SPI context provider and relies on Host::surrounding_text
     // alone.
     bool enable_accessibility = true;
+    // A host-independent sink for committed Bopomofo training samples. It is
+    // called after Host::commit; a missing sink never records user text.
+    std::function<void(const InputEffect::CommitSample&, std::u16string_view)> on_training_commit;
 };
 
 // Host-agnostic input method engine: owns the per-context sessions, routes
@@ -67,6 +70,9 @@ public:
     // stale results cannot leak across the change (the config UI path). A
     // plain reload from disk only refreshes the config and context sources.
     void set_config(Config config, bool settle_sessions = true);
+    // Restarts the prediction service with new options while keeping the
+    // engine, its accessibility backend, and its input sessions alive.
+    void set_transport_options(ServiceTransportOptions options);
     void reload_phrase_overrides();
     const Config& config() const { return config_; }
     PhraseOverrideStore& phrase_overrides() { return phrase_overrides_; }
@@ -104,6 +110,7 @@ private:
     InputProcessor processor_;
     ServiceTransport transport_;
     Config config_;
+    std::function<void(const InputEffect::CommitSample&, std::u16string_view)> on_training_commit_;
     std::unordered_map<ContextId, std::unique_ptr<InputSession>> sessions_;
     std::unique_ptr<AccessibilityContextProvider> accessibility_context_;
     std::uint64_t accessibility_base_sequence_ = 0;

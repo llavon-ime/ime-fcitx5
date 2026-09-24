@@ -65,6 +65,9 @@ jobs:
             exit 1
           fi
 
+      - name: Verify the pinned LoRA Trainer release
+        run: bash scripts/verify-lora-trainer-release.sh osx-arm64-cpu
+
       - name: Resolve version
         id: version
         run: |

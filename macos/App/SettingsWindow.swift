@@ -124,6 +124,10 @@ final class SettingsWindowController: NSWindowController {
         scrollView.drawsBackground = false
         contentView.addSubview(scrollView)
 
+        let loraButton = NSButton(title: "使用我的輸入改進模型", target: self, action: #selector(openLoraManager))
+        loraButton.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(loraButton)
+
         let documentView = FlippedView()
         documentView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.documentView = documentView
@@ -141,7 +145,9 @@ final class SettingsWindowController: NSWindowController {
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            loraButton.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
+            loraButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 18),
+            scrollView.topAnchor.constraint(equalTo: loraButton.bottomAnchor, constant: 8),
             scrollView.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -8),
 
             documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
@@ -279,6 +285,12 @@ final class SettingsWindowController: NSWindowController {
 
     @objc private func editOverrides() {
         openPhraseOverrides()
+    }
+
+    @objc private func openLoraManager() {
+        if !EngineBridge.shared.openLoraManager() {
+            presentError(message: "找不到個人化訓練管理程式")
+        }
     }
 
     @objc private func reloadOverrides() {

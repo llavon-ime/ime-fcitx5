@@ -10,12 +10,18 @@
 #include <fcitx/inputcontextmanager.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx/instance.h>
+#include <fcitx/statusarea.h>
+#include <fcitx/userinterfacemanager.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdlib>
 #include <filesystem>
+#include <spawn.h>
 #include <string>
 #include <string_view>
+#include <sys/wait.h>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -23,6 +29,8 @@
 #include "host/render_state.hpp"
 #include "text/utf.hpp"
 #include "util/env.hpp"
+
+extern char** environ;
 
 namespace llavon::ime {
 
@@ -131,6 +139,7 @@ ImeEngine::ImeEngine(fcitx::Instance* instance)
     options.phrase_overrides_path = phrase_overrides_path();
     options.config = default_config();
     options.transport = default_transport_options();
+    active_service_model_path_ = options.transport.model_path;
 #ifdef LLAVON_IME_NATIVE_SURROUNDING
     // The InputMethodKit client supplies surrounding text directly; there is
     // no accessibility provider to run.
@@ -139,6 +148,22 @@ ImeEngine::ImeEngine(fcitx::Instance* instance)
     engine_ = std::make_unique<Engine>(std::move(options), *this);
 
     if (instance_ != nullptr) {
+        lora_manager_action_.setShortText("管理個人化訓練…");
+        lora_manager_action_.setLongText("在瀏覽器開啟本機個人化訓練管理介面");
+        lora_manager_action_.registerAction("llavon-ime-lora-manager", &instance_->userInterfaceManager());
+        lora_manager_connection_ = lora_manager_action_.connect<fcitx::SimpleAction::Activated>(
+            [](fcitx::InputContext*) {
+                const char* override = std::getenv("LLAVON_IME_LORA_GUI_PATH");
+                const std::string path = override && *override ? override :
+                    std::string(LLAVON_IME_INSTALLED_LORA_GUI_PATH);
+                char* argv[] = {const_cast<char*>(path.c_str()), nullptr};
+                pid_t child = -1;
+                if (::posix_spawn(&child, path.c_str(), nullptr, nullptr, argv, ::environ) != 0) return;
+                std::thread([child] {
+                    int status;
+                    while (::waitpid(child, &status, 0) < 0 && errno == EINTR) {}
+                }).detach();
+            });
         (void)instance_->inputContextManager().registerProperty("llavon-ime-input-state", &property_factory_);
         capability_changed_handler_ = instance_->watchEvent(
             fcitx::EventType::InputContextCapabilityAboutToChange, fcitx::EventWatcherPhase::Default,
@@ -215,6 +240,7 @@ void ImeEngine::activate(const fcitx::InputMethodEntry&, fcitx::InputContextEven
     if (input_context_ptr == nullptr) return;
     const ContextId id = context_id(input_context_ptr);
     reload_config();
+    input_context_ptr->statusArea().addAction(fcitx::StatusGroup::InputMethod, &lora_manager_action_);
     engine_->activate(id);
 }
 
@@ -251,6 +277,14 @@ void ImeEngine::reload_config() {
     const bool has_fcitx_config = std::filesystem::exists(config_path(), ec) && !ec;
     apply_shared_config(fcitx_config_, load_config());
     if (!has_fcitx_config) save();
+    const auto transport = default_transport_options();
+    if (transport.model_path != active_service_model_path_) {
+        // Restart the prediction service with the newly selected model. The
+        // engine is kept: rebuilding it would tear down the accessibility
+        // backend, and libatspi cannot be re-initialized in the same process.
+        engine_->set_transport_options(transport);
+        active_service_model_path_ = transport.model_path;
+    }
     engine_->set_config(to_shared_config(fcitx_config_), false);
     engine_->reload_phrase_overrides();
     update_accessibility_status();

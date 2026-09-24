@@ -178,6 +178,102 @@ int run_service_transport_tests() {
     delayed_server_thread.join();
     std::filesystem::remove(delayed_path, error);
     if (open_seen || !shutdown_callback) return EXIT_FAILURE;
+
+    // reconfigure() restarts the transport against a second service without
+    // rebuilding the engine: the restarted worker serves the new socket and
+    // the previous service is asked to shut down.
+    const auto first_path = std::filesystem::temp_directory_path() /
+                            ("llavon-ime-transport-first-" + std::to_string(getpid()) + ".sock");
+    const auto second_path = std::filesystem::temp_directory_path() /
+                             ("llavon-ime-transport-second-" + std::to_string(getpid()) + ".sock");
+    std::filesystem::remove(first_path, error);
+    std::filesystem::remove(second_path, error);
+    UnixSocketServer first_server;
+    first_server.bind_listen(first_path);
+    UnixSocketServer second_server;
+    second_server.bind_listen(second_path);
+    bool first_shutdown = false;
+    bool second_open = false;
+    bool second_shutdown = false;
+    std::thread first_thread([&]() {
+        try {
+            auto connection = first_server.accept_one();
+            (void)receive_frame(connection);
+            connection.send_all(protocol::encode(
+                protocol::Message{protocol::StatusResponse{epoch, false, false, 0, 8, std::nullopt}}));
+            (void)receive_frame(connection);
+            connection.send_all(protocol::encode(protocol::Message{protocol::OpenSessionResponse{session, epoch}}));
+        } catch (...) {
+        }
+        try {
+            auto shutdown_connection = first_server.accept_one();
+            first_shutdown = std::holds_alternative<protocol::ShutdownRequest>(
+                protocol::decode(receive_frame(shutdown_connection)));
+            std::filesystem::remove(first_path, error);
+        } catch (...) {
+        }
+    });
+    std::thread second_thread([&]() {
+        try {
+            auto connection = second_server.accept_one();
+            (void)receive_frame(connection);
+            connection.send_all(protocol::encode(
+                protocol::Message{protocol::StatusResponse{epoch, false, false, 0, 8, std::nullopt}}));
+            second_open = std::holds_alternative<protocol::OpenSessionRequest>(
+                protocol::decode(receive_frame(connection)));
+            connection.send_all(protocol::encode(protocol::Message{protocol::OpenSessionResponse{session, epoch}}));
+        } catch (...) {
+        }
+        try {
+            auto shutdown_connection = second_server.accept_one();
+            second_shutdown = std::holds_alternative<protocol::ShutdownRequest>(
+                protocol::decode(receive_frame(shutdown_connection)));
+            std::filesystem::remove(second_path, error);
+        } catch (...) {
+        }
+    });
+
+    ServiceTransportOptions first_options;
+    first_options.socket_path = first_path;
+    first_options.service_path = "/nonexistent/llavon-ime-unix-service";
+    ServiceTransport restarted(first_options);
+    std::mutex restart_mutex;
+    std::condition_variable restart_condition;
+    std::vector<protocol::Message> restart_responses;
+    const auto restart_callback = [&](protocol::Message response) {
+        std::lock_guard lock(restart_mutex);
+        restart_responses.push_back(std::move(response));
+        restart_condition.notify_one();
+    };
+    const auto wait_for_restart_response = [&](std::size_t count) {
+        std::unique_lock lock(restart_mutex);
+        return restart_condition.wait_for(lock, std::chrono::seconds(2),
+                                          [&]() { return restart_responses.size() >= count; });
+    };
+
+    restarted.open_session(restart_callback);
+    if (!wait_for_restart_response(1)) {
+        restarted.stop();
+        first_thread.join();
+        second_thread.join();
+        return EXIT_FAILURE;
+    }
+    ServiceTransportOptions second_options;
+    second_options.socket_path = second_path;
+    second_options.service_path = "/nonexistent/llavon-ime-unix-service";
+    restarted.reconfigure(second_options);
+    restarted.open_session(restart_callback);
+    if (!wait_for_restart_response(2)) {
+        restarted.stop();
+        first_thread.join();
+        second_thread.join();
+        return EXIT_FAILURE;
+    }
+    restarted.stop();
+    first_thread.join();
+    second_thread.join();
+    if (!first_shutdown || !second_open || !second_shutdown) return EXIT_FAILURE;
+    if (!std::holds_alternative<protocol::OpenSessionResponse>(restart_responses.back())) return EXIT_FAILURE;
     return EXIT_SUCCESS;
 }
 

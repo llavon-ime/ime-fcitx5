@@ -3,6 +3,7 @@
   "version-string": "0.2.0",
   "dependencies": [
     "llama-cpp",
+    "nlohmann-json",
     "reflectcpp",
     "utfcpp"
   ],

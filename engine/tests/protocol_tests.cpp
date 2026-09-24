@@ -37,7 +37,18 @@ int run_protocol_tests() {
     ok = ok && decoded_request != nullptr && decoded_request->request_id == request.request_id &&
          decoded_request->buffer_revision == request.buffer_revision && decoded_request->context == request.context &&
          decoded_request->padding.size() == 1 &&
-         decoded_request->padding.front().chosen && decoded_request->padding.front().chosen_char == U'好';
+          decoded_request->padding.front().chosen && decoded_request->padding.front().chosen_char == U'好';
+
+    RecordCommitRequest commit;
+    commit.event_id[0] = 42;
+    commit.context = u"早安";
+    commit.answer = u"你";
+    commit.entries.push_back({u"ㄋㄧˇ", U'你', true});
+    const auto recorded = decode(encode(commit));
+    const auto* decoded_commit = std::get_if<RecordCommitRequest>(&recorded);
+    ok = ok && decoded_commit && decoded_commit->event_id == commit.event_id &&
+         decoded_commit->context == commit.context && decoded_commit->answer == commit.answer &&
+         decoded_commit->entries.size() == 1 && decoded_commit->entries[0].manually_selected;
 
     auto trailing = bytes;
     trailing.push_back(0);

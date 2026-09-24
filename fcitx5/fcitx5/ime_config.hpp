@@ -106,6 +106,10 @@ public:
     SchemaOptions fields{this};
     fcitx::SubConfigOption phraseOverrides{this, "PhraseOverrides", "管理強制替代詞彙",
                                             "fcitx://config/addon/llavon-ime/phraseoverrides"};
+    // Fcitx5 config tools render ExternalOption as a button and launch the
+    // installed manager only when clicked. It does not become a saved setting.
+    fcitx::ExternalOption loraManager{this, "LoraManager", "使用我的輸入改進模型",
+                                      LLAVON_IME_INSTALLED_LORA_GUI_PATH};
     fcitx::Option<std::string, fcitx::NoConstrain<std::string>, fcitx::DefaultMarshaller<std::string>,
                   fcitx::ToolTipAnnotation>
         accessibilityStatus{this,

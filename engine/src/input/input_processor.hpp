@@ -99,6 +99,18 @@ struct InputEffect {
     bool request_prediction = false;
     // Text to commit to the application (empty when there is nothing to commit).
     std::u16string commit;
+    // Populated only for a committed, one-character-per-reading Bopomofo
+    // composition. Captured before the buffer is cleared.
+    struct CommitSample {
+        std::u16string answer;
+        struct Entry {
+            std::u16string reading;
+            char32_t character = 0;
+            bool manually_selected = false;
+        };
+        std::vector<Entry> entries;
+    };
+    std::optional<CommitSample> training_sample;
 };
 
 enum class InputResetReason { Explicit, FocusOut, Deactivate };

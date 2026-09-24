@@ -330,6 +330,18 @@ private:
                 } else if constexpr (std::is_same_v<T, protocol::StatusRequest>) {
                     const auto result = server_.sessions_->status(uid_, value.session_id);
                     std::visit([this](const auto& response) { send(protocol::Message{response}); }, result);
+                } else if constexpr (std::is_same_v<T, protocol::RecordCommitRequest>) {
+                    const auto request = value;
+                    if (!server_.workers_->enqueue([self = shared_from_this(), request]() {
+                            try {
+                                const bool stored = self->server_.record_commit(request);
+                                self->send(protocol::Message{protocol::RecordCommitResponse{request.event_id, stored}});
+                            } catch (const std::exception& error) {
+                                self->send_error(protocol::ErrorCode::InvalidArgument, {}, 0, 0, error.what());
+                            }
+                        })) {
+                        send_error(protocol::ErrorCode::ServiceShuttingDown, {}, 0, 0, "service is shutting down");
+                    }
                 } else if constexpr (std::is_same_v<T, protocol::ShutdownRequest>) {
                     send(protocol::Message{protocol::ShutdownResponse{true}});
                     server_.request_stop();
@@ -356,6 +368,12 @@ UnixSocketServer::UnixSocketServer(UnixServerOptions options) : options_(std::mo
     if (socket_path_.is_relative()) socket_path_ = std::filesystem::absolute(socket_path_);
     if (pid_path_.is_relative()) pid_path_ = std::filesystem::absolute(pid_path_);
     runtime_ = std::make_shared<CoreRuntime>(options_.runtime);
+}
+
+bool UnixSocketServer::record_commit(const protocol::RecordCommitRequest& request) {
+    std::lock_guard lock(commit_mutex_);
+    if (!commits_) commits_ = std::make_unique<CommitStore>();
+    return commits_->record(request);
 }
 
 UnixSocketServer::~UnixSocketServer() {

@@ -57,7 +57,8 @@ fi
 
 if [[ ! -f "${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" ||
       ! -f "${ROOT_DIR}/ime-unix-service/CMakeLists.txt" ||
-      ! -f "${ROOT_DIR}/ime-core/CMakeLists.txt" ]]; then
+      ! -f "${ROOT_DIR}/ime-core/CMakeLists.txt" ||
+      ! -f "${ROOT_DIR}/lora-trainer/.git" ]]; then
     echo "Initializing git submodules..."
     git -C "${ROOT_DIR}" submodule update --init --recursive
 fi
@@ -85,10 +86,21 @@ if [[ -n "${LLAVON_IME_DEBUG:-}" ]]; then
     LLAVON_DEBUG_FLAG="-DLLAVON_IME_DEBUG=ON"
 fi
 
+# The pinned LoRA Trainer lives next to the private service payload, matching
+# the Windows layout under the application directory.
+PRIVATE_LIBDIR="/usr/lib"
+if [[ -e /usr/lib64 ]]; then
+    PRIVATE_LIBDIR="/usr/lib64"
+fi
+LORA_TRAINER_DIR="${PRIVATE_LIBDIR}/llavon-ime/tools/lora"
+
 echo "Building and testing ime-unix-service..."
 (
     cd "${ROOT_DIR}/ime-unix-service"
-    cmake --preset linux -DIME_UNIX_SERVICE_BUILD_TESTS=ON ${LLAVON_DEBUG_FLAG}
+    cmake --preset linux \
+        -DIME_UNIX_SERVICE_BUILD_TESTS=ON \
+        -DLLAVON_IME_INSTALLED_LORA_TRAINER_PATH="${LORA_TRAINER_DIR}/llavon-lora" \
+        ${LLAVON_DEBUG_FLAG}
     cmake --build --preset linux --parallel
     ctest --test-dir build/linux --output-on-failure
 )
@@ -108,5 +120,14 @@ echo "Installing ime-unix-service, fcitx5 addon, and model..."
 "${SUDO[@]}" cmake --install "${ROOT_DIR}/ime-unix-service/build/linux"
 "${SUDO[@]}" cmake --install "${ROOT_DIR}/build/fcitx5"
 "${SUDO[@]}" install -Dm644 "${MODEL_PATH}" "${MODEL_INSTALL_PATH}"
+
+if [[ -z "${LLAVON_IME_SKIP_LORA_TRAINER:-}" ]]; then
+    echo "Downloading the pinned LoRA Trainer release..."
+    "${SUDO[@]}" mkdir -p "${LORA_TRAINER_DIR}"
+    "${SUDO[@]}" "${ROOT_DIR}/scripts/install-lora-trainer.sh" \
+        "${ROOT_DIR}/ime-unix-service/build/linux/llavon-ime-lora" "${LORA_TRAINER_DIR}"
+else
+    echo "Skipping the LoRA Trainer download (LLAVON_IME_SKIP_LORA_TRAINER is set)."
+fi
 
 echo "Linux build, tests, and installation completed successfully."

@@ -213,6 +213,22 @@ void InputProcessor::commit_text(std::u16string text) {
     effect_.commit = std::move(text);
 }
 
+namespace {
+std::optional<InputEffect::CommitSample> training_sample(const CompositionBuffer& buffer,
+                                                          std::u16string_view committed) {
+    if (buffer.segments().empty() || buffer.segments().size() > 1024) return std::nullopt;
+    InputEffect::CommitSample sample;
+    for (const auto& segment : buffer.segments()) {
+        if (!segment.complete() || !segment.visible_candidate() || segment.literal != 0 ||
+            segment.selected_candidate() == 0 || segment.reading().empty()) return std::nullopt;
+        sample.entries.push_back({segment.reading(), segment.selected_candidate(), segment.manually_chosen});
+        sample.answer += segment.rendered_text();
+    }
+    if (sample.answer != committed || sample.answer.size() > 1024) return std::nullopt;
+    return sample;
+}
+}
+
 void InputProcessor::mark_prediction_dirty() {
     session_->prediction.mark_dirty();
 }
@@ -261,6 +277,7 @@ InputEffect InputProcessor::reset(InputSession& session, const Config& config, I
     if (should_commit) {
         auto text = session.buffer.candidate_commit_text();
         text += pending_rendered_text(session);
+        effect_.training_sample = training_sample(session.buffer, text);
         commit_text(std::move(text));
     }
 
@@ -816,6 +833,7 @@ CandidateKeyConfig InputProcessor::candidate_key_config() const {
 void InputProcessor::commit_current() {
     auto text = session_->buffer.commit_text();
     text += pending_rendered_text(*session_);
+    effect_.training_sample = training_sample(session_->buffer, text);
     session_->buffer.clear();
     session_->pending_token.clear();
     session_->mixed_decision.clear();
@@ -830,6 +848,7 @@ void InputProcessor::commit_composition_with(char32_t extra) {
     std::u16string text = session_->buffer.commit_text();
     text += pending_rendered_text(*session_);
     if (extra != 0) text += utf8_to_u16(char32_to_utf8(extra));
+    effect_.training_sample = training_sample(session_->buffer, text);
     session_->buffer.clear();
     session_->pending_token.clear();
     session_->mixed_decision.clear();

@@ -1,11 +1,17 @@
 #include "pipe/protocol.hpp"
 #include "session/session_manager.hpp"
+#include "training/commit_store.hpp"
+#include "training/numeric_dataset.hpp"
 
+#include <sqlite3.h>
+#include <nlohmann/json.hpp>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <thread>
 #include <utility>
+#include <unistd.h>
 
 namespace {
 
@@ -99,9 +105,93 @@ bool session_test() {
     return manager.session_count() == 1;
 }
 
+bool commit_test() {
+    using namespace ime::unix_service;
+    protocol::RecordCommitRequest request;
+    request.event_id[0] = 0x45;
+    request.context = u"早安";
+    request.answer = u"你好";
+    request.entries = {{u"ㄋㄧˇ", U'你', false}, {u"ㄏㄠˇ", U'好', true}};
+    const auto decoded = std::get<protocol::RecordCommitRequest>(protocol::decode(protocol::encode(request)));
+    if (decoded.event_id != request.event_id || decoded.context != request.context ||
+        decoded.answer != request.answer || decoded.entries.size() != 2 ||
+        !decoded.entries[1].manually_selected) return false;
+
+    const auto directory = std::filesystem::temp_directory_path() /
+                           ("llavon-commit-store-test-" + std::to_string(::getpid()));
+    std::filesystem::create_directories(directory);
+    const auto path = directory / "commits.sqlite3";
+    bool good = false;
+    try {
+        {
+            CommitStore store(path);
+            if (!store.record(request) || store.record(request)) throw std::runtime_error("duplicate commit");
+            auto bad = request; bad.event_id[0]++; bad.answer = u"不符";
+            try { (void)store.record(bad); throw std::runtime_error("invalid commit accepted"); }
+            catch (const std::invalid_argument&) {}
+            auto new_reading = request;
+            new_reading.event_id[0] += 2;
+            new_reading.answer = u"了";
+            new_reading.entries = {{u"ㄌㄜ ", U'了', false}};
+            if (!store.record(new_reading)) throw std::runtime_error("could not record new reading");
+            auto long_context = request;
+            long_context.event_id[0] += 3;
+            long_context.context.assign(500, u'你');
+            if (!store.record(long_context)) throw std::runtime_error("could not record long context");
+        }
+        sqlite3* db = nullptr;
+        if (sqlite3_open_v2(path.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK)
+            throw std::runtime_error("could not inspect commit database");
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db, "SELECT (SELECT COUNT(*) FROM commits), (SELECT COUNT(*) FROM readings)",
+                               -1, &stmt, nullptr) == SQLITE_OK && sqlite3_step(stmt) == SQLITE_ROW)
+            good = sqlite3_column_int(stmt, 0) == 3 && sqlite3_column_int(stmt, 1) == 5;
+        sqlite3_finalize(stmt);
+        const auto config = directory / "config.json";
+        std::ofstream(config) << R"({"vocab_size":18546,"max_position_embeddings":384})";
+        nlohmann::json vocab = nlohmann::json::array();
+        for (int i = 0; i < 18546; ++i) vocab.push_back("");
+        for (const auto name : {"chars", "special_tokens", "bpmf"}) {
+            std::ifstream table(std::filesystem::path(IME_UNIX_SERVICE_TEST_TABLE_DIR) / "tokens" /
+                                (std::string(name) + ".json"));
+            const auto entries = nlohmann::json::parse(table);
+            for (auto it = entries.begin(); it != entries.end(); ++it) {
+                const auto id = it.value().get<int>();
+                if (id < 18546) vocab[id] = it.key();
+            }
+        }
+        std::ofstream(directory / "ime_vocab.json") << nlohmann::json{{"tokens", vocab}}.dump();
+        const auto output = directory / "training.jsonl";
+        const auto dataset = write_numeric_dataset(db, IME_UNIX_SERVICE_TEST_TABLE_DIR, config, output, 384);
+        if (dataset.included_ids.size() != 2 || dataset.skipped != 1 || dataset.pad_token_id != 0) good = false;
+        std::ifstream input(output);
+        nlohmann::json row;
+        input >> row;
+        if (row.at("tokens").size() != row.at("candidate_masks").size() ||
+            row.at("loss_weights").back() != 1 || row.at("candidate_masks").back().is_null()) good = false;
+        for (int copy = 0; copy < 2; ++copy) {
+            nlohmann::json repeated;
+            input >> repeated;
+            if (repeated != row) good = false;
+        }
+        nlohmann::json long_row;
+        input >> long_row;
+        if (long_row.at("tokens").size() != 384 || long_row.at("loss_weights").back() != 1) good = false;
+        vocab[1427] = "wrong token";  // "你" is token 1427 in this checkpoint.
+        std::ofstream(directory / "ime_vocab.json") << nlohmann::json{{"tokens", vocab}}.dump();
+        bool mismatched = false;
+        try { (void)write_numeric_dataset(db, IME_UNIX_SERVICE_TEST_TABLE_DIR, config, output, 384); }
+        catch (const std::runtime_error&) { mismatched = true; }
+        good = good && mismatched;
+        sqlite3_close(db);
+    } catch (...) { good = false; }
+    std::filesystem::remove_all(directory);
+    return good;
+}
+
 }  // namespace
 
 int main() {
-    return protocol_test() && core_adapter_test() && core_runtime_test() && session_test() ? EXIT_SUCCESS
+    return protocol_test() && core_adapter_test() && core_runtime_test() && session_test() && commit_test() ? EXIT_SUCCESS
                                                                                            : EXIT_FAILURE;
 }

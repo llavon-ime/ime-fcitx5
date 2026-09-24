@@ -72,6 +72,7 @@ set(LLAVON_IME_RAWKEY_TEST_SOURCES
     rawkey/smart_usability_tests.cpp
     rawkey/smart_work_tests.cpp
     rawkey/symbol_menu_tests.cpp
+    rawkey/training_commit_tests.cpp
 )
 
 add_executable(llavon_ime_rawkey_tests ${LLAVON_IME_RAWKEY_TEST_SOURCES})
