@@ -69,12 +69,12 @@ button,input,textarea,select{font:inherit}
 .brand small{margin-top:3px;color:var(--muted);font-size:11px}
 .top-note{flex:0 0 auto;padding:6px 9px;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--muted);font-size:10px;font-weight:700}
 .topbar-actions{display:flex;align-items:center;gap:9px}
-.page-content{width:min(820px,calc(100% - 40px));margin:0 auto;padding:52px 0 72px}
+.page-content{width:min(820px,calc(100% - 40px));margin:0 auto;padding:40px 0 64px}
 .page-heading{margin-bottom:22px}
 .page-heading h1{margin:0;font-size:clamp(28px,4vw,38px);line-height:1.25;letter-spacing:-.035em}
 .page-heading p{margin:8px 0 0;color:var(--muted);font-size:14px}
-.form-card{min-width:0;overflow:hidden;border:1px solid var(--line);border-radius:14px;background:var(--paper);box-shadow:0 12px 32px rgba(54,42,32,.075);margin-bottom:18px}
-.field-group{padding:28px 30px;border-bottom:1px solid var(--line)}
+.form-card{min-width:0;overflow:hidden;border:1px solid var(--line);border-radius:14px;background:var(--paper);box-shadow:0 12px 32px rgba(54,42,32,.075);margin-bottom:14px}
+.field-group{padding:22px 24px;border-bottom:1px solid var(--line)}
 .field-group:last-child{border-bottom:0}
 .field-label-row{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:13px}
 .field-label{display:inline-flex;align-items:center;gap:9px;font-size:14px;font-weight:800}
@@ -97,29 +97,25 @@ input:not([type=checkbox]){min-height:44px;padding:0 13px;border:1px solid var(-
 select:focus-visible,input:not([type=checkbox]):focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(163,72,37,.15)}
 .statusline{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;margin-bottom:14px}
 .statusline .revision{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:var(--muted);overflow-wrap:anywhere}
-.records{display:grid;gap:14px}
-.submission-preview{overflow:hidden;border:1px solid #d8c7ba;border-radius:11px;background:#fffcf8}
-.submission-preview.selected{box-shadow:0 0 0 3px rgba(163,72,37,.12)}
-.preview-header{min-height:61px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 15px;border-bottom:1px solid #e7ded5;background:#faf3ed}
-.preview-header > div{display:flex;align-items:baseline;gap:9px}
-.preview-kicker{color:var(--accent);font-size:8px;font-weight:900;letter-spacing:.14em}
-.preview-header h3{margin:0;font-size:13px}
-.preview-status{flex:0 0 auto;padding:4px 7px;border-radius:999px;background:#eee8e1;color:var(--muted);font-size:9px;font-weight:800}
-.preview-status.complete{background:var(--accent-soft);color:var(--accent-dark)}
-.preview-surface{padding:25px 18px 16px}
-.composed-sentence{min-height:70px;margin:0;color:var(--ink);font-family:"Noto Serif TC","PMingLiU",serif;font-size:clamp(21px,4vw,28px);line-height:2.5;overflow-wrap:anywhere}
-.preview-context{white-space:pre-wrap;color:var(--muted)}
-.preview-answer{padding:4px 5px 5px;border-radius:6px;background:var(--accent-soft);color:var(--accent-dark);box-decoration-break:clone;-webkit-box-decoration-break:clone;font-weight:800}
-.preview-answer ruby{ruby-align:center}
-.preview-answer ruby.manual{background:#eed3c1;border-radius:5px}
-.preview-answer rt{color:var(--accent-dark);font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;font-size:9px;font-weight:800;letter-spacing:.02em}
-.preview-answer rt.unresolved{color:var(--warning)}
-.revised{margin:9px 1px 0;color:var(--accent);font-size:10px;font-weight:800;letter-spacing:.04em}
-.preview-reading-row{display:flex;align-items:baseline;gap:12px;margin-top:7px;padding-top:12px;border-top:1px solid #eee6df;font-size:10px}
-.preview-reading-row > span{flex:0 0 auto;color:var(--muted)}
-.preview-reading-row strong{min-width:0;color:#55463c;overflow-wrap:anywhere}
-.record-meta{display:flex;align-items:center;gap:10px;padding:10px 15px;border-top:1px solid #f0e8e0;background:#fffdfa;color:var(--muted);font-size:10px}
-.record-meta .actions{margin-left:auto;display:flex;gap:6px}
+.records{display:grid;gap:10px}
+.record{border:1px solid var(--line);border-radius:12px;background:var(--paper);padding:12px 14px;display:grid;gap:8px}
+.record.selected{border-color:#d9b9a6;box-shadow:0 0 0 3px rgba(163,72,37,.10)}
+.record-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--muted);font-size:10px}
+.record-head .time{font-weight:800;color:#55463c}
+.record-head .actions{margin-left:auto;display:flex;gap:6px}
+.align{padding:3px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent-dark);font-size:9px;font-weight:800}
+.align.partial{background:var(--warning-soft);color:var(--warning)}
+.sentence{margin:0;color:var(--ink);font-family:"Noto Serif TC","PMingLiU",serif;font-size:clamp(18px,3.1vw,22px);line-height:2.05;overflow-wrap:anywhere}
+.sentence .context{color:var(--muted);white-space:pre-wrap}
+.answer{padding:2px 4px 3px;border-radius:5px;background:var(--accent-soft);color:var(--accent-dark);box-decoration-break:clone;-webkit-box-decoration-break:clone;font-weight:800}
+.answer ruby{ruby-align:center}
+.answer ruby.manual{background:#eed3c1;border-radius:4px}
+.answer rt{color:var(--accent-dark);font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;font-size:9px;font-weight:800;letter-spacing:.02em}
+.answer rt.unresolved{color:var(--warning)}
+.record-foot{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding-top:8px;border-top:1px solid #f1e8e2;font-size:10px;color:var(--muted)}
+.record-foot .readings{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+.record-foot .readings strong{margin-left:6px;color:#55463c;font-weight:700}
+.revised{color:var(--accent);font-weight:800;letter-spacing:.04em}
 .checkbox{width:16px;height:16px;accent-color:var(--accent)}
 .chip{padding:4px 8px;border-radius:999px;background:var(--warning-soft);color:var(--warning);font-size:9px;font-weight:800}
 .chip.trained{background:var(--accent-soft);color:var(--accent-dark)}
@@ -136,9 +132,10 @@ select:focus-visible,input:not([type=checkbox]):focus{border-color:var(--accent)
 progress{width:100%;height:6px;accent-color:var(--accent);border:none;border-radius:999px}
 .hint{margin:9px 1px 0;color:var(--muted);font-size:10px;line-height:1.6}
 .log{margin-top:14px;padding:13px 15px;border:1px solid var(--line);border-radius:10px;background:#faf8f4;color:#554e47;font-size:11px;max-height:14rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
-.run{display:grid;gap:9px;margin-bottom:10px;padding:15px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
-.run-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.run-top strong{font-size:13px}
+.run{display:grid;gap:6px;margin-bottom:8px;padding:11px 13px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
+.run-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.run-top strong{font-size:12px}
+.run-top button{margin-left:auto}
 .tagrow{display:flex;gap:6px;flex-wrap:wrap}
 .path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:var(--muted);overflow-wrap:anywhere}
 .empty{margin:0;color:var(--muted);font-size:12px}
@@ -275,12 +272,12 @@ function readingSequence(item){
   }).join('　');
 }
 function composed(item){
-  const wrap=document.createElement('p');wrap.className='composed-sentence';
+  const sentence=document.createElement('p');sentence.className='sentence';
   if(item.context){
-    const context=document.createElement('span');context.className='preview-context';
-    context.textContent=item.context;wrap.append(context);
+    const context=document.createElement('span');context.className='context';
+    context.textContent=item.context;sentence.append(context);
   }
-  const answer=document.createElement('span');answer.className='preview-answer';
+  const answer=document.createElement('span');answer.className='answer';
   const characters=Array.from(item.answer||'');
   const readings=item.readings||[];
   const manual=item.manual||[];
@@ -299,43 +296,24 @@ function composed(item){
     if(known.length)ruby.title=character+'：'+known.join('、');
     ruby.append(text,annotation);answer.append(ruby);
   });
-  wrap.append(answer);
-  return wrap;
+  sentence.append(answer);
+  return sentence;
 }
 function recordCard(item, viewState){
-  const card=document.createElement('article');card.className='submission-preview';
+  const card=document.createElement('article');card.className='record';
   const checked=selectedIds.get(item.id)!==false;
   if(viewState==='pending'&&checked)card.classList.add('selected');
-  const aligned=(item.readings||[]).length>=Array.from(item.answer||'').length;
-  const header=document.createElement('div');header.className='preview-header';
-  const heading=document.createElement('div');
-  const kicker=document.createElement('span');kicker.className='preview-kicker';kicker.textContent='PREVIEW';
-  const title=document.createElement('h3');title.textContent=item.committed_at;
-  heading.append(kicker,title);
-  const alignment=document.createElement('span');
-  alignment.className='preview-status'+(aligned?' complete':'');
-  alignment.textContent=aligned?'已完整對齊':'部分對齊';
-  header.append(heading,alignment);
-  const surface=document.createElement('div');surface.className='preview-surface';
-  surface.append(composed(item));
-  if((item.manual||[]).some(Boolean)){
-    // Windows marks records that contain a manual candidate choice and gives
-    // them three samples per epoch; show the same tag here.
-    const revised=document.createElement('div');revised.className='revised';
-    revised.textContent='曾經手動選字';
-    surface.append(revised);
-  }
-  const readings=document.createElement('div');readings.className='preview-reading-row';
-  const readingLabel=document.createElement('span');readingLabel.textContent='逐字注音';
-  const readingValue=document.createElement('strong');readingValue.textContent=readingSequence(item);
-  readings.append(readingLabel,readingValue);surface.append(readings);
-  const meta=document.createElement('div');meta.className='record-meta';
+  const head=document.createElement('div');head.className='record-head';
   if(viewState==='pending'){
     const box=document.createElement('input');box.type='checkbox';box.className='checkbox';box.checked=checked;
     box.onchange=()=>{selectedIds.set(item.id,box.checked);card.classList.toggle('selected',box.checked);updateEstimate();};
-    meta.append(box);
+    head.append(box);
   }
-  meta.append(stateChip(viewState));
+  const time=document.createElement('span');time.className='time';time.textContent=item.committed_at;
+  head.append(time,stateChip(viewState));
+  const aligned=(item.readings||[]).length>=Array.from(item.answer||'').length;
+  const alignment=document.createElement('span');alignment.className='align'+(aligned?'':' partial');
+  alignment.textContent=aligned?'已完整對齊':'部分對齊';head.append(alignment);
   const actions=document.createElement('div');actions.className='actions';
   const buttons=viewState==='pending'?[['排除','exclude'],['刪除','delete']]:[['刪除','delete']];
   for(const [label,action] of buttons){
@@ -345,8 +323,19 @@ function recordCard(item, viewState){
       selectedIds.delete(item.id);await act('records/'+item.id+'/'+action,{});};
     actions.append(button);
   }
-  meta.append(actions);
-  card.append(header,surface,meta);
+  head.append(actions);
+  const foot=document.createElement('div');foot.className='record-foot';
+  if((item.manual||[]).some(Boolean)){
+    // Windows marks records that contain a manual candidate choice and gives
+    // them three samples per epoch; show the same tag here.
+    const revised=document.createElement('span');revised.className='revised';revised.textContent='曾經手動選字';
+    foot.append(revised);
+  }
+  const readings=document.createElement('span');readings.className='readings';
+  const readingLabel=document.createElement('span');readingLabel.textContent='逐字注音';
+  const readingValue=document.createElement('strong');readingValue.textContent=readingSequence(item);
+  readings.append(readingLabel,readingValue);foot.append(readings);
+  card.append(head,composed(item),foot);
   return card;
 }
 function runCard(item){
@@ -358,11 +347,10 @@ function runCard(item){
       '本次 '+item.record_count+' 筆','累計 '+item.cumulative_count+' 筆','步數 '+item.optimizer_steps]){
     const tag=document.createElement('span');tag.className='tag';tag.textContent=text;tags.append(tag);
   }
-  top.append(time,tags);card.append(top);
-  const path=document.createElement('div');path.className='path';path.textContent=item.model_path;card.append(path);
-  const actions=document.createElement('div');actions.className='row';
   const button=document.createElement('button');button.className='ghost tiny';button.textContent='使用此模型 →';
-  button.onclick=()=>act('use-model',{id:item.id});actions.append(button);card.append(actions);
+  button.onclick=()=>act('use-model',{id:item.id});
+  top.append(time,tags,button);card.append(top);
+  const path=document.createElement('div');path.className='path';path.textContent=item.model_path;card.append(path);
   return card;
 }
 async function refresh() {
@@ -655,7 +643,7 @@ void respond(int fd, int status, std::string_view type, std::string_view body) {
     const std::string header = "HTTP/1.1 " + std::to_string(status) + (status == 200 ? " OK" : " Error") +
         "\r\nContent-Type: " + std::string(type) + "; charset=utf-8\r\nCache-Control: no-store\r\n" +
         "Referrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'none'; "
-        "script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'\r\n" +
+        "script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:\r\n" +
         "Content-Length: " + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n";
     send_all(fd, header); send_all(fd, body);
 }

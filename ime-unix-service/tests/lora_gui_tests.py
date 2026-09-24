@@ -126,6 +126,8 @@ else:
             assert '拉風輸入法・個人化訓練' in page
             assert 'rel="icon"' in page and 'class="brand-logo" src="data:image/png;base64' in page
             assert '@@LOGO@@' not in page
+            with urlopen(Request(url + '/', headers={'Host': url.split('//', 1)[1]}), timeout=3) as response:
+                assert "img-src 'self' data:" in response.headers.get('Content-Security-Policy', '')
             readings = json.loads(request('/api/readings'))
             assert 'ㄋㄧˇ' in readings['你'] and '€' not in readings
             for rejected in [lambda: request('/api/records', auth=False),
