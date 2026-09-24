@@ -168,18 +168,72 @@ CommitStore::CommitStore(std::filesystem::path path) {
     } catch (...) { sqlite3_close(db_); db_ = nullptr; throw; }
 }
 
-CommitStore::~CommitStore() { if (db_) sqlite3_close(db_); }
+CommitStore::~CommitStore() {
+    // A graceful shutdown settles everything that is still staged.
+    if (db_) {
+        try {
+            std::lock_guard lock(mutex_);
+            flush_locked(true, std::chrono::steady_clock::now());
+        } catch (...) {
+            // Shutdown must not throw; the staged commits are simply lost.
+        }
+        sqlite3_close(db_);
+    }
+}
 
-CommitProtectionStatus CommitStore::protection_status() const { return protection_status_of(db_); }
+CommitProtectionStatus CommitStore::protection_status() const {
+    std::lock_guard lock(mutex_);
+    return protection_status_of(db_);
+}
 
 bool CommitStore::recording_enabled() const {
+    std::lock_guard lock(mutex_);
     const auto status = protection_status_of(db_);
     return status.configured && status.enabled;
 }
 
 bool CommitStore::record(const protocol::RecordCommitRequest& request) {
     validate(request);
-    if (!recording_enabled()) return false;
+    std::lock_guard lock(mutex_);
+    const auto status = protection_status_of(db_);
+    if (!status.configured || !status.enabled) return false;
+    // A new commit means the user kept typing, so the previous one is settled
+    // and can be written right away; only the newest stays withdrawable.
+    flush_locked(true, std::chrono::steady_clock::now());
+    if (staged_.size() >= 256) return false;  // never let a stalled store grow without bound
+    staged_.push_back(StagedCommit{request, std::chrono::steady_clock::now()});
+    return true;
+}
+
+bool CommitStore::discard_staged(const protocol::SessionId& event_id) {
+    std::lock_guard lock(mutex_);
+    const auto found = std::find_if(staged_.begin(), staged_.end(),
+        [&](const StagedCommit& staged) { return staged.request.event_id == event_id; });
+    if (found == staged_.end()) return false;
+    staged_.erase(found);
+    return true;
+}
+
+std::size_t CommitStore::flush_staged(bool all, std::chrono::steady_clock::time_point now) {
+    std::lock_guard lock(mutex_);
+    return flush_locked(all, now);
+}
+
+std::size_t CommitStore::flush_locked(bool all, std::chrono::steady_clock::time_point now) {
+    std::size_t written = 0;
+    std::vector<StagedCommit> remaining;
+    for (auto& staged : staged_) {
+        if (!all && now - staged.queued_at < kCommitCorrectionWindow) {
+            remaining.push_back(std::move(staged));
+            continue;
+        }
+        if (write_locked(staged.request)) ++written;
+    }
+    staged_ = std::move(remaining);
+    return written;
+}
+
+bool CommitStore::write_locked(const protocol::RecordCommitRequest& request) {
     const auto parameters = parameters_of(db_);
     const auto id = event_id(request.event_id);
     const auto context = commit_crypto::seal(utf8::utf16to8(request.context), commit_crypto::field_identity(id, "context"), parameters);
@@ -207,7 +261,9 @@ bool CommitStore::record(const protocol::RecordCommitRequest& request) {
 }
 
 void CommitStore::configure_password(const std::string& password) {
+    std::lock_guard lock(mutex_);
     if (protection_status_of(db_).configured) throw std::runtime_error("password already configured");
+    staged_.clear();  // recording was off, so anything staged is stale
     commit_crypto::PublicParameters parameters;
     randombytes_buf(parameters.salt.data(), parameters.salt.size());
     commit_crypto::PrivateKey private_key;
@@ -239,9 +295,13 @@ void CommitStore::configure_password(const std::string& password) {
         // state are preserved.
         {
             Statement select(db_, "SELECT id,context,answer FROM commits WHERE schema_version=1");
-            while (sqlite3_step(select.get()) == SQLITE_ROW)
-                commits.push_back({column_text(select.get(), 0), column_text(select.get(), 1),
-                                   column_text(select.get(), 2)});
+            while (sqlite3_step(select.get()) == SQLITE_ROW) {
+                PlainRow row;
+                row.id = column_text(select.get(), 0);
+                row.context = column_text(select.get(), 1);
+                row.answer = column_text(select.get(), 2);
+                commits.push_back(std::move(row));
+            }
         }
         Statement update(db_, "UPDATE commits SET schema_version=2,context=?,answer=? WHERE id=?");
         for (const auto& row : commits) {
@@ -253,10 +313,13 @@ void CommitStore::configure_password(const std::string& password) {
         }
         {
             Statement select(db_, "SELECT commit_id,position,reading FROM readings");
-            while (sqlite3_step(select.get()) == SQLITE_ROW)
-                readings.push_back({.id = column_text(select.get(), 0),
-                                    .reading = column_text(select.get(), 2),
-                                    .position = sqlite3_column_int(select.get(), 1)});
+            while (sqlite3_step(select.get()) == SQLITE_ROW) {
+                PlainRow row;
+                row.id = column_text(select.get(), 0);
+                row.reading = column_text(select.get(), 2);
+                row.position = sqlite3_column_int(select.get(), 1);
+                readings.push_back(std::move(row));
+            }
         }
         Statement update_reading(db_, "UPDATE readings SET reading=?,character=0 WHERE commit_id=? AND position=?");
         for (const auto& row : readings) {
@@ -280,13 +343,17 @@ void CommitStore::configure_password(const std::string& password) {
 }
 
 void CommitStore::set_recording_enabled(bool enabled) {
+    std::lock_guard lock(mutex_);
     if (enabled) (void)parameters_of(db_);
+    else staged_.clear();  // disabling collection drops what is not written yet
     Statement update(db_, "UPDATE commit_protection SET enabled=? WHERE id=1");
     update.integer(1, enabled ? 1 : 0);
     update.step();
 }
 
 void CommitStore::reset_conversation_data() {
+    std::lock_guard lock(mutex_);
+    staged_.clear();
     execute(db_, "PRAGMA secure_delete=ON");
     execute(db_, "BEGIN IMMEDIATE");
     try {
@@ -318,8 +385,10 @@ namespace {
 
 // Columns: id, committed_at, state, context, answer, schema_version.
 CommitRecord load_record(sqlite3* db, sqlite3_stmt* query, const CommitCipher& cipher) {
-    CommitRecord record{.id = column_text(query, 0), .committed_at = column_text(query, 1),
-                        .state = column_text(query, 2)};
+    CommitRecord record;
+    record.id = column_text(query, 0);
+    record.committed_at = column_text(query, 1);
+    record.state = column_text(query, 2);
     const auto schema_version = sqlite3_column_int(query, 5);
     if (cipher.unlocked()) {
         if (schema_version != 2) throw std::runtime_error("unencrypted training record blocked");

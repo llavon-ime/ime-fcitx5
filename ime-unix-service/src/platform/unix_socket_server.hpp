@@ -45,6 +45,10 @@ private:
     void close_connections() noexcept;
     void cleanup_endpoint() noexcept;
     bool record_commit(const protocol::RecordCommitRequest& request);
+    bool discard_commit(const protocol::SessionId& event_id);
+    // Writes staged commits whose correction window elapsed, or all of them on
+    // shutdown.
+    void settle_staged_commits(bool all);
 
     UnixServerOptions options_;
     std::shared_ptr<CoreRuntime> runtime_;

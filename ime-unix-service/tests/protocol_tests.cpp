@@ -30,7 +30,16 @@ bool protocol_test() {
                               0xe3, 0xe2, 0xe1};
     if (bytes != expected) return false;
     auto decoded = decode(bytes);
-    return std::get<OpenSessionResponse>(decoded).service_epoch == opened.service_epoch;
+    if (std::get<OpenSessionResponse>(decoded).service_epoch != opened.service_epoch) return false;
+
+    DiscardCommitRequest discard;
+    discard.event_id[0] = 7;
+    if (decode_message_type(encode(Message{discard})) != MessageType::DiscardCommit) return false;
+    const auto rejected = std::get<DiscardCommitRequest>(decode(encode(Message{discard})));
+    if (rejected.event_id != discard.event_id) return false;
+    const DiscardCommitResponse accepted{discard.event_id, true};
+    const auto answered = std::get<DiscardCommitResponse>(decode(encode(Message{accepted})));
+    return answered.event_id == discard.event_id && answered.discarded;
 }
 
 bool core_adapter_test() {
@@ -164,8 +173,30 @@ bool commit_test() {
             store.configure_password(password);
             const auto status = store.protection_status();
             if (!status.configured || !status.enabled) throw std::runtime_error("password was not stored");
+            // A commit is staged first, so an immediate Backspace can withdraw
+            // it before anything reaches the database.
+            auto withdrawn = request;
+            withdrawn.event_id[0] += 5;
+            if (!store.record(withdrawn)) throw std::runtime_error("could not stage a commit");
+            if (!store.discard_staged(withdrawn.event_id)) throw std::runtime_error("staged commit was not withdrawable");
+            if (store.discard_staged(withdrawn.event_id)) throw std::runtime_error("withdrew a commit twice");
+            // Once the correction window elapses, an untouched commit is written.
+            {
+                CommitStore elapsed_store(directory / "elapsed.sqlite3");
+                elapsed_store.configure_password(password);
+                auto elapsed = request;
+                elapsed.event_id[0] += 6;
+                if (!elapsed_store.record(elapsed)) throw std::runtime_error("could not stage a commit");
+                if (elapsed_store.flush_staged(false, std::chrono::steady_clock::now() + kCommitCorrectionWindow) != 1)
+                    throw std::runtime_error("an elapsed commit was not written");
+            }
+            // A following commit settles the previous one early, and a repeated
+            // event id is accepted but never written twice.
             if (!store.record(request)) throw std::runtime_error("could not record commit");
-            if (store.record(request)) throw std::runtime_error("duplicate commit");
+            if (store.flush_staged(false) != 0) throw std::runtime_error("wrote a commit before its correction window");
+            if (store.flush_staged(true) != 1) throw std::runtime_error("staged commit was not written");
+            if (!store.record(request)) throw std::runtime_error("could not stage duplicate commit");
+            if (store.flush_staged(true) != 0) throw std::runtime_error("duplicate commit was written twice");
             auto bad = request; bad.event_id[0]++; bad.answer = u"不符";
             try { (void)store.record(bad); throw std::runtime_error("invalid commit accepted"); }
             catch (const std::invalid_argument&) {}
@@ -178,6 +209,9 @@ bool commit_test() {
             long_context.event_id[0] += 3;
             long_context.context.assign(500, u'你');
             if (!store.record(long_context)) throw std::runtime_error("could not record long context");
+            // Only the newest commit is still staged; the previous one was
+            // settled when the next commit arrived.
+            if (store.flush_staged(true) != 1) throw std::runtime_error("staged commits were not written");
             // Disabling stops storage without touching what is already there.
             store.set_recording_enabled(false);
             auto disabled = request;

@@ -24,7 +24,8 @@ Engine::Engine(EngineOptions options, Host& host)
       processor_(fallback_, decoder_, phrase_overrides_),
       transport_(options_.transport),
       config_(options_.config),
-      on_training_commit_(options_.on_training_commit) {
+      on_training_commit_(options_.on_training_commit),
+      on_training_discard_(options_.on_training_discard) {
     processor_.set_state_observer([this](InputStateKind previous, InputStateKind next) {
         if (accessibility_context_ == nullptr) return;
         if (previous == InputStateKind::Empty && next == InputStateKind::Inputting) {
@@ -57,6 +58,7 @@ void Engine::detach(ContextId context) {
     if (it == sessions_.end()) return;
     close_prediction_session(*it->second);
     sessions_.erase(it);
+    if (recent_commit_ && recent_commit_->context == context) recent_commit_.reset();
 }
 
 bool Engine::has_context(ContextId context) const {
@@ -67,6 +69,10 @@ bool Engine::key_event(ContextId context, const InputKey& key) {
     // Releases reach the engine so key policy lives here instead of in the
     // host; they carry no input meaning today.
     if (key.release) return false;
+    // An immediate Backspace withdraws the commit the user is correcting; any
+    // other key means the correction window is over.
+    if (key.sym == keysym::BackSpace) withdraw_recent_commit(context);
+    else recent_commit_.reset();
     auto& session = find_or_create(context);
     const auto effect = processor_.process(key, session, config_);
     apply_effect(context, session, effect);
@@ -105,6 +111,7 @@ void Engine::deactivate(ContextId context) {
 void Engine::reset(ContextId context, InputResetReason reason, bool clear_context) {
     auto* session = find(context);
     if (session == nullptr) return;
+    if (recent_commit_ && recent_commit_->context == context) recent_commit_.reset();
     if (reason == InputResetReason::FocusOut && accessibility_context_) {
         accessibility_context_->set_active(false);
         accessibility_base_sequence_ = accessibility_context_->sequence();
@@ -132,6 +139,8 @@ void Engine::set_config(Config config, bool settle_sessions) {
 
 void Engine::set_transport_options(ServiceTransportOptions options) {
     transport_.reconfigure(std::move(options));
+    // The previous service process staged its commits; it cannot withdraw them.
+    recent_commit_.reset();
     // Prediction sessions belonged to the service process that just went away.
     // Late responses are ignored and each context opens a fresh session on
     // the next prediction.
@@ -178,19 +187,21 @@ void Engine::apply_effect(ContextId context, InputSession& session, const InputE
         host_.commit(context, effect.commit);
         if (allow_training) {
             try {
+                protocol::RecordCommitRequest request;
+                std::random_device random;
+                for (auto& byte : request.event_id) byte = static_cast<std::uint8_t>(random());
                 if (on_training_commit_) {
                     on_training_commit_(*effect.training_sample, training_context);
                 } else {
-                    protocol::RecordCommitRequest request;
-                    std::random_device random;
-                    for (auto& byte : request.event_id) byte = static_cast<std::uint8_t>(random());
                     request.context = utf16_tail(training_context, 4096);
                     request.answer = effect.training_sample->answer;
                     for (const auto& entry : effect.training_sample->entries) {
                         request.entries.push_back({entry.reading, entry.character, entry.manually_selected});
                     }
-                    transport_.record_commit(std::move(request));
+                    transport_.record_commit(request);
                 }
+                // An immediate Backspace may still withdraw this commit.
+                remember_recent_commit(context, request.event_id);
             } catch (...) {
                 // Recording must never prevent a successful text commit.
             }
@@ -200,8 +211,25 @@ void Engine::apply_effect(ContextId context, InputSession& session, const InputE
     if (effect.redraw) host_.update_ui(context);
 }
 
-void Engine::request_prediction(ContextId context, InputSession& session) {
-    processor_.apply_phrase_override(session);
+void Engine::remember_recent_commit(ContextId context, const protocol::SessionId& event_id) {
+    recent_commit_ = RecentCommit{context, event_id, std::chrono::steady_clock::now()};
+}
+
+void Engine::withdraw_recent_commit(ContextId context) {
+    if (!recent_commit_) return;
+    const auto pending = *recent_commit_;
+    recent_commit_.reset();
+    if (pending.context != context) return;
+    if (std::chrono::steady_clock::now() - pending.recorded_at > kCommitCorrectionWindow) return;
+    // A composition that is not empty takes this Backspace itself; only an
+    // empty buffer means the host is deleting the committed text.
+    const auto* session = find(context);
+    if (session == nullptr || !session->buffer.empty()) return;
+    if (on_training_discard_) on_training_discard_(pending.event_id);
+    else transport_.discard_commit(pending.event_id);
+}
+
+void Engine::request_prediction(ContextId context, InputSession& session) {    processor_.apply_phrase_override(session);
     resync_context(context, session);
     if (!session.prediction.begin(session.buffer.completed_segment_indices(), session.buffer.raw_composition(),
                                   session.buffer.revision())) {

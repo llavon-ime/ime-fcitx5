@@ -2,11 +2,13 @@
 #include "ipc/unix_socket.hpp"
 #include "protocol/protocol.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <filesystem>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 using namespace llavon::ime::rawkey;
 
@@ -119,4 +121,107 @@ RAWKEY_SUITE("training commit transport", training_commit_transport) {
     worker.join();
     std::filesystem::remove(socket);
     RAWKEY_ASSERT(completed && valid.load());
+}
+
+RAWKEY_SUITE("training commit correction", training_commit_correction) {
+    std::size_t commits = 0;
+    std::vector<llavon::ime::protocol::SessionId> discards;
+    HarnessOptions options;
+    options.config.collect_training_data = true;
+    options.on_training_commit = [&](const auto&, std::u16string_view) { ++commits; };
+    options.on_training_discard = [&](const auto& id) { discards.push_back(id); };
+    Harness harness(options);
+    harness.set_surrounding("早安", 2, 2);
+
+    // A Backspace that immediately follows the commit withdraws it.
+    harness.type("su3");
+    harness.expect_commit("你");
+    harness.key("BackSpace");
+    RAWKEY_ASSERT(commits == 1);
+    RAWKEY_ASSERT(discards.size() == 1);
+    RAWKEY_ASSERT(std::any_of(discards[0].begin(), discards[0].end(), [](auto byte) { return byte != 0; }));
+
+    // Any other key means the user moved on, so a later Backspace only edits
+    // the composition and never withdraws the stored sample.
+    harness.type("su3");
+    harness.expect_commit("你");
+    harness.key("Left");
+    harness.key("BackSpace");
+    RAWKEY_ASSERT(commits == 2);
+    RAWKEY_ASSERT(discards.size() == 1);
+
+    // A Backspace inside a composition belongs to the composition.
+    harness.type("su");
+    harness.key("BackSpace");
+    RAWKEY_ASSERT(commits == 2);
+    RAWKEY_ASSERT(discards.size() == 1);
+    harness.key("Escape");
+}
+
+RAWKEY_SUITE("training commit discard transport", training_commit_discard_transport) {
+    using namespace llavon::ime;
+    const auto socket = std::filesystem::temp_directory_path() /
+                        ("llavon-ime-rawkey-discard-" + std::to_string(::getpid()) + ".sock");
+    std::filesystem::remove(socket);
+    UnixSocketServer server;
+    server.bind_listen(socket);
+    std::atomic<bool> discarded{false};
+    std::atomic<bool> matched{true};
+    protocol::SessionId committed_id{};
+    std::thread worker([&] {
+        try {
+            const auto connection = server.accept_one();
+            protocol::SessionId session{}; session[0] = 1;
+            protocol::ServiceEpoch epoch{}; epoch[0] = 2;
+            for (;;) {
+                auto header = connection.recv_exact(4);
+                std::uint32_t length = 0;
+                std::memcpy(&length, header.data(), 4);
+                auto payload = connection.recv_exact(length);
+                header.insert(header.end(), payload.begin(), payload.end());
+                const auto message = protocol::decode(header);
+                if (std::holds_alternative<protocol::StatusRequest>(message)) {
+                    connection.send_all(protocol::encode(protocol::StatusResponse{epoch, false, false, 0, 8, std::nullopt}));
+                } else if (std::holds_alternative<protocol::OpenSessionRequest>(message)) {
+                    connection.send_all(protocol::encode(protocol::OpenSessionResponse{session, epoch}));
+                } else if (const auto* request = std::get_if<protocol::PredictRequest>(&message)) {
+                    connection.send_all(protocol::encode(protocol::Prediction{
+                        session, request->request_id, request->buffer_revision, {{U'你'}}}));
+                } else if (const auto* request = std::get_if<protocol::RecordCommitRequest>(&message)) {
+                    committed_id = request->event_id;
+                    connection.send_all(protocol::encode(protocol::RecordCommitResponse{request->event_id, true}));
+                } else if (const auto* request = std::get_if<protocol::DiscardCommitRequest>(&message)) {
+                    matched = request->event_id == committed_id;
+                    connection.send_all(protocol::encode(protocol::DiscardCommitResponse{request->event_id, true}));
+                    discarded = true;
+                    break;
+                } else if (const auto* request = std::get_if<protocol::CloseSessionRequest>(&message)) {
+                    connection.send_all(protocol::encode(protocol::CloseSessionResponse{request->session_id, true}));
+                    break;
+                } else { matched = false; break; }
+            }
+        } catch (...) { matched = false; }
+    });
+    bool completed = false;
+    {
+        HarnessOptions options;
+        options.socket_path = socket.string();
+        options.config.collect_training_data = true;
+        Harness harness(options);
+        harness.set_surrounding("早安", 2, 2);
+        harness.type("su3");
+        harness.expect_commit("你");
+        harness.key("BackSpace");
+        completed = harness.pump_until([&] { return discarded.load(); });
+        harness.detach();
+    }
+    if (!discarded.load()) {
+        try {
+            UnixSocketClient client;
+            (void)client.connect(socket);
+        } catch (...) {}
+    }
+    worker.join();
+    std::filesystem::remove(socket);
+    RAWKEY_ASSERT(completed && matched.load());
 }

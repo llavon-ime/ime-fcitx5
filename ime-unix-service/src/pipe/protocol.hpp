@@ -29,6 +29,7 @@ enum class MessageType : std::uint8_t {
     Shutdown = 6,
     Error = 7,
     RecordCommit = 8,
+    DiscardCommit = 9,
 };
 
 enum class ErrorCode : std::uint8_t {
@@ -60,6 +61,10 @@ struct RecordCommitRequest {
     std::vector<CommitEntry> entries;
 };
 struct RecordCommitResponse { SessionId event_id{}; bool stored = false; };
+// A commit that the user immediately corrected with Backspace; the service
+// drops the staged commit instead of writing it.
+struct DiscardCommitRequest { SessionId event_id{}; };
+struct DiscardCommitResponse { SessionId event_id{}; bool discarded = false; };
 
 struct OpenSessionRequest {};
 struct OpenSessionResponse {
@@ -126,7 +131,8 @@ struct Error {
 
 using Message = std::variant<OpenSessionRequest, OpenSessionResponse, PredictRequest, Prediction,
                              CloseSessionRequest, CloseSessionResponse, StatusRequest, StatusResponse,
-                             ShutdownRequest, ShutdownResponse, Error, RecordCommitRequest, RecordCommitResponse>;
+                             ShutdownRequest, ShutdownResponse, Error, RecordCommitRequest, RecordCommitResponse,
+                             DiscardCommitRequest, DiscardCommitResponse>;
 
 class ProtocolError : public std::runtime_error {
 public:

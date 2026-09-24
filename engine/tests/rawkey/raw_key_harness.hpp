@@ -77,6 +77,7 @@ inline constexpr std::uint32_t kSuper = input_key_state(InputKeyState::Super);
 struct HarnessOptions {
     Config config = default_config();
     std::function<void(const InputEffect::CommitSample&, std::u16string_view)> on_training_commit;
+    std::function<void(const llavon::ime::protocol::SessionId&)> on_training_discard;
     // Set service_path (and optionally socket_path/model_path/tables_dir) to
     // run against a real prediction service; the transport starts it on demand.
     std::string service_path;

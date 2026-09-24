@@ -342,6 +342,18 @@ private:
                         })) {
                         send_error(protocol::ErrorCode::ServiceShuttingDown, {}, 0, 0, "service is shutting down");
                     }
+                } else if constexpr (std::is_same_v<T, protocol::DiscardCommitRequest>) {
+                    const auto event_id = value.event_id;
+                    if (!server_.workers_->enqueue([self = shared_from_this(), event_id]() {
+                            try {
+                                const bool discarded = self->server_.discard_commit(event_id);
+                                self->send(protocol::Message{protocol::DiscardCommitResponse{event_id, discarded}});
+                            } catch (const std::exception& error) {
+                                self->send_error(protocol::ErrorCode::InvalidArgument, {}, 0, 0, error.what());
+                            }
+                        })) {
+                        send_error(protocol::ErrorCode::ServiceShuttingDown, {}, 0, 0, "service is shutting down");
+                    }
                 } else if constexpr (std::is_same_v<T, protocol::ShutdownRequest>) {
                     send(protocol::Message{protocol::ShutdownResponse{true}});
                     server_.request_stop();
@@ -374,6 +386,22 @@ bool UnixSocketServer::record_commit(const protocol::RecordCommitRequest& reques
     std::lock_guard lock(commit_mutex_);
     if (!commits_) commits_ = std::make_unique<CommitStore>();
     return commits_->record(request);
+}
+
+bool UnixSocketServer::discard_commit(const protocol::SessionId& event_id) {
+    std::lock_guard lock(commit_mutex_);
+    if (!commits_) return false;
+    return commits_->discard_staged(event_id);
+}
+
+void UnixSocketServer::settle_staged_commits(bool all) {
+    std::lock_guard lock(commit_mutex_);
+    if (!commits_) return;
+    try {
+        (void)commits_->flush_staged(all);
+    } catch (const std::exception& error) {
+        std::clog << "[SRV] could not write staged commits: " << error.what() << '\n';
+    }
 }
 
 UnixSocketServer::~UnixSocketServer() {
@@ -463,6 +491,8 @@ int UnixSocketServer::run() {
         }
         if (poll_result > 0 && (descriptor.revents & POLLIN) != 0) accept_connections();
         sessions_->reap();
+        // A commit is only written once its correction window elapsed.
+        settle_staged_commits(false);
         if (sessions_->should_idle_shutdown()) request_stop();
     }
 
@@ -479,6 +509,9 @@ int UnixSocketServer::run() {
         connection_threads_.clear();
     }
     if (workers_) workers_->shutdown();
+    // Nothing can arrive now, so settle whatever is still staged before the
+    // store goes away.
+    settle_staged_commits(true);
     if (sessions_) sessions_->shutdown();
     cleanup_endpoint();
     return 0;

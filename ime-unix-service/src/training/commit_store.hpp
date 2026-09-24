@@ -3,13 +3,19 @@
 #include "pipe/protocol.hpp"
 #include "training/commit_crypto.hpp"
 
+#include <chrono>
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <vector>
 
 struct sqlite3;
 
 namespace ime::unix_service {
+
+// A commit is staged for this long before it is written, so an immediate
+// Backspace can withdraw it. The engine uses the same window.
+inline constexpr std::chrono::seconds kCommitCorrectionWindow{10};
 
 // Whether encrypted recording has been set up and whether it is currently on.
 struct CommitProtectionStatus {
@@ -72,6 +78,13 @@ public:
     CommitStore& operator=(const CommitStore&) = delete;
 
     bool record(const protocol::RecordCommitRequest& request);
+    // Drops a staged commit that the user corrected with an immediate
+    // Backspace. Returns whether it was still staged.
+    bool discard_staged(const protocol::SessionId& event_id);
+    // Writes staged commits whose correction window elapsed, or all of them
+    // when `all` is set. Returns how many were written. `now` exists so tests
+    // can simulate an elapsed window.
+    std::size_t flush_staged(bool all, std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
     static std::filesystem::path default_path();
 
     CommitProtectionStatus protection_status() const;
@@ -85,7 +98,17 @@ public:
     void reset_conversation_data();
 
 private:
+    struct StagedCommit {
+        protocol::RecordCommitRequest request;
+        std::chrono::steady_clock::time_point queued_at{};
+    };
+    // Writes one validated commit; the caller holds the mutex.
+    bool write_locked(const protocol::RecordCommitRequest& request);
+    std::size_t flush_locked(bool all, std::chrono::steady_clock::time_point now);
+
     sqlite3* db_ = nullptr;
+    mutable std::mutex mutex_;
+    std::vector<StagedCommit> staged_;
 };
 
 }  // namespace ime::unix_service

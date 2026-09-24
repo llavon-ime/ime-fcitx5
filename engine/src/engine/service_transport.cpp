@@ -252,6 +252,10 @@ void ServiceTransport::record_commit(protocol::RecordCommitRequest request) {
     enqueue(RequestKind::RecordCommit, std::move(request), {});
 }
 
+void ServiceTransport::discard_commit(protocol::SessionId event_id) {
+    enqueue(RequestKind::DiscardCommit, protocol::DiscardCommitRequest{event_id}, {});
+}
+
 void ServiceTransport::run() {
     while (true) {
         Pending pending;
@@ -428,6 +432,11 @@ bool ServiceTransport::matches(RequestKind kind, const protocol::Message& reques
         case RequestKind::RecordCommit: {
             const auto* sent = std::get_if<protocol::RecordCommitRequest>(&request);
             const auto* received = std::get_if<protocol::RecordCommitResponse>(&response);
+            return sent && received && sent->event_id == received->event_id;
+        }
+        case RequestKind::DiscardCommit: {
+            const auto* sent = std::get_if<protocol::DiscardCommitRequest>(&request);
+            const auto* received = std::get_if<protocol::DiscardCommitResponse>(&response);
             return sent && received && sent->event_id == received->event_id;
         }
     }
