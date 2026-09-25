@@ -59,6 +59,8 @@ struct CommitEntry {
 };
 struct RecordCommitRequest {
     SessionId event_id{};
+    // Stable for one input context, even across prediction-service reconnects.
+    SessionId source_id{};
     std::u16string context;
     std::u16string answer;
     std::vector<CommitEntry> entries;

@@ -143,9 +143,9 @@ std::optional<json> build_row(const Row& row, const Tables& tables, int max_leng
     if (required > static_cast<std::size_t>(max_length)) return std::nullopt;
     std::vector<int> tokens{tables.special.at("<BOS>")};
     auto context = tokenize_context(row.context, tables);
-    const auto context_limit = static_cast<std::size_t>(max_length) - required;
-    if (context.size() > context_limit)
-        context.erase(context.begin(), context.end() - static_cast<std::ptrdiff_t>(context_limit));
+    // Windows skips the whole record rather than silently shortening its
+    // training context when it cannot fit the checkpoint's sequence length.
+    if (context.size() > static_cast<std::size_t>(max_length) - required) return std::nullopt;
     tokens.insert(tokens.end(), context.begin(), context.end());
     const auto literal_token = [&](char32_t character) {
         const auto token = tables.chars.find(utf8_char(character));

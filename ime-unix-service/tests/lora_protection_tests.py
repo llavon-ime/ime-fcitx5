@@ -25,7 +25,9 @@ def run(cli, *arguments, password=None, environment=None):
     if password is not None:
         env[PASSWORD_VARIABLE] = password
         values += ["--password-env", PASSWORD_VARIABLE]
-    return subprocess.run([cli, *values], capture_output=True, text=True, env=env)
+    # A missing password must fail rather than prompt on the test runner's TTY.
+    return subprocess.run([cli, *values], stdin=subprocess.DEVNULL,
+                          capture_output=True, text=True, env=env, timeout=10)
 
 
 def main(cli: str) -> None:

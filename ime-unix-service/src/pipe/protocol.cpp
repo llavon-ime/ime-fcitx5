@@ -422,10 +422,11 @@ ByteVector encode(const Message& message) {
                 append_u8(payload, 1);
                 append_u8(payload, value.accepted ? 1U : 0U);
             } else if constexpr (std::is_same_v<T, RecordCommitRequest>) {
-                if (is_zero(value.event_id) || value.entries.empty() || value.entries.size() > 1024 ||
+                if (is_zero(value.event_id) || is_zero(value.source_id) || value.entries.empty() || value.entries.size() > 1024 ||
                     value.answer.empty()) throw ProtocolError("invalid commit sample");
                 append_type(payload, MessageType::RecordCommit); append_u8(payload, 0);
                 append_id(payload, value.event_id);
+                append_id(payload, value.source_id);
                 append_utf16(payload, value.context, "commit context", 4096);
                 append_utf16(payload, value.answer, "commit answer", 1024);
                 append_u32(payload, checked_size(value.entries.size(), "commit entries", 1024));
@@ -559,8 +560,8 @@ Message decode(const ByteVector& frame_bytes) {
         case MessageType::RecordCommit: {
             const auto kind = reader.u8();
             if (kind == 0) {
-                RecordCommitRequest request; request.event_id = reader.id();
-                if (is_zero(request.event_id)) throw ProtocolError("commit has no event id");
+                RecordCommitRequest request; request.event_id = reader.id(); request.source_id = reader.id();
+                if (is_zero(request.event_id) || is_zero(request.source_id)) throw ProtocolError("commit has no event or source id");
                 request.context = reader.utf16("commit context", 4096);
                 request.answer = reader.utf16("commit answer", 1024);
                 const auto count = reader.u32();

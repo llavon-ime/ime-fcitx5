@@ -83,7 +83,7 @@ else:
         env['PATH'] = str(launchers) + os.pathsep + env.get('PATH', '')
 
         args = [gui, "--no-browser", "--state-dir", str(state), "--cli", str(fake),
-                "--tables-dir", tables, "--idle-seconds", "5"]
+                "--tables-dir", tables, "--idle-seconds", "1"]
         process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
         try:
             first = process.stdout.readline().strip()
@@ -130,6 +130,11 @@ else:
                 assert "img-src 'self' data:" in response.headers.get('Content-Security-Policy', '')
             assert 'id="select-all"' not in page and 'id="clear-all"' not in page
             assert 'id="protection"' in page and 'id="password-setup"' in page and 'id="train-password"' in page
+            assert '[hidden]{display:none!important}' in page
+            assert 'role="tablist"' in page and page.count('role="tabpanel"') == 2
+            assert 'id="tab-history"' not in page
+            assert page.index('id="train"') < page.index('id="runs"') < page.index('</main>')
+            assert 'id="record-state"' not in page  # review only pending records
             readings = json.loads(request('/api/readings'))
             assert 'ㄋㄧˇ' in readings['你'] and '€' not in readings
             for rejected in [lambda: request('/api/records', auth=False),

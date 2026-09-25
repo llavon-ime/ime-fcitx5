@@ -34,15 +34,17 @@ bool protocol_test() {
 
     RecordCommitRequest mixed;
     mixed.event_id[0] = 9;
+    mixed.source_id[0] = 3;
     mixed.context = u"早安";
     mixed.answer = u"你h";
     mixed.entries = {{u"ㄋㄧˇ", U'你', false, false}, {u"", U'h', false, true}};
     const auto mixed_bytes = decode(encode(Message{mixed}));
     const auto& decoded_mixed = std::get<RecordCommitRequest>(mixed_bytes);
-    if (decoded_mixed.entries.size() != 2 || decoded_mixed.entries[0].literal ||
+    if (decoded_mixed.source_id != mixed.source_id || decoded_mixed.entries.size() != 2 || decoded_mixed.entries[0].literal ||
         !decoded_mixed.entries[1].literal || !decoded_mixed.entries[1].reading.empty()) return false;
     RecordCommitRequest literal_only;
     literal_only.event_id[0] = 9;
+    literal_only.source_id[0] = 3;
     literal_only.answer = u"h";
     literal_only.entries = {{u"", U'h', false, true}};
     bool literal_rejected = false;
@@ -137,11 +139,12 @@ bool commit_test() {
     using namespace ime::unix_service;
     protocol::RecordCommitRequest request;
     request.event_id[0] = 0x45;
+    request.source_id[0] = 0x31;
     request.context = u"早安";
     request.answer = u"你好";
     request.entries = {{u"ㄋㄧˇ", U'你', false}, {u"ㄏㄠˇ", U'好', true}};
     const auto decoded = std::get<protocol::RecordCommitRequest>(protocol::decode(protocol::encode(request)));
-    if (decoded.event_id != request.event_id || decoded.context != request.context ||
+    if (decoded.event_id != request.event_id || decoded.source_id != request.source_id || decoded.context != request.context ||
         decoded.answer != request.answer || decoded.entries.size() != 2 ||
         !decoded.entries[1].manually_selected) return false;
 
@@ -197,6 +200,28 @@ bool commit_test() {
             if (!store.record(withdrawn)) throw std::runtime_error("could not stage a commit");
             if (!store.discard_staged(withdrawn.event_id)) throw std::runtime_error("staged commit was not withdrawable");
             if (store.discard_staged(withdrawn.event_id)) throw std::runtime_error("withdrew a commit twice");
+            // A commit from another input context must not settle the first
+            // context's correction window. Only a new commit from that same
+            // source settles it, matching the Windows writer.
+            {
+                CommitStore contexts(directory / "contexts.sqlite3");
+                contexts.configure_password(password);
+                auto first = request;
+                auto other = request;
+                auto next = request;
+                first.event_id[0] = 0x70;
+                other.event_id[0] = 0x71;
+                other.source_id[0] = 0x32;
+                next.event_id[0] = 0x72;
+                if (!contexts.record(first) || !contexts.record(other) || !contexts.record(next))
+                    throw std::runtime_error("could not stage commits across contexts");
+                if (!contexts.discard_staged(other.event_id))
+                    throw std::runtime_error("other context was settled early");
+                if (contexts.discard_staged(first.event_id))
+                    throw std::runtime_error("same context was not settled");
+                if (contexts.flush_staged(true) != 1)
+                    throw std::runtime_error("latest same-context commit was not staged");
+            }
             // Once the correction window elapses, an untouched commit is written.
             {
                 CommitStore elapsed_store(directory / "elapsed.sqlite3");
@@ -221,6 +246,7 @@ bool commit_test() {
             // the protocol itself can describe literal positions.
             protocol::RecordCommitRequest literal_only;
             literal_only.event_id[0] = 0x4b;
+            literal_only.source_id = request.source_id;
             literal_only.answer = u"hi";
             literal_only.entries = {{u"", U'h', false, true}, {u"", U'i', false, true}};
             try { (void)store.record(literal_only); throw std::runtime_error("literal-only commit accepted"); }
@@ -228,6 +254,7 @@ bool commit_test() {
             // Literal positions stay as context around the composed ones.
             protocol::RecordCommitRequest mixed;
             mixed.event_id[0] = 0x49;
+            mixed.source_id = request.source_id;
             mixed.context = u"早安";
             mixed.answer = u"你hi";
             mixed.entries = {{u"ㄋㄧˇ", U'你', false, false}, {u"", U'h', false, true},
@@ -242,8 +269,7 @@ bool commit_test() {
             long_context.event_id[0] += 3;
             long_context.context.assign(500, u'你');
             if (!store.record(long_context)) throw std::runtime_error("could not record long context");
-            // Only the newest commit is still staged; the previous one was
-            // settled when the next commit arrived.
+            // Only the newest commit in this source remains staged.
             if (store.flush_staged(true) != 1) throw std::runtime_error("staged commits were not written");
             // Disabling stops storage without touching what is already there.
             store.set_recording_enabled(false);
@@ -331,7 +357,7 @@ bool commit_test() {
         NumericDataset dataset;
         try { dataset = write_numeric_dataset(db, IME_UNIX_SERVICE_TEST_TABLE_DIR, config, output, 384, nullptr, &decryption); }
         catch (const std::exception& error) { throw std::runtime_error(std::string("dataset failed: ") + error.what()); }
-        if (dataset.included_ids.size() != 3 || dataset.skipped != 1 || dataset.pad_token_id != 0) good = false;
+        if (dataset.included_ids.size() != 2 || dataset.skipped != 2 || dataset.pad_token_id != 0) good = false;
         std::ifstream input(output);
         nlohmann::json row;
         input >> row;
@@ -342,16 +368,15 @@ bool commit_test() {
             input >> repeated;
             if (repeated != row) good = false;
         }
-        nlohmann::json long_row;
-        input >> long_row;
-        if (long_row.at("tokens").size() != 384 || long_row.at("loss_weights").back() != 1) good = false;
+        // The overlong context is skipped, not truncated into a training row.
         // The mixed row keeps literal positions as context: no mask and no loss
         // for them, a real mask and loss for the composed position.
         nlohmann::json mixed_row;
         input >> mixed_row;
         const auto& mixed_weights = mixed_row.at("loss_weights");
         const auto& mixed_masks = mixed_row.at("candidate_masks");
-        if (mixed_row.at("tokens").size() != 384 || mixed_weights.size() != 384 || mixed_masks.size() != 384)
+        if (mixed_row.at("tokens").size() != mixed_weights.size() || mixed_weights.size() != mixed_masks.size() ||
+            mixed_row.at("tokens").size() >= 384)
             good = false;
         bool saw_trained_position = false;
         for (std::size_t i = 0; i < mixed_weights.size(); ++i) {

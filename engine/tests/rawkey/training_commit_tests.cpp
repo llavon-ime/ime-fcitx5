@@ -136,24 +136,46 @@ RAWKEY_SUITE("training commit correction", training_commit_correction) {
     // A Backspace that immediately follows the commit withdraws it.
     harness.type("su3");
     harness.expect_commit("你");
+    harness.set_surrounding("早安你", 3, 3);
     harness.key("BackSpace");
     RAWKEY_ASSERT(commits == 1);
     RAWKEY_ASSERT(discards.size() == 1);
     RAWKEY_ASSERT(std::any_of(discards[0].begin(), discards[0].end(), [](auto byte) { return byte != 0; }));
 
+    // An edit outside the IME can change the client's text before Backspace.
+    // In that case this is no longer a correction of the recorded commit.
+    harness.set_surrounding("早安", 2, 2);
+    harness.type("su3");
+    harness.expect_commit("你");
+    harness.set_surrounding("早安他", 3, 3);
+    harness.key("BackSpace");
+    RAWKEY_ASSERT(commits == 2);
+    RAWKEY_ASSERT(discards.size() == 1);
+
+    // No client text and no fresh accessibility sample cannot establish that
+    // Backspace is correcting this commit, so leave its training row intact.
+    harness.set_surrounding("早安", 2, 2);
+    harness.type("su3");
+    harness.expect_commit("你");
+    harness.set_surrounding("", 0, 0);
+    harness.key("BackSpace");
+    RAWKEY_ASSERT(commits == 3);
+    RAWKEY_ASSERT(discards.size() == 1);
+
     // Any other key means the user moved on, so a later Backspace only edits
     // the composition and never withdraws the stored sample.
+    harness.set_surrounding("早安", 2, 2);
     harness.type("su3");
     harness.expect_commit("你");
     harness.key("Left");
     harness.key("BackSpace");
-    RAWKEY_ASSERT(commits == 2);
+    RAWKEY_ASSERT(commits == 4);
     RAWKEY_ASSERT(discards.size() == 1);
 
     // A Backspace inside a composition belongs to the composition.
     harness.type("su");
     harness.key("BackSpace");
-    RAWKEY_ASSERT(commits == 2);
+    RAWKEY_ASSERT(commits == 4);
     RAWKEY_ASSERT(discards.size() == 1);
     harness.key("Escape");
 }
@@ -226,13 +248,16 @@ RAWKEY_SUITE("training commit correction window", training_commit_correction_win
     harness.type("su3");
     harness.expect_commit("你");
     std::this_thread::sleep_for(std::chrono::milliseconds(1400));
+    harness.set_surrounding("早安你", 3, 3);
     harness.key("BackSpace");
     RAWKEY_ASSERT(commits == 1);
     RAWKEY_ASSERT(discards == 0);
 
     // Inside the window the immediate Backspace still withdraws the sample.
+    harness.set_surrounding("早安", 2, 2);
     harness.type("su3");
     harness.expect_commit("你");
+    harness.set_surrounding("早安你", 3, 3);
     harness.key("BackSpace");
     RAWKEY_ASSERT(commits == 2);
     RAWKEY_ASSERT(discards == 1);
@@ -291,6 +316,7 @@ RAWKEY_SUITE("training commit discard transport", training_commit_discard_transp
         harness.set_surrounding("早安", 2, 2);
         harness.type("su3");
         harness.expect_commit("你");
+        harness.set_surrounding("早安你", 3, 3);
         harness.key("BackSpace");
         completed = harness.pump_until([&] { return discarded.load(); });
         harness.detach();

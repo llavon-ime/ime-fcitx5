@@ -56,100 +56,128 @@ constexpr std::string_view page = R"LLAVON(<!doctype html>
 <style>
 :root{
   color:#26221e;background:#f7f4ee;
-  font-family:system-ui,-apple-system,"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+  font-family:system-ui,-apple-system,BlinkMacSystemFont,"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
   font-synthesis:none;text-rendering:optimizeLegibility;line-height:1.5;
   --ink:#26221e;--muted:#665e55;--paper:#fff;--line:#ded7cd;--line-strong:#a99d90;
   --accent:#a34825;--accent-dark:#7b321b;--accent-soft:#f7e7dc;
   --warning:#9b572d;--warning-soft:#fff5eb;--danger:#a6422e;--danger-soft:#fff0ed;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html{background:#f7f4ee}
 body{min-width:320px;min-height:100vh;margin:0;background:#f7f4ee}
 button,input,textarea,select{font:inherit}
 .site-shell{min-height:100vh}
-.topbar{min-height:72px;display:flex;align-items:center;justify-content:space-between;gap:24px;padding:0 max(24px,calc((100vw - 1040px)/2));border-bottom:1px solid var(--line);background:rgba(255,253,249,.94)}
+.topbar{min-height:72px;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:10px max(24px,calc((100vw - 1040px)/2));border-bottom:1px solid var(--line);background:rgba(255,253,249,.94)}
 .brand{min-width:0;display:inline-flex;align-items:center;gap:11px}
 .brand-logo{width:44px;height:44px;flex:0 0 auto;border:1px solid var(--line-strong);border-radius:11px;background:var(--paper);object-fit:cover}
 .brand > span{min-width:0;display:flex;flex-direction:column;line-height:1.2}
-.brand strong{font-size:15px;letter-spacing:.02em}
-.brand small{margin-top:3px;color:var(--muted);font-size:11px}
-.top-note{flex:0 0 auto;padding:6px 9px;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--muted);font-size:10px;font-weight:700}
+.brand strong{font-size:16px;letter-spacing:.02em}
+.brand small{margin-top:3px;color:var(--muted);font-size:12px}
+.top-note{flex:0 0 auto;padding:6px 9px;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--muted);font-size:12px;font-weight:700}
 .topbar-actions{display:flex;align-items:center;gap:9px}
-.page-content{width:min(820px,calc(100% - 40px));margin:0 auto;padding:40px 0 64px}
+.page-content{width:min(900px,calc(100% - 40px));margin:0 auto;padding:36px 0 64px}
 .page-heading{margin-bottom:22px}
 .page-heading h1{margin:0;font-size:clamp(28px,4vw,38px);line-height:1.25;letter-spacing:-.035em}
-.page-heading p{margin:8px 0 0;color:var(--muted);font-size:14px}
-.form-card{min-width:0;overflow:hidden;border:1px solid var(--line);border-radius:14px;background:var(--paper);box-shadow:0 12px 32px rgba(54,42,32,.075);margin-bottom:14px}
-.field-group{padding:22px 24px;border-bottom:1px solid var(--line)}
+.page-heading p{margin:8px 0 0;color:var(--muted);font-size:15px}
+.tabs{display:flex;gap:8px;margin:0 0 18px;padding:5px;border:1px solid var(--line);border-radius:12px;background:#eee9e1}
+.tabs button{flex:1;min-width:0;border:0;background:transparent;color:var(--muted);font-size:14px}
+.tabs button[aria-selected="true"]{background:var(--paper);color:var(--accent-dark);box-shadow:0 2px 8px rgba(54,42,32,.12)}
+.tabs button:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.tab-panel{min-width:0}
+.form-card{min-width:0;overflow:hidden;border:1px solid var(--line);border-radius:14px;background:var(--paper);box-shadow:0 10px 28px rgba(54,42,32,.06);margin-bottom:14px}
+.field-group{padding:24px 28px;border-bottom:1px solid var(--line)}
 .field-group:last-child{border-bottom:0}
-.field-label-row{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:13px}
-.field-label{display:inline-flex;align-items:center;gap:9px;font-size:14px;font-weight:800}
+.field-label-row{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px}
+.field-label{display:inline-flex;align-items:center;gap:9px;font-size:17px;font-weight:800}
 .field-index{width:23px;height:23px;display:inline-grid;place-items:center;flex:0 0 auto;border-radius:6px;background:var(--accent);color:#fff;font-size:10px;font-weight:800}
-.field-label-row small,.field-label-row > span:not(.field-label){color:var(--muted);font-size:10px}
-.field-hint{margin:9px 1px 0;color:var(--muted);font-size:10px;line-height:1.6}
+.field-label-row small,.field-label-row > span:not(.field-label){color:var(--muted);font-size:13px}
+.field-hint{margin:12px 1px 0;color:var(--muted);font-size:13px;line-height:1.6}
 .toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .row{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0}
-.notice{display:flex;gap:10px;margin-bottom:18px;padding:13px 15px;border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;background:var(--paper);font-size:12px;white-space:pre-wrap}
+.notice{display:flex;gap:10px;margin-bottom:18px;padding:13px 15px;border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;background:var(--paper);font-size:14px;white-space:pre-wrap}
 .notice.error{border-left-color:var(--danger);background:var(--danger-soft);color:#7b2f21}
-button{min-height:40px;padding:0 15px;border:1px solid var(--line-strong);border-radius:8px;background:var(--paper);color:var(--ink);font-size:12px;font-weight:800;cursor:pointer;transition:background 150ms,border-color 150ms}
+button{min-height:40px;padding:0 15px;border:1px solid var(--line-strong);border-radius:8px;background:var(--paper);color:var(--ink);font-size:14px;font-weight:700;cursor:pointer;transition:background 150ms,border-color 150ms}
 button:disabled{cursor:not-allowed;opacity:.55}
 button.primary{border:0;background:var(--accent);color:#fff}
 button.primary:not(:disabled):hover{background:var(--accent-dark)}
 button.ghost:not(:disabled):hover{border-color:var(--accent);color:var(--accent-dark)}
 button.danger{color:var(--danger)}
-button.tiny{min-height:30px;padding:0 10px;font-size:11px;border-radius:7px}
-select{min-height:36px;padding:0 9px;border:1px solid var(--line-strong);border-radius:8px;outline:none;background:var(--paper);color:var(--ink);font-size:12px;font-weight:700}
+button.tiny{min-height:36px;padding:0 11px;font-size:13px;border-radius:7px}
+select{min-height:38px;padding:0 9px;border:1px solid var(--line-strong);border-radius:8px;outline:none;background:var(--paper);color:var(--ink);font-size:14px;font-weight:700}
 input:not([type=checkbox]){min-height:44px;padding:0 13px;border:1px solid var(--line-strong);border-radius:9px;outline:none;background:var(--paper);color:var(--ink);font-size:15px;font-weight:600;transition:border-color 150ms,box-shadow 150ms}
 select:focus-visible,input:not([type=checkbox]):focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(163,72,37,.15)}
-.statusline{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;margin-bottom:14px}
+.statusline{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px;margin-bottom:14px}
 .statusline .revision{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:var(--muted);overflow-wrap:anywhere}
 .records{display:grid;gap:10px}
-.record{border:1px solid var(--line);border-radius:12px;background:var(--paper);padding:12px 14px;display:grid;gap:8px}
-.record-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--muted);font-size:10px}
+.record{border:1px solid var(--line);border-radius:12px;background:#fffdfa;padding:17px 18px;display:grid;gap:15px}
+.record-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--muted);font-size:12px}
 .record-head .time{font-weight:800;color:#55463c}
 .record-head .actions{margin-left:auto;display:flex;gap:6px}
-.align{padding:3px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent-dark);font-size:9px;font-weight:800}
+.align{padding:3px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent-dark);font-size:11px;font-weight:800}
 .align.partial{background:var(--warning-soft);color:var(--warning)}
-.sentence{margin:0;color:var(--ink);font-family:"Noto Serif TC","Songti TC","PMingLiU","Noto Serif CJK TC",ui-serif,serif;font-size:clamp(18px,3.1vw,22px);line-height:1.95;overflow-wrap:anywhere}
-.sentence .context{color:var(--muted);white-space:pre-wrap}
-.answer{padding:.62em 7px 4px;border-radius:6px;background:var(--accent-soft);color:var(--accent-dark);box-decoration-break:clone;-webkit-box-decoration-break:clone;font-weight:800}
-.syllable{position:relative;display:inline-block;vertical-align:bottom;line-height:1.15}
-.syllable .reading{position:absolute;left:50%;bottom:100%;transform:translateX(-50%);font-family:inherit;font-size:.36em;font-weight:800;letter-spacing:.01em;color:var(--accent-dark);white-space:nowrap;margin-bottom:1px}
+.sentence{margin:0;color:var(--ink);font-family:ui-serif,"Noto Serif TC","Songti TC","PMingLiU","Noto Serif CJK TC",serif;font-size:clamp(19px,3vw,24px);line-height:2.25;overflow-wrap:anywhere}
+.sentence .context{display:block;max-width:100%;margin-bottom:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-family:system-ui,sans-serif;font-size:14px;line-height:1.6}
+.sentence .context-label{margin-right:10px;color:var(--accent-dark);font-size:12px;font-weight:700}
+.answer{display:inline-flex;max-width:100%;flex-wrap:wrap;align-items:flex-end;row-gap:.8em;padding:1em 10px 10px;border-radius:6px;background:var(--accent-soft);color:var(--accent-dark);vertical-align:middle;font-weight:800}
+.syllable{position:relative;display:inline-block;min-width:2.1em;text-align:center;vertical-align:bottom;line-height:1.15}
+.syllable.literal{min-width:0}
+.syllable .reading{position:absolute;left:50%;bottom:100%;transform:translateX(-50%);font-family:inherit;font-size:.55em;font-weight:800;letter-spacing:.01em;color:var(--accent-dark);white-space:nowrap;margin-bottom:2px}
 .syllable .character{font-size:1em}
 .syllable.manual{background:#eed3c1;border-radius:5px}
 .syllable .reading.unresolved{color:var(--warning)}
-.record-foot{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding-top:8px;border-top:1px solid #f1e8e2;font-size:10px;color:var(--muted)}
+.record-foot{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding-top:12px;border-top:1px solid #f1e8e2;font-size:13px;color:var(--muted)}
 .record-foot .readings{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
 .record-foot .readings strong{margin-left:6px;color:#55463c;font-weight:700}
 .revised{color:var(--accent);font-weight:800;letter-spacing:.04em}
-.chip{padding:4px 8px;border-radius:999px;background:var(--warning-soft);color:var(--warning);font-size:9px;font-weight:800}
+.chip{padding:4px 8px;border-radius:999px;background:var(--warning-soft);color:var(--warning);font-size:12px;font-weight:800}
 .chip.trained{background:var(--accent-soft);color:var(--accent-dark)}
 .chip.excluded{background:#eee8e1;color:var(--muted)}
-.tag{padding:4px 8px;border-radius:999px;background:#f2ede7;color:var(--muted);font-size:9px;font-weight:800}
+.tag{padding:4px 8px;border-radius:999px;background:#f2ede7;color:var(--muted);font-size:12px;font-weight:800}
 .tag.error{background:var(--danger-soft);color:var(--danger)}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.options{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:14px 16px;margin-bottom:16px}
+.options{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px;margin-bottom:18px}
 .field{display:flex;flex-direction:column;gap:6px}
-.field span{color:#554e47;font-size:11px;font-weight:800}
+.field span{color:#554e47;font-size:13px;font-weight:800}
 .field input,.field select{min-width:0}
-.switch{display:flex;align-items:center;gap:9px;align-self:end;padding-bottom:11px;font-size:12px;font-weight:700}
+.switch{display:flex;align-items:center;gap:9px;align-self:end;padding-bottom:11px;font-size:14px;font-weight:700}
 .switch input{width:16px;height:16px;accent-color:var(--accent)}
-.estimate{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:0 0 16px;color:var(--muted);font-size:11px}
+.estimate{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:0 0 16px;color:var(--muted);font-size:14px}
+.advanced{margin:0 0 20px;border:1px solid var(--line);border-radius:10px;padding:0 16px}
+.advanced summary{padding:13px 0;cursor:pointer;color:var(--accent-dark);font-size:14px;font-weight:700}
+.advanced .options{padding:8px 0 0}
 progress{width:100%;height:6px;accent-color:var(--accent);border:none;border-radius:999px}
-.hint{margin:9px 1px 0;color:var(--muted);font-size:10px;line-height:1.6}
+.hint{margin:9px 1px 0;color:var(--muted);font-size:13px;line-height:1.6}
 .log{margin-top:14px;padding:13px 15px;border:1px solid var(--line);border-radius:10px;background:#faf8f4;color:#554e47;font-size:11px;max-height:14rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 .run{display:grid;gap:6px;margin-bottom:8px;padding:11px 13px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
 .run-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.run-top strong{font-size:12px}
+.run-top strong{font-size:14px}
 .run-top button{margin-left:auto}
 .tagrow{display:flex;gap:6px;flex-wrap:wrap}
-.path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:var(--muted);overflow-wrap:anywhere}
-.empty{margin:0;color:var(--muted);font-size:12px}
-.protection{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
-.protection .hint{color:var(--muted);font-size:11px}
+.path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.empty{margin:0;color:var(--muted);font-size:14px;line-height:1.7}
+.protection{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;padding:15px;border:1px solid var(--line);border-radius:10px;background:#faf8f4}
+.protection .hint{color:var(--muted);font-size:13px;flex:1 1 230px}
 .protection input[type=password]{width:150px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:12px}
-.protection-setup{display:grid;gap:8px;margin-bottom:10px;padding:12px;border:1px dashed var(--accent);border-radius:10px;background:var(--paper)}
-.locked-note{margin:0;color:var(--muted);font-size:12px}
+.protection-setup{display:grid;gap:12px;margin-bottom:16px;padding:18px;border:1px solid var(--line);border-radius:10px;background:var(--accent-soft)}
+.locked-note{margin:0;color:var(--muted);font-size:14px}
+.pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:16px 0 0;color:var(--muted);font-size:13px}
+.pagination .row{margin-left:auto}
+@media(max-width:640px){
+  .topbar{padding:12px 18px;gap:10px}
+  .brand-logo{width:38px;height:38px}
+  .top-note{display:none}
+  .page-content{width:calc(100% - 32px);padding-top:28px}
+  .page-heading{margin-bottom:18px}
+  .page-heading p{font-size:14px}
+  .field-group{padding:20px 17px}
+  .field-label-row{align-items:flex-start;flex-direction:column;gap:8px}
+  .pagination .row{margin-left:0}
+  .record{padding:15px}
+  .record-head .actions{margin-left:auto}
+  .tabs button{padding:0 6px}
+  .options{grid-template-columns:repeat(auto-fill,minmax(145px,1fr))}
+}
 </style>
 <div class="site-shell">
 <header class="topbar">
@@ -165,21 +193,19 @@ progress{width:100%;height:6px;accent-color:var(--accent);border:none;border-rad
 <main class="page-content">
   <div class="page-heading">
     <h1>個人化訓練</h1>
-    <p>在輸入法設定開啟收集，並在下方設定密碼後才會加密保存。基礎模型 <span class="mono">tony65535/llavon-ime-llama-250m</span>（約 1 GB，CC-BY-NC-4.0）。</p>
+    <p>檢視待訓練資料、訓練專屬模型，完成後再套用到輸入法。</p>
   </div>
   <div id="message" class="notice">連線中…</div>
+  <nav class="tabs" role="tablist" aria-label="個人化訓練頁面">
+    <button id="nav-records" role="tab" type="button" data-panel="tab-records" aria-controls="tab-records" aria-selected="true">訓練資料</button>
+    <button id="nav-training" role="tab" type="button" data-panel="tab-training" aria-controls="tab-training" aria-selected="false">模型與訓練</button>
+  </nav>
+  <div id="tab-records" class="tab-panel" role="tabpanel" aria-labelledby="nav-records">
   <section class="form-card">
     <div class="field-group">
       <div class="field-label-row">
-        <span class="field-label"><span class="field-index">01</span>訓練資料</span>
-        <div class="toolbar">
-          <label for="record-state">顯示</label>
-          <select id="record-state"><option value="pending">待訓練</option><option value="excluded">已排除</option><option value="trained">已訓練</option></select>
-          <button id="previous" class="ghost tiny">上一頁</button>
-          <button id="next" class="ghost tiny">下一頁</button>
-          <span id="page-summary"></span>
-          <span id="selection-summary"></span>
-        </div>
+        <span class="field-label">待訓練資料</span>
+        <span id="selection-summary"></span>
       </div>
       <div id="protection" class="protection"></div>
       <div id="password-setup" class="protection-setup" hidden>
@@ -189,28 +215,36 @@ progress{width:100%;height:6px;accent-color:var(--accent);border:none;border-rad
         <div class="row"><button id="setup-cancel" class="ghost tiny">取消</button><button id="setup-confirm" class="primary tiny">設定並開始收集</button></div>
       </div>
       <div id="records" class="records"></div>
+      <div class="pagination">
+        <span id="page-summary"></span>
+        <div class="row"><button id="previous" class="ghost tiny">上一頁</button><button id="next" class="ghost tiny">下一頁</button></div>
+      </div>
     </div>
   </section>
+  </div>
+  <div id="tab-training" class="tab-panel" role="tabpanel" aria-labelledby="nav-training" hidden>
   <section class="form-card">
     <div class="field-group">
       <div class="field-label-row">
-        <span class="field-label"><span class="field-index">02</span>基礎模型</span>
+        <span class="field-label">基礎模型</span>
       </div>
       <div id="model-status" class="statusline"></div>
       <div class="row"><button id="check" class="ghost">檢查更新</button><button id="fetch" class="primary">下載／更新模型</button></div>
-      <p class="field-hint">下載後才能開始訓練；訓練不會自動替換目前使用的模型。</p>
+      <p class="field-hint">訓練使用 tony65535/llavon-ime-llama-250m（約 1 GB，CC-BY-NC-4.0）。訓練完成後由你決定何時套用。</p>
     </div>
   </section>
   <section class="form-card">
     <div class="field-group">
       <div class="field-label-row">
-        <span class="field-label"><span class="field-index">03</span>訓練設定</span>
+        <span class="field-label">訓練設定</span>
       </div>
       <div id="training-options" class="options"></div>
+      <details class="advanced"><summary>進階訓練設定</summary><div id="advanced-options" class="options"></div></details>
       <label class="field" id="train-password-field" hidden><span>訓練密碼</span><input id="train-password" type="password" autocomplete="current-password"></label>
-      <p class="field-hint" id="train-password-hint" hidden>「檢視與選擇」與「開始訓練」各自要求密碼，兩者不共用解鎖狀態。</p>
+      <p class="field-hint" id="train-password-hint" hidden>開始訓練時須重新輸入密碼；檢視資料的解鎖狀態不會共用。</p>
       <div class="estimate"><span id="estimated-steps">預計 steps：0</span><progress id="progress" max="100" style="display:none"></progress></div>
-      <div class="row"><button id="install-trainer" class="ghost">安裝／更新 LoRA Trainer</button><button id="cancel" class="ghost">取消目前工作</button><button id="train" class="primary">開始訓練 →</button></div>
+      <div class="row"><button id="train" class="primary">開始訓練</button><button id="cancel" class="ghost">取消目前工作</button></div>
+      <div class="row" style="margin-top:16px"><button id="install-trainer" class="ghost">安裝／更新 LoRA Trainer</button></div>
       <small id="trainer-status" class="hint"></small>
       <pre id="log" class="log"></pre>
     </div>
@@ -218,11 +252,12 @@ progress{width:100%;height:6px;accent-color:var(--accent);border:none;border-rad
   <section class="form-card">
     <div class="field-group">
       <div class="field-label-row">
-        <span class="field-label"><span class="field-index">04</span>訓練歷程</span>
+        <span class="field-label">訓練歷程</span>
       </div>
       <div id="runs"></div>
     </div>
   </section>
+  </div>
 </main>
 </div>
 <script>
@@ -236,6 +271,15 @@ let pendingIds=[];
 let readingsTable={};
 let activeModelPath='';
 let protectionInfo={configured:false,enabled:false,unlocked:false};
+for(const tab of document.querySelectorAll('.tabs button')){
+  tab.onclick=()=>{
+    for(const button of document.querySelectorAll('.tabs button')){
+      const active=button===tab;
+      button.setAttribute('aria-selected',String(active));
+      document.getElementById(button.dataset.panel).hidden=!active;
+    }
+  };
+}
 function updateEstimate(){
   // Every pending record takes part in the next run; unwanted ones are
   // deleted, matching the Windows manager.
@@ -254,14 +298,21 @@ const fields=[['rank','LoRA rank','8'],['alpha','LoRA alpha','16'],['dropout','L
   ['max-grad-norm','Max gradient norm','1'],['save-every','Save every','0'],['seed','Seed','42'],
   ['max-seq-length','Max sequence length','384'],['target-modules','Target modules','q_proj,v_proj']];
 const optionsView=document.getElementById('training-options');
+const advancedView=document.getElementById('advanced-options');
+const basicFields=new Set(['rank','alpha','epochs','learning-rate']);
+const fieldLabels={'rank':'LoRA rank','alpha':'LoRA alpha','dropout':'Dropout',
+  'batch-size':'Batch size','gradient-accumulation':'梯度累積','epochs':'訓練回合',
+  'max-steps':'最多步數','learning-rate':'學習率','weight-decay':'Weight decay',
+  'warmup-steps':'Warmup steps','max-grad-norm':'梯度上限','save-every':'儲存間隔',
+  'seed':'隨機種子','max-seq-length':'最大序列長度','target-modules':'目標模組'};
 for(const [name,label,value] of fields){
   const field=document.createElement('label');field.className='field';
-  const caption=document.createElement('span');caption.textContent=label;
+  const caption=document.createElement('span');caption.textContent=fieldLabels[name]||label;
   const input=document.createElement('input');input.id=name;input.value=value;
-  field.append(caption,input);optionsView.append(field);
+  field.append(caption,input);(basicFields.has(name)?optionsView:advancedView).append(field);
   input.oninput=updateEstimate;
 }
-for(const [name,label,choices] of [['device','Device',['auto','cuda','cpu']],['dtype','DType',['float32','bfloat16']]]){
+for(const [name,label,choices] of [['device','運算裝置',['auto','cuda','cpu']],['dtype','數值精度',['float32','bfloat16']]]){
   const field=document.createElement('label');field.className='field';
   const caption=document.createElement('span');caption.textContent=label;
   const select=document.createElement('select');select.id=name;
@@ -270,7 +321,7 @@ for(const [name,label,choices] of [['device','Device',['auto','cuda','cpu']],['d
 }
 const shuffleLabel=document.createElement('label');shuffleLabel.className='switch';
 const shuffle=document.createElement('input');shuffle.type='checkbox';shuffle.id='shuffle';shuffle.checked=true;
-shuffleLabel.append(shuffle,document.createTextNode('Shuffle training data'));optionsView.append(shuffleLabel);
+shuffleLabel.append(shuffle,document.createTextNode('打亂訓練資料'));advancedView.append(shuffleLabel);
 async function api(path, body) {
   const options = {headers:{'X-Llavon-Token':token}};
   if (body !== undefined) {options.method='POST';options.headers['Content-Type']='application/json';options.body=JSON.stringify(body);}
@@ -278,11 +329,6 @@ async function api(path, body) {
   const result = await response.json();
   if (!response.ok) throw Error(result.error || '請求失敗');
   return result;
-}
-function stateChip(state){
-  const chip=document.createElement('span');chip.className='chip '+(state==='pending'?'':state);
-  chip.textContent={pending:'待訓練',excluded:'已排除',trained:'已訓練'}[state]||state;
-  return chip;
 }
 let protectionSignature='';
 function renderProtection(info){
@@ -309,7 +355,7 @@ function renderProtection(info){
     return;
   }
   if(info.unlocked){
-    note.textContent='已解鎖，可檢視與選擇。';
+    note.textContent='已解鎖，可以檢視待訓練資料。';
     const lock=document.createElement('button');lock.className='ghost tiny';lock.textContent='鎖定';
     lock.onclick=()=>act('lock',{});bar.append(note,lock);
   }else{
@@ -319,7 +365,7 @@ function renderProtection(info){
     const unlock=document.createElement('button');unlock.className='primary tiny';unlock.textContent='解鎖檢視';
     unlock.onclick=async()=>{
       try{await api('unlock',{password:password.value});password.value='';await refresh();}
-      catch(error){message.className='notice error';message.textContent=error.message;}
+      catch(error){message.hidden=false;message.className='notice error';message.textContent=error.message;}
     };
     password.onkeydown=event=>{if(event.key==='Enter')unlock.click();};
     bar.append(note,password,unlock);
@@ -355,7 +401,9 @@ function composed(item){
   const sentence=document.createElement('p');sentence.className='sentence';
   if(item.context){
     const context=document.createElement('span');context.className='context';
-    context.textContent=item.context;sentence.append(context);
+    const label=document.createElement('span');label.className='context-label';label.textContent='前文';
+    const text=document.createElement('span');text.textContent=item.context;
+    context.title=item.context;context.append(label,text);sentence.append(context);
   }
   const answer=document.createElement('span');answer.className='answer';
   const characters=Array.from(item.answer||'');
@@ -369,6 +417,7 @@ function composed(item){
     // no reading above it and no unresolved warning.
     const literal=recorded&&!reading;
     const syllable=document.createElement('span');syllable.className='syllable';
+    if(literal)syllable.classList.add('literal');
     if(manual[index])syllable.classList.add('manual');
     const annotation=document.createElement('span');annotation.className='reading';
     annotation.textContent=reading||'';
@@ -386,8 +435,11 @@ function composed(item){
 function recordCard(item, viewState){
   const card=document.createElement('article');card.className='record';
   const head=document.createElement('div');head.className='record-head';
-  const time=document.createElement('span');time.className='time';time.textContent=item.committed_at;
-  head.append(time,stateChip(viewState));
+  const time=document.createElement('span');time.className='time';
+  const date=new Date(item.committed_at);
+  time.textContent=Number.isNaN(date.getTime())?item.committed_at:date.toLocaleString('zh-TW',
+    {year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+  head.append(time);
   const actions=document.createElement('div');actions.className='actions';
   // Pending records all take part in the next run; unwanted ones are deleted,
   // exactly like the Windows manager.
@@ -406,8 +458,8 @@ function recordCard(item, viewState){
     card.append(head,note);return card;
   }
   const aligned=(item.readings||[]).length>=Array.from(item.answer||'').length;
-  const alignment=document.createElement('span');alignment.className='align'+(aligned?'':' partial');
-  alignment.textContent=aligned?'已完整對齊':'部分對齊';head.append(alignment);
+  if(!aligned){const alignment=document.createElement('span');alignment.className='align partial';
+    alignment.textContent='部分對齊';head.append(alignment);}
   const foot=document.createElement('div');foot.className='record-foot';
   if((item.manual||[]).some(Boolean)){
     // Windows marks records that contain a manual candidate choice and gives
@@ -441,7 +493,7 @@ function runCard(item){
     button.textContent='立即套用';
     button.onclick=async()=>{
       try{await api('use-model',{id:item.id});await refresh();
-        message.className='notice';message.textContent='新模型已套用。';}
+        message.hidden=false;message.className='notice';message.textContent='新模型已套用。';}
       catch(error){
         let status=top.querySelector('.run-error');
         if(!status){status=document.createElement('span');status.className='tag error run-error';top.insertBefore(status,button);}
@@ -461,6 +513,7 @@ async function refresh() {
     protectionInfo=await api('protection');
     renderProtection(protectionInfo);
     const job=state.job;
+    message.hidden=job.state==='idle';
     message.className='notice'+(job.state==='failed'?' error':'');
     message.textContent=job.state==='running' ? ({fetch:'正在下載模型',check:'正在檢查模型更新',install:'正在安裝 Trainer',train:'正在訓練及匯出模型'}[job.kind])+(job.progress?'・'+job.progress:'')
       : job.state==='idle'?'目前沒有工作':job.kind==='train'&&job.state==='completed'?'訓練完成，請套用新模型。':job.kind+'：'+({completed:'完成',failed:'失敗',cancelled:'已取消'}[job.state]||job.state);
@@ -481,27 +534,31 @@ async function refresh() {
     else if(state.model_update_available===false){const current=document.createElement('span');current.className='tag';current.textContent='已是最新版本';modelStatus.append(current);}
     document.getElementById('trainer-status').textContent=state.trainer_ready ? 'LoRA Trainer 已安裝' :
       '找不到 llavon-lora，請安裝選配的 LoRA Trainer 元件。';
-    const selected=document.getElementById('record-state').value;
     // An open page always mirrors the database: records typed while it is open
     // appear on the next poll and take part in the next training run.
     pendingIds=await api('pending-ids');
     updateEstimate();
-    const listing=await api('records?state='+selected+'&offset='+recordOffset);
+    let listing=await api('records?state=pending&offset='+recordOffset);
+    if(recordOffset && recordOffset>=listing.total){
+      recordOffset=Math.max(0,Math.ceil(listing.total/PAGE_SIZE)-1)*PAGE_SIZE;
+      listing=await api('records?state=pending&offset='+recordOffset);
+    }
     const page=Math.floor(recordOffset/PAGE_SIZE)+1;
     const pages=Math.max(1,Math.ceil((listing.total||0)/PAGE_SIZE));
-    document.getElementById('page-summary').textContent='第 '+page+' / '+pages+' 頁・共 '+(listing.total||0)+' 筆';
+    document.getElementById('page-summary').textContent='第 '+page+' / '+pages+' 頁'+
+      (listing.total?' · '+(recordOffset+1)+'–'+(recordOffset+listing.rows.length)+' / '+listing.total+' 筆':'');
     document.getElementById('previous').disabled=recordOffset===0;
     document.getElementById('next').disabled=!listing.has_more;
     const records=listing.rows;
     const list=document.getElementById('records');list.replaceChildren();
-    if (!records.length) list.innerHTML='<p class="empty">目前沒有這類紀錄。</p>';
-    else for (const item of records) list.append(recordCard(item,selected));
+    if (!records.length) list.innerHTML='<p class="empty">目前沒有待訓練資料。設定密碼並啟用收集後，提交注音文字就會出現在這裡。</p>';
+    else for (const item of records) list.append(recordCard(item,'pending'));
     const runs=await api('runs'), view=document.getElementById('runs');view.replaceChildren();
     if (!runs.length) view.innerHTML='<p class="empty">尚無已完成模型。</p>';
     else for(const item of runs) view.append(runCard(item));
-  } catch(error){message.className='notice error';message.textContent=error.message;}
+  } catch(error){message.hidden=false;message.className='notice error';message.textContent=error.message;}
 }
-async function act(path, body){try{await api(path,body);await refresh();}catch(error){message.className='notice error';message.textContent=error.message;}}
+async function act(path, body){try{await api(path,body);await refresh();}catch(error){message.hidden=false;message.className='notice error';message.textContent=error.message;}}
 document.getElementById('fetch').onclick=()=>act('fetch',{});
 document.getElementById('install-trainer').onclick=()=>act('install-trainer',{});
 document.getElementById('check').onclick=()=>act('check',{});
@@ -522,7 +579,7 @@ document.getElementById('train').onclick=async()=>{
     if(!confirm(`以 ${ids.length} 筆資料開始訓練？`))return;
     await act('train',{ids,reviewed:ids,options,password});
     document.getElementById('train-password').value='';
-  }catch(error){message.className='notice error';message.textContent=error.message;}
+  }catch(error){message.hidden=false;message.className='notice error';message.textContent=error.message;}
 };
 document.getElementById('setup-cancel').onclick=()=>{document.getElementById('password-setup').hidden=true;};
 document.getElementById('setup-confirm').onclick=async()=>{
@@ -533,10 +590,9 @@ document.getElementById('setup-confirm').onclick=async()=>{
     document.getElementById('setup-password').value='';document.getElementById('setup-confirmation').value='';
     document.getElementById('password-setup').hidden=true;
     await refresh();
-  }catch(error){message.className='notice error';message.textContent=error.message;}
+  }catch(error){message.hidden=false;message.className='notice error';message.textContent=error.message;}
 };
 document.getElementById('cancel').onclick=()=>act('cancel',{});
-document.getElementById('record-state').onchange=()=>{recordOffset=0;refresh();};
 document.getElementById('reload-records').onclick=()=>{recordOffset=0;refresh();};
 document.getElementById('previous').onclick=()=>{recordOffset=Math.max(0,recordOffset-PAGE_SIZE);refresh();};
 document.getElementById('next').onclick=()=>{recordOffset+=PAGE_SIZE;refresh();};
@@ -1038,7 +1094,7 @@ Options parse_options(int argc, char** argv) {
         else if (name == "--idle-seconds") options.idle_seconds = std::stoi(value);
         else throw std::invalid_argument("unknown option: " + name);
     }
-    if (options.idle_seconds < 5) throw std::invalid_argument("idle timeout must be at least 5 seconds");
+    if (options.idle_seconds < 1) throw std::invalid_argument("idle timeout must be at least 1 second");
     options.state = fs::absolute(options.state);
     options.trainer = trainer_path(options.state);
     if (!options.db.empty()) options.db = fs::absolute(options.db);

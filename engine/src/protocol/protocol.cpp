@@ -268,9 +268,9 @@ ByteVector encode(const Message& message) {
         else if constexpr (std::is_same_v<T, ShutdownRequest>) { type(payload, MessageType::Shutdown); u8(payload, 0); }
         else if constexpr (std::is_same_v<T, ShutdownResponse>) { type(payload, MessageType::Shutdown); u8(payload, 1); u8(payload, value.accepted); }
         else if constexpr (std::is_same_v<T, RecordCommitRequest>) {
-            if (is_zero(value.event_id) || value.entries.empty() || value.entries.size() > 1024 ||
+            if (is_zero(value.event_id) || is_zero(value.source_id) || value.entries.empty() || value.entries.size() > 1024 ||
                 value.answer.empty()) fail("invalid commit sample");
-            type(payload, MessageType::RecordCommit); u8(payload, 0); id(payload, value.event_id);
+            type(payload, MessageType::RecordCommit); u8(payload, 0); id(payload, value.event_id); id(payload, value.source_id);
             text16(payload, value.context, "commit context", 4096);
             text16(payload, value.answer, "commit answer", 1024);
             u32(payload, checked(value.entries.size(), "commit entries", 1024));
@@ -310,8 +310,8 @@ Message decode(const ByteVector& frame) {
         case MessageType::RecordCommit: {
             const auto kind = reader.read_u8();
             if (kind == 0) {
-                RecordCommitRequest value; value.event_id = reader.read_id();
-                if (is_zero(value.event_id)) fail("commit has no event id");
+                RecordCommitRequest value; value.event_id = reader.read_id(); value.source_id = reader.read_id();
+                if (is_zero(value.event_id) || is_zero(value.source_id)) fail("commit has no event or source id");
                 value.context = reader.read_utf16("commit context", 4096);
                 value.answer = reader.read_utf16("commit answer", 1024);
                 const auto count = reader.read_u32(); count_ok(reader, count, 10, "commit entries");

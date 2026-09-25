@@ -48,7 +48,8 @@ std::string event_id(const protocol::SessionId& bytes) {
 }
 
 void validate(const protocol::RecordCommitRequest& request) {
-    if (protocol::is_zero(request.event_id) || request.entries.empty() || request.entries.size() > 1024 ||
+    if (protocol::is_zero(request.event_id) || protocol::is_zero(request.source_id) ||
+        request.entries.empty() || request.entries.size() > 1024 ||
         request.answer.empty() || request.answer.size() > 1024 || request.context.size() > 4096 ||
         !protocol::valid_utf16(request.answer) || !protocol::valid_utf16(request.context)) {
         throw std::invalid_argument("invalid commit event");
@@ -208,9 +209,14 @@ bool CommitStore::record(const protocol::RecordCommitRequest& request) {
     std::lock_guard lock(mutex_);
     const auto status = protection_status_of(db_);
     if (!status.configured || !status.enabled) return false;
-    // A new commit means the user kept typing, so the previous one is settled
-    // and can be written right away; only the newest stays withdrawable.
-    flush_locked(true, std::chrono::steady_clock::now());
+    // Only the previous commit in this input context is settled early. A
+    // different context must keep its own correction window (as on Windows).
+    for (auto it = staged_.begin(); it != staged_.end();) {
+        if (it->request.source_id == request.source_id) {
+            write_locked(it->request);
+            it = staged_.erase(it);
+        } else ++it;
+    }
     if (staged_.size() >= 256) return false;  // never let a stalled store grow without bound
     staged_.push_back(StagedCommit{request, std::chrono::steady_clock::now()});
     return true;

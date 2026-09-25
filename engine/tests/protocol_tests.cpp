@@ -41,12 +41,14 @@ int run_protocol_tests() {
 
     RecordCommitRequest commit;
     commit.event_id[0] = 42;
+    commit.source_id[0] = 7;
     commit.context = u"早安";
     commit.answer = u"你";
     commit.entries.push_back({u"ㄋㄧˇ", U'你', true});
     const auto recorded = decode(encode(commit));
     const auto* decoded_commit = std::get_if<RecordCommitRequest>(&recorded);
     ok = ok && decoded_commit && decoded_commit->event_id == commit.event_id &&
+          decoded_commit->source_id == commit.source_id &&
          decoded_commit->context == commit.context && decoded_commit->answer == commit.answer &&
          decoded_commit->entries.size() == 1 && decoded_commit->entries[0].manually_selected;
 

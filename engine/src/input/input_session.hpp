@@ -40,6 +40,8 @@ struct MixedDecisionState {
 // Per-input-context editing state. The engine swaps the whole object in and
 // out of the active input context, so every field always travels together.
 struct InputSession {
+    // Identifies this input context across commits, not prediction reconnects.
+    protocol::SessionId training_source_id{};
     InputState state;
     CandidateView candidate_view;
     std::vector<std::u16string> displayed_candidates;

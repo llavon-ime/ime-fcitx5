@@ -59,6 +59,7 @@ struct CommitEntry {
 };
 struct RecordCommitRequest {
     SessionId event_id{};
+    SessionId source_id{};
     std::u16string context;
     std::u16string answer;
     std::vector<CommitEntry> entries;

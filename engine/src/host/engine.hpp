@@ -108,7 +108,8 @@ private:
     void handle_prediction_response(ContextId context, std::uint64_t generation, protocol::Message response);
     void close_prediction_session(InputSession& session);
     void resync_context(ContextId context, InputSession& session);
-    void remember_recent_commit(ContextId context, const protocol::SessionId& event_id);
+    void remember_recent_commit(ContextId context, const protocol::SessionId& event_id,
+                                std::u16string_view committed_tail, std::uint64_t accessibility_sequence);
     // Withdraws the last commit when this Backspace is the immediate correction
     // of an empty composition inside the correction window.
     void withdraw_recent_commit(ContextId context);
@@ -134,6 +135,8 @@ private:
         ContextId context = 0;
         protocol::SessionId event_id{};
         std::chrono::steady_clock::time_point recorded_at{};
+        std::u16string committed_tail;
+        std::uint64_t accessibility_sequence = 0;
     };
     std::optional<RecentCommit> recent_commit_;
     std::unordered_map<ContextId, std::unique_ptr<InputSession>> sessions_;

@@ -174,6 +174,8 @@ InputSession& Engine::find_or_create(ContextId context) {
     auto it = sessions_.find(context);
     if (it == sessions_.end()) {
         it = sessions_.emplace(context, std::make_unique<InputSession>()).first;
+        std::random_device random;
+        for (auto& byte : it->second->training_source_id) byte = static_cast<std::uint8_t>(random());
     }
     return *it->second;
 }
@@ -183,6 +185,7 @@ void Engine::apply_effect(ContextId context, InputSession& session, const InputE
         // Capture the context before the host inserts the committed text.
         // The prediction path already strips client preedit when sampling it.
         const auto training_context = session.context_text;
+        const auto accessibility_sequence = accessibility_context_ ? accessibility_context_->sequence() : 0;
         const bool allow_training = effect.training_sample && config_.collect_training_data &&
                                     !host_.is_sensitive(context);
         host_.commit(context, effect.commit);
@@ -191,6 +194,7 @@ void Engine::apply_effect(ContextId context, InputSession& session, const InputE
                 protocol::RecordCommitRequest request;
                 std::random_device random;
                 for (auto& byte : request.event_id) byte = static_cast<std::uint8_t>(random());
+                request.source_id = session.training_source_id;
                 if (on_training_commit_) {
                     on_training_commit_(*effect.training_sample, training_context);
                 } else {
@@ -203,7 +207,8 @@ void Engine::apply_effect(ContextId context, InputSession& session, const InputE
                     transport_.record_commit(request);
                 }
                 // An immediate Backspace may still withdraw this commit.
-                remember_recent_commit(context, request.event_id);
+                remember_recent_commit(context, request.event_id,
+                                       utf16_tail(training_context + effect.commit, 256), accessibility_sequence);
             } catch (...) {
                 // Recording must never prevent a successful text commit.
             }
@@ -213,8 +218,10 @@ void Engine::apply_effect(ContextId context, InputSession& session, const InputE
     if (effect.redraw) host_.update_ui(context);
 }
 
-void Engine::remember_recent_commit(ContextId context, const protocol::SessionId& event_id) {
-    recent_commit_ = RecentCommit{context, event_id, std::chrono::steady_clock::now()};
+void Engine::remember_recent_commit(ContextId context, const protocol::SessionId& event_id,
+                                    std::u16string_view committed_tail, std::uint64_t accessibility_sequence) {
+    recent_commit_ = RecentCommit{context, event_id, std::chrono::steady_clock::now(),
+                                  std::u16string(committed_tail), accessibility_sequence};
 }
 
 void Engine::withdraw_recent_commit(ContextId context) {
@@ -227,6 +234,21 @@ void Engine::withdraw_recent_commit(ContextId context) {
     // empty buffer means the host is deleting the committed text.
     const auto* session = find(context);
     if (session == nullptr || !session->buffer.empty()) return;
+    // Only withdraw if the application's text is still exactly what the IME
+    // committed. A same-context edit by another path must leave the record.
+    const auto surrounding = host_.surrounding_text(context);
+    if (surrounding.valid && !surrounding.text.empty()) {
+        if (surrounding.cursor != surrounding.anchor || surrounding.cursor > surrounding.text.size() ||
+            utf16_tail(std::u16string_view(surrounding.text).substr(0, surrounding.cursor), 256) !=
+                pending.committed_tail) return;
+    } else {
+        if (surrounding.valid && (surrounding.cursor != 0 || surrounding.anchor != 0)) return;
+        // Some Linux clients provide no usable surrounding text. Only trust a
+        // fresh AT-SPI sample published after the commit, never a stale one.
+        const auto sample = accessibility_context_ ? accessibility_context_->latest() : std::nullopt;
+        if (!sample || !sample->usable || sample->sequence <= pending.accessibility_sequence ||
+            utf16_tail(sample->text, 256) != pending.committed_tail) return;
+    }
     if (on_training_discard_) on_training_discard_(pending.event_id);
     else transport_.discard_commit(pending.event_id);
 }
