@@ -1,4 +1,4 @@
-name: Verify macOS package install
+name: Verify macOS input-source registration
 
 on:
   push:
@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   install:
-    name: Install the package and verify the input source
+    name: Install a minimal package and verify the input source
     runs-on: macos-26
 
     steps:
