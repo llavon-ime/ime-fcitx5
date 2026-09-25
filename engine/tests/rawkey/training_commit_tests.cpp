@@ -158,6 +158,33 @@ RAWKEY_SUITE("training commit correction", training_commit_correction) {
     harness.key("Escape");
 }
 
+RAWKEY_SUITE("training commit correction window", training_commit_correction_window) {
+    std::size_t commits = 0, discards = 0;
+    HarnessOptions options;
+    options.config.collect_training_data = true;
+    options.commit_correction_window = std::chrono::milliseconds(1000);
+    options.on_training_commit = [&](const auto&, std::u16string_view) { ++commits; };
+    options.on_training_discard = [&](const auto&) { ++discards; };
+    Harness harness(options);
+    harness.set_surrounding("早安", 2, 2);
+
+    // Once the window elapsed the Backspace belongs to the host application
+    // and leaves the sample alone.
+    harness.type("su3");
+    harness.expect_commit("你");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1400));
+    harness.key("BackSpace");
+    RAWKEY_ASSERT(commits == 1);
+    RAWKEY_ASSERT(discards == 0);
+
+    // Inside the window the immediate Backspace still withdraws the sample.
+    harness.type("su3");
+    harness.expect_commit("你");
+    harness.key("BackSpace");
+    RAWKEY_ASSERT(commits == 2);
+    RAWKEY_ASSERT(discards == 1);
+}
+
 RAWKEY_SUITE("training commit discard transport", training_commit_discard_transport) {
     using namespace llavon::ime;
     const auto socket = std::filesystem::temp_directory_path() /

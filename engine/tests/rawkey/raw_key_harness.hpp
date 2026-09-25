@@ -78,6 +78,8 @@ struct HarnessOptions {
     Config config = default_config();
     std::function<void(const InputEffect::CommitSample&, std::u16string_view)> on_training_commit;
     std::function<void(const llavon::ime::protocol::SessionId&)> on_training_discard;
+    // Shortens the engine's commit correction window for tests.
+    std::chrono::milliseconds commit_correction_window{std::chrono::seconds(10)};
     // Set service_path (and optionally socket_path/model_path/tables_dir) to
     // run against a real prediction service; the transport starts it on demand.
     std::string service_path;

@@ -287,13 +287,20 @@ function stateChip(state){
   chip.textContent={pending:'待訓練',excluded:'已排除',trained:'已訓練'}[state]||state;
   return chip;
 }
+let protectionSignature='';
 function renderProtection(info){
+  // Re-rendering on every poll would clear a password the user is typing, so
+  // the bar only changes when the protection state itself does.
+  const signature=JSON.stringify(info);
+  if(signature===protectionSignature)return;
+  protectionSignature=signature;
   const bar=document.getElementById('protection');bar.replaceChildren();
   const chip=document.createElement('span');chip.className='chip '+((info.configured&&info.enabled)?'trained':'');
   chip.textContent=!info.configured?'尚未設定密碼':(info.enabled?'加密收集已啟用':'加密收集已停用');
   bar.append(chip);
   const note=document.createElement('span');note.className='hint';
-  document.getElementById('password-setup').hidden=true;
+  // An open setup panel keeps what was typed; it closes once a password exists.
+  if(info.configured)document.getElementById('password-setup').hidden=true;
   document.getElementById('train-password-field').hidden=!info.configured;
   document.getElementById('train-password-hint').hidden=!info.configured;
   if(!info.configured){
@@ -1199,8 +1206,10 @@ private:
         if (child == 0) {
             ::setsid();
             if (password_pipe[0] >= 0) {
-                if (::dup2(password_pipe[0], 3) < 0) _exit(127);
-                ::close(password_pipe[0]);
+                // Descriptor 3 is the contract with the CLI; keep it when the
+                // pipe already landed there.
+                if (password_pipe[0] != 3 && ::dup2(password_pipe[0], 3) < 0) _exit(127);
+                if (password_pipe[0] != 3) ::close(password_pipe[0]);
                 ::close(password_pipe[1]);
             }
             if (kind == "train") ::setenv("LLAVON_IME_LORA_CLI_PATH", options_.trainer.c_str(), 1);

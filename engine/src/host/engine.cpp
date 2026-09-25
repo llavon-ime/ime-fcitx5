@@ -25,7 +25,8 @@ Engine::Engine(EngineOptions options, Host& host)
       transport_(options_.transport),
       config_(options_.config),
       on_training_commit_(options_.on_training_commit),
-      on_training_discard_(options_.on_training_discard) {
+      on_training_discard_(options_.on_training_discard),
+      correction_window_(options_.commit_correction_window) {
     processor_.set_state_observer([this](InputStateKind previous, InputStateKind next) {
         if (accessibility_context_ == nullptr) return;
         if (previous == InputStateKind::Empty && next == InputStateKind::Inputting) {
@@ -220,7 +221,7 @@ void Engine::withdraw_recent_commit(ContextId context) {
     const auto pending = *recent_commit_;
     recent_commit_.reset();
     if (pending.context != context) return;
-    if (std::chrono::steady_clock::now() - pending.recorded_at > kCommitCorrectionWindow) return;
+    if (std::chrono::steady_clock::now() - pending.recorded_at > correction_window_) return;
     // A composition that is not empty takes this Backspace itself; only an
     // empty buffer means the host is deleting the committed text.
     const auto* session = find(context);
@@ -229,7 +230,8 @@ void Engine::withdraw_recent_commit(ContextId context) {
     else transport_.discard_commit(pending.event_id);
 }
 
-void Engine::request_prediction(ContextId context, InputSession& session) {    processor_.apply_phrase_override(session);
+void Engine::request_prediction(ContextId context, InputSession& session) {
+    processor_.apply_phrase_override(session);
     resync_context(context, session);
     if (!session.prediction.begin(session.buffer.completed_segment_indices(), session.buffer.raw_composition(),
                                   session.buffer.revision())) {

@@ -173,6 +173,7 @@ Harness::Harness(HarnessOptions options) : options_(std::move(options)) {
     engine_options.config = options_.config;
     engine_options.on_training_commit = options_.on_training_commit;
     engine_options.on_training_discard = options_.on_training_discard;
+    engine_options.commit_correction_window = options_.commit_correction_window;
     engine_options.enable_accessibility = options_.enable_accessibility;
     engine_options.transport.socket_path = options_.socket_path;
     engine_options.transport.service_path = options_.service_path;

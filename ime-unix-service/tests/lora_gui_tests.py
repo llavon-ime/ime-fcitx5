@@ -129,6 +129,7 @@ else:
             with urlopen(Request(url + '/', headers={'Host': url.split('//', 1)[1]}), timeout=3) as response:
                 assert "img-src 'self' data:" in response.headers.get('Content-Security-Policy', '')
             assert 'id="select-all"' in page and 'id="clear-all"' in page
+            assert 'id="protection"' in page and 'id="password-setup"' in page and 'id="train-password"' in page
             readings = json.loads(request('/api/readings'))
             assert 'ㄋㄧˇ' in readings['你'] and '€' not in readings
             for rejected in [lambda: request('/api/records', auth=False),
@@ -285,6 +286,50 @@ else:
                 assert 'SelectionKeysCount=9' in settings
                 assert 'ModelPath="' + str(gguf) + '"' in settings
                 assert settings.count('ModelPath=') == 1
+            # Encrypted collection: the manager never shows typed text without
+            # the password, and forgetting it clears the conversation data.
+            assert json.loads(request('/api/protection')) == {'configured': False, 'enabled': False, 'unlocked': False}
+            password = 'gui test password'
+            assert raw('/api/protection', body={'action': 'set-password', 'password': password,
+                                                'confirmation': 'different'})[0] == 400
+            assert raw('/api/protection', body={'action': 'set-password', 'password': password,
+                                                'confirmation': password})[0] == 200
+            protection = json.loads(request('/api/protection'))
+            assert protection['configured'] and protection['enabled'] and not protection['unlocked']
+            with sqlite3.connect(database) as db:
+                assert db.execute('SELECT COUNT(*) FROM commits WHERE schema_version=2').fetchone()[0] == 201
+                assert db.execute("SELECT COUNT(*) FROM commits WHERE context='上下文' OR answer='你'").fetchone()[0] == 0
+            sealed = json.loads(request('/api/records'))['rows']
+            assert sealed and not sealed[0]['text'] and sealed[0]['answer'] == ''
+            assert raw('/api/unlock', body={'password': 'wrong'})[0] == 400
+            assert raw('/api/unlock', body={'password': password})[0] == 200
+            opened = json.loads(request('/api/records'))['rows']
+            assert opened[0]['text'] and opened[0]['answer'] == '你' and opened[0]['readings'] == []
+            assert raw('/api/lock', body={})[0] == 200
+            assert not json.loads(request('/api/protection'))['unlocked']
+            assert not json.loads(request('/api/records'))['rows'][0]['text']
+            # Training asks for its own password and refuses a wrong one early.
+            assert raw('/api/train', body={'ids': [f'{1:032x}'], 'reviewed': pending,
+                                           'options': options, 'password': 'wrong'})[0] == 400
+            assert raw('/api/train', body={'ids': [f'{1:032x}'], 'reviewed': pending,
+                                           'options': options, 'password': password})[0] == 200
+            request('/api/cancel', {})
+            for _ in range(40):
+                result = json.loads(request('/api/state'))
+                if result['job']['state'] == 'cancelled':
+                    break
+                time.sleep(.05)
+            assert result['job']['state'] == 'cancelled'
+            assert raw('/api/protection', body={'action': 'disable'})[0] == 200
+            assert not json.loads(request('/api/protection'))['enabled']
+            assert raw('/api/protection', body={'action': 'enable'})[0] == 200
+            assert raw('/api/protection', body={'action': 'forget'})[0] == 200
+            protection = json.loads(request('/api/protection'))
+            assert not protection['configured'] and not protection['enabled'] and not protection['unlocked']
+            with sqlite3.connect(database) as db:
+                assert db.execute('SELECT COUNT(*) FROM commits').fetchone()[0] == 0
+                assert db.execute('SELECT COUNT(*) FROM lora_runs').fetchone()[0] == 2
+            assert json.loads(request('/api/records'))['rows'] == []
             process.wait(timeout=8)  # no browser heartbeat: the temporary server exits
             assert process.returncode == 0
             # No browser/CLI child retained its singleton lock after exit.

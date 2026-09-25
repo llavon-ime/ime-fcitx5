@@ -42,6 +42,9 @@ struct EngineOptions {
     // withdraws the last commit; hosts and tests that record samples
     // themselves use it to observe the correction.
     std::function<void(const protocol::SessionId&)> on_training_discard;
+    // How long an immediate Backspace may still withdraw the last commit. The
+    // service stages commits for the same span; tests shorten it.
+    std::chrono::milliseconds commit_correction_window{kCommitCorrectionWindow};
 };
 
 // Host-agnostic input method engine: owns the per-context sessions, routes
@@ -125,6 +128,7 @@ private:
     Config config_;
     std::function<void(const InputEffect::CommitSample&, std::u16string_view)> on_training_commit_;
     std::function<void(const protocol::SessionId&)> on_training_discard_;
+    std::chrono::milliseconds correction_window_{kCommitCorrectionWindow};
     // The commit an immediate Backspace could still withdraw.
     struct RecentCommit {
         ContextId context = 0;
