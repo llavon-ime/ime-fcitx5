@@ -312,7 +312,7 @@ for(const [name,label,value] of fields){
   field.append(caption,input);(basicFields.has(name)?optionsView:advancedView).append(field);
   input.oninput=updateEstimate;
 }
-for(const [name,label,choices] of [['device','運算裝置',['auto','cuda','cpu']],['dtype','數值精度',['float32','bfloat16']]]){
+for(const [name,label,choices] of [['device','運算裝置',['auto','cuda','mps','cpu']],['dtype','數值精度',['float32','bfloat16']]]){
   const field=document.createElement('label');field.className='field';
   const caption=document.createElement('span');caption.textContent=label;
   const select=document.createElement('select');select.id=name;

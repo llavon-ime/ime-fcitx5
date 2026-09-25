@@ -123,7 +123,11 @@ llavon-ime-lora train --model-dir "$model_dir" \
 管理器會檢查 checkpoint 版本、模型詞彙與相容的表格式，然後在開始前用 trainer
 驗證數值 JSONL。目前的推論表比公開訓練 checkpoint 的詞彙多出兩個 token ID；
 管理器會把已知的新增項目投影回與 checkpoint 相容的表，並讓不支援的提交維持
-待處理。訓練預設為 auto/float32；`--device cuda` 需要支援 CUDA 的 trainer。
+待處理。訓練預設為 auto/float32。`--device` 可選 `auto`、`cpu`、`cuda` 與
+`mps`：`auto` 會依序選擇 CUDA（含 ROCm）、Apple Silicon 的 Metal 與 CPU，
+`cuda` 需要支援 CUDA 或 ROCm 的 trainer，`mps` 需要 macOS 的 Metal 版
+trainer。要用自己建置的 trainer（例如 ROCm 版本）時，把
+`LLAVON_IME_LORA_CLI_PATH` 指向該執行檔即可。
 每次執行會寫出一個 adapter 與一個 Q4_K_M GGUF 模型。與 Windows 相同，之後的
 執行在 rank、alpha、dropout 與 target modules 相符時會從最後一個 adapter 繼續，
 並沿用該 adapter 記錄的基礎 checkpoint 版本，而不是剛傳入的目錄。訓練歷史會記錄

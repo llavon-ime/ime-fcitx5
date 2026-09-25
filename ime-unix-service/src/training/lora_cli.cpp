@@ -674,7 +674,8 @@ void train(Database& db, const Options& options, const fs::path& model_dir, cons
         (model_dir.filename().string().size() == 40 && model_dir.filename() != revision))
         throw std::invalid_argument("--revision must match the pinned checkpoint directory");
     const std::string device = optional(options, "--device", "auto");
-    if (device != "cpu" && device != "cuda" && device != "auto") throw std::invalid_argument("invalid --device");
+    if (device != "cpu" && device != "cuda" && device != "mps" && device != "auto")
+        throw std::invalid_argument("invalid --device");
     const std::string dtype = optional(options, "--dtype", "float32");
     if (dtype != "float32" && dtype != "bfloat16") throw std::invalid_argument("invalid --dtype");
     const std::string modules = optional(options, "--target-modules", "q_proj,v_proj");
