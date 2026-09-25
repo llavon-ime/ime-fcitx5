@@ -27,10 +27,22 @@ ctest --test-dir build/memscan --output-on-failure
 ```sh
 llavon-ime-memscan --needle "<probe text>" --pid 1234 [--pid 5678]
                    [--before 4096] [--after 512]
+                   [--expect-suffix "<just committed text>"]
                    [--hint 1234:0x55550000-0x55560000]
                    [--timeout-ms 3000] [--max-bytes 536870912]
-                   [--all-mappings]
+                   [--all-mappings] [--same-uid-all]
 ```
+
+`--expect-suffix` is the text the input method just committed. The caret sits
+right after it, so the window in front of the token ends with that text for the
+document copy; matches are preferred accordingly, which keeps protocol buffers
+and layout caches (which also contain the token) from being chosen.
+
+`--same-uid-all` scans every process owned by the caller instead of an
+explicit PID list (clients such as XIM do not tell the input method which
+process they are). The caller itself and its parent - the input method that
+spawned the helper - are skipped, so the input method's own copy of the probe
+token never matches. Candidates are ordered by resident set size.
 
 Output is one JSON object on stdout:
 

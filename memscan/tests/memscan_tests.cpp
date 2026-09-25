@@ -120,7 +120,7 @@ int main() {
         if (holder.pid <= 0) continue;
         ScanError error;
         const std::vector<Hint> hints{{holder.pid, holder.address, holder.address + 256}};
-        const auto match = scan_pid(holder.pid, *needle, 64, 32, limits, hints, error);
+        const auto match = scan_pid(holder.pid, *needle, 64, 32, limits, hints, std::string{}, error);
         check(match.has_value(),
               std::string("scan finds token (") + (utf16 ? "utf16" : "utf8") + "): " + error.code);
         if (match) {
@@ -135,8 +135,18 @@ int main() {
     {
         const Holder holder = spawn_holder(text, false);
         ScanError error;
+        const std::vector<Hint> hints{{holder.pid, holder.address, holder.address + 256}};
+        const auto match = scan_pid(holder.pid, *needle, 64, 32, limits, hints, "hello magic ", error);
+        check(match.has_value() && match->before.ends_with("hello magic "),
+              "expect-suffix match is accepted");
+        stop_holder(holder.pid);
+    }
+
+    {
+        const Holder holder = spawn_holder(text, false);
+        ScanError error;
         const std::vector<Hint> hints{{holder.pid, 0x1000, 0x2000}};
-        const auto match = scan_pid(holder.pid, *needle, 64, 32, limits, hints, error);
+        const auto match = scan_pid(holder.pid, *needle, 64, 32, limits, hints, std::string{}, error);
         check(match.has_value(), "bogus hint does not break the scan");
         stop_holder(holder.pid);
     }
@@ -146,14 +156,14 @@ int main() {
         ScanLimits tight = limits;
         tight.timeout = std::chrono::milliseconds(0);
         ScanError error;
-        const auto match = scan_pid(holder.pid, *needle, 64, 32, tight, {}, error);
+        const auto match = scan_pid(holder.pid, *needle, 64, 32, tight, {}, std::string{}, error);
         check(!match.has_value() && error.code == "timeout", "timeout budget enforced");
         stop_holder(holder.pid);
     }
 
     if (::getuid() != 0) {
         ScanError error;
-        const auto match = scan_pid(1, *needle, 64, 32, limits, {}, error);
+        const auto match = scan_pid(1, *needle, 64, 32, limits, {}, std::string{}, error);
         check(!match.has_value() && error.code == "foreign-pid", "root process refused");
         check(!same_uid(1), "same_uid rejects root");
     }

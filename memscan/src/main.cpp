@@ -1,6 +1,7 @@
 #include "needle.hpp"
 #include "scan.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <cstdio>
@@ -30,6 +31,13 @@ struct Options {
     long timeout_ms = 3000;
     bool all_mappings = false;
     bool list_mappings = false;
+    // Text the input method just committed; the document copy of the token
+    // sits right after it.
+    std::string expect_suffix;
+    // Scan every process owned by the caller instead of an explicit PID list.
+    // The caller and its parent are skipped so the input method's own copy of
+    // the probe token is never the match.
+    bool same_uid_all = false;
 };
 
 std::string json_escape(std::string_view input) {
@@ -145,6 +153,11 @@ int main(int argc, char** argv) {
             options.hints.push_back(Hint{static_cast<pid_t>(*pid), *start, *end});
         } else if (argument == "--all-mappings") {
             options.all_mappings = true;
+        } else if (argument == "--expect-suffix") {
+            options.expect_suffix = std::string(next("--expect-suffix"));
+            if (options.expect_suffix.size() > 256) fail("usage", "--expect-suffix is too long", 2);
+        } else if (argument == "--same-uid-all") {
+            options.same_uid_all = true;
         } else if (argument == "--list-mappings") {
             options.list_mappings = true;
         } else if (argument == "--help" || argument == "-h") {
@@ -155,7 +168,13 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (options.pids.empty()) fail("usage", "--pid is required", 2);
+    if (options.pids.empty() && !options.same_uid_all) fail("usage", "--pid is required", 2);
+    if (options.same_uid_all) {
+        for (const pid_t pid : llavon::memscan::same_uid_processes(64)) {
+            if (std::ranges::find(options.pids, pid) == options.pids.end()) options.pids.push_back(pid);
+        }
+        if (options.pids.empty()) fail("not-found", "no candidate processes", 1);
+    }
 
     if (options.list_mappings) {
         std::printf("{\"found\":false,\"mappings\":[");
@@ -194,7 +213,8 @@ int main(int argc, char** argv) {
         }
         ScanError error;
         const auto match = llavon::memscan::scan_pid(pid, *needle, options.before, options.after,
-                                                     limits, options.hints, error);
+                                                     limits, options.hints, options.expect_suffix,
+                                                     error);
         if (match) {
             print_match(*match);
             return 0;

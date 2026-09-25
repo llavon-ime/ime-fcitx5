@@ -1,8 +1,12 @@
 #include "scan.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <charconv>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <optional>
 #include <sstream>
@@ -10,12 +14,28 @@
 #include <sys/stat.h>
 #include <sys/uio.h>
 #include <unistd.h>
+#include <utility>
 
 namespace llavon::memscan {
 
 namespace {
 
 constexpr std::size_t kChunkBytes = 4 * 1024 * 1024;
+// A window with at least this many trailing printable bytes is considered a
+// good sample and ends the scan; shorter runs are kept as the best candidate
+// while the scan continues (protocol buffers, layout caches and other copies
+// of the token can have unrelated bytes in front of them).
+constexpr int kGoodTextRun = 8;
+
+int trailing_text_run(const std::string& text) {
+    int score = 0;
+    for (auto it = text.rbegin(); it != text.rend(); ++it) {
+        const auto value = static_cast<unsigned char>(*it);
+        if (value < 0x20 || value == 0x7F) break;
+        ++score;
+    }
+    return score;
+}
 
 struct Deadline {
     std::chrono::steady_clock::time_point at;
@@ -216,6 +236,42 @@ std::vector<Region> list_regions(pid_t pid, bool all_mappings) {
     return read_regions(pid, all_mappings);
 }
 
+std::vector<int> same_uid_processes(std::size_t limit) {
+    const std::uint64_t self = static_cast<std::uint64_t>(::getpid());
+    const std::uint64_t parent = static_cast<std::uint64_t>(::getppid());
+    std::vector<std::pair<std::uint64_t, int>> candidates;
+    std::error_code error;
+    for (const auto& entry : std::filesystem::directory_iterator("/proc", error)) {
+        if (error) break;
+        const std::string name = entry.path().filename().string();
+        if (name.empty() || std::isdigit(static_cast<unsigned char>(name[0])) == 0) continue;
+        const auto pid = std::strtoull(name.c_str(), nullptr, 10);
+        if (pid <= 1 || pid == self || pid == parent) continue;
+        struct stat info {};
+        if (::stat(entry.path().c_str(), &info) != 0 || info.st_uid != ::getuid()) continue;
+        std::uint64_t rss = 0;
+        std::ifstream status(entry.path() / "status");
+        std::string line;
+        while (std::getline(status, line)) {
+            if (line.starts_with("VmRSS:")) {
+                rss = std::strtoull(line.c_str() + 6, nullptr, 10);
+                break;
+            }
+        }
+        candidates.emplace_back(rss, static_cast<int>(pid));
+    }
+    std::ranges::sort(candidates, [](const auto& left, const auto& right) {
+        return left.first > right.first;
+    });
+    std::vector<int> processes;
+    for (const auto& [rss, pid] : candidates) {
+        (void)rss;
+        if (processes.size() >= limit) break;
+        processes.push_back(pid);
+    }
+    return processes;
+}
+
 bool same_uid(pid_t pid) {
     if (pid <= 1) return false;
     struct stat info {};
@@ -225,7 +281,8 @@ bool same_uid(pid_t pid) {
 
 std::optional<Match> scan_pid(pid_t pid, const Needle& needle, std::size_t before_bytes,
                               std::size_t after_bytes, const ScanLimits& limits,
-                              const std::vector<Hint>& hints, ScanError& error) {
+                              const std::vector<Hint>& hints, const std::string& expect_suffix,
+                              ScanError& error) {
     if (!same_uid(pid)) {
         error = {"foreign-pid", "process " + std::to_string(pid) + " is not owned by this user"};
         return std::nullopt;
@@ -247,6 +304,9 @@ std::optional<Match> scan_pid(pid_t pid, const Needle& needle, std::size_t befor
     }
     const auto heuristic = read_regions(pid, limits.all_mappings);
     regions.insert(regions.end(), heuristic.begin(), heuristic.end());
+
+    std::optional<Match> best;
+    int best_score = -1;
 
     for (const auto& region : regions) {
         std::vector<std::byte> tail;
@@ -279,13 +339,19 @@ std::optional<Match> scan_pid(pid_t pid, const Needle& needle, std::size_t befor
 
             for (std::size_t index = 0; index < needle.patterns.size(); ++index) {
                 const auto& pattern = needle.patterns[index];
-                const void* found = memmem(area.data(), area.size(), pattern.data(), pattern.size());
-                if (found == nullptr) continue;
-                const auto offset = static_cast<std::size_t>(
-                    static_cast<const std::byte*>(found) - area.data());
-                const auto address = area_start + offset;
                 const auto encoding = needle.encodings[index];
                 const std::size_t unit = unit_size(encoding);
+                std::size_t search_from = 0;
+                for (;;) {
+                const void* found = search_from < area.size()
+                                        ? memmem(area.data() + search_from, area.size() - search_from,
+                                                 pattern.data(), pattern.size())
+                                        : nullptr;
+                if (found == nullptr) break;
+                const auto offset = static_cast<std::size_t>(
+                    static_cast<const std::byte*>(found) - area.data());
+                search_from = offset + 1;
+                const auto address = area_start + offset;
 
                 const std::uintptr_t left_edge = std::max<std::uintptr_t>(region.start,
                                                                           address >= before_bytes
@@ -327,6 +393,16 @@ std::optional<Match> scan_pid(pid_t pid, const Needle& needle, std::size_t befor
                 match.truncated = truncated;
                 match.before = decode(before_raw, encoding);
                 match.after = decode(after_raw, encoding);
+                // A window can start or end in heap metadata or padding. Text
+                // buffers are NUL-free, so trim to the last NUL before the
+                // token and the first NUL after it, handing the caller clean
+                // text (the input method takes the tail anyway).
+                if (const auto nul = match.before.rfind('\0'); nul != std::string::npos) {
+                    match.before.erase(0, nul + 1);
+                }
+                if (const auto nul = match.after.find('\0'); nul != std::string::npos) {
+                    match.after.resize(nul);
+                }
                 if (!match.before.empty()) {
                     // Drop the replacement character a partially read lead
                     // sequence may produce.
@@ -335,7 +411,20 @@ std::optional<Match> scan_pid(pid_t pid, const Needle& needle, std::size_t befor
                         match.before.erase(0, replacement.size());
                     }
                 }
-                return match;
+                const int score = trailing_text_run(match.before);
+                if (score >= kGoodTextRun) {
+                    if (expect_suffix.empty() || match.before.ends_with(expect_suffix)) return match;
+                }
+                if (!expect_suffix.empty() && match.before.ends_with(expect_suffix)) {
+                    // The caret sat right after our own commit: this is the
+                    // document copy of the token.
+                    return match;
+                }
+                if (!best || score > best_score) {
+                    best_score = score;
+                    best = std::move(match);
+                }
+                }
             }
 
             const std::size_t overlap = needle.max_pattern_bytes > 0 ? needle.max_pattern_bytes - 1 : 0;
@@ -348,6 +437,7 @@ std::optional<Match> scan_pid(pid_t pid, const Needle& needle, std::size_t befor
         }
         if (truncated) break;
     }
+    if (best) return best;
     if (denied) {
         error = {"denied", "process memory read denied; grant CAP_SYS_PTRACE to the helper "
                             "or set kernel.yama.ptrace_scope=0"};

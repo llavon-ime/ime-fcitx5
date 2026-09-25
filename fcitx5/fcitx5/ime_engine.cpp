@@ -516,11 +516,7 @@ bool ImeEngine::inject_probe(ContextId context, std::u16string_view token) {
     }
     // The probe token must be removable again. Clients that support
     // surrounding text delete it directly; clients without it (XIM and
-    // friends) need a program name so Backspace events can reach them.
-    if (!input_context_ptr->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText) &&
-        input_context_ptr->program().empty()) {
-        return false;
-    }
+    // friends) get Backspace events instead, which every frontend can forward.
     input_context_ptr->commitString(u16_to_utf8(token));
     return true;
 }

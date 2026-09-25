@@ -238,6 +238,7 @@ void Engine::apply_effect(ContextId context, InputSession& session, const InputE
         const bool allow_training = effect.training_sample && config_.collect_training_data &&
                                     !host_.is_sensitive(context);
         host_.commit(context, effect.commit);
+        last_committed_text_ = utf16_tail(effect.commit, 32);
         // The caret sits right after the committed text: the safest moment to
         // refresh the memory probe sample (the provider throttles this).
         if (memory_context_) memory_context_->refresh();
@@ -599,6 +600,13 @@ void Engine::apply_context_sources() {
         callbacks.sensitive = [this] {
             if (memory_probe_context_ == 0) return true;
             return host_.is_sensitive(memory_probe_context_);
+        };
+        callbacks.expect_suffix = [this] {
+            try {
+                return u16_to_utf8(last_committed_text_);
+            } catch (const std::exception&) {
+                return std::string{};
+            }
         };
         memory_context_ =
             std::make_unique<MemoryContextProvider>(limit, std::move(callbacks), memory_helper_path());

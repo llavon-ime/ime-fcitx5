@@ -20,6 +20,9 @@ struct MemoryProbeCallbacks {
     std::function<void(std::size_t units)> remove;
     std::function<std::vector<int>()> processes;
     std::function<bool()> sensitive;
+    // Text the input method just committed (UTF-8), used to prefer the
+    // document copy of the token.
+    std::function<std::string()> expect_suffix;
 };
 
 // Last-resort context source: commits a private-use-area probe token at the

@@ -162,6 +162,9 @@ private:
     std::uint64_t memory_composition_base_ = 0;
     // The context the memory probe currently belongs to (0 = none focused).
     ContextId memory_probe_context_ = 0;
+    // Tail of the last commit; the memory probe prefers a window that ends
+    // with it because the caret sits right after it.
+    std::u16string last_committed_text_;
 };
 
 }  // namespace llavon::ime

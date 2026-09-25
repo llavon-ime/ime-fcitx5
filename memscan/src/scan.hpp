@@ -53,14 +53,25 @@ struct Region {
 
 std::vector<Region> list_regions(pid_t pid, bool all_mappings);
 
+// PIDs owned by the calling user, excluding this process and its parent (the
+// input method that spawned the helper). Sorted by resident set size so large
+// GUI applications are scanned first, capped at `limit`.
+std::vector<int> same_uid_processes(std::size_t limit);
+
 // True when /proc/<pid> is owned by the calling user.
 bool same_uid(pid_t pid);
 
 // Finds the probe token in one process and returns the decoded window around
 // it. Refuses foreign PIDs, validates the caller-provided budget, and never
 // returns more than ScanLimits::window_limit bytes per side.
+//
+// `expect_suffix` is the text the input method just committed: the caret sits
+// right after it, so a match whose window ends with that text is the document
+// copy and wins over protocol buffers or layout caches that also hold the
+// token.
 std::optional<Match> scan_pid(pid_t pid, const Needle& needle, std::size_t before_bytes,
                               std::size_t after_bytes, const ScanLimits& limits,
-                              const std::vector<Hint>& hints, ScanError& error);
+                              const std::vector<Hint>& hints, const std::string& expect_suffix,
+                              ScanError& error);
 
 }  // namespace llavon::memscan

@@ -6,6 +6,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <deque>
 #include <fstream>
@@ -40,12 +41,20 @@ constexpr std::size_t kMaxHelperOutput = 64 * 1024;
 
 #if defined(__linux__)
 
+std::string to_hex(std::uintptr_t value) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%lx", static_cast<unsigned long>(value));
+    return buffer;
+}
+
 // Runs the helper with a stdout pipe. Returns its output, or nullopt when the
 // helper could not be started. The helper enforces its own scan budget; this
 // only guards against a stuck process.
 std::optional<std::string> run_helper(const std::filesystem::path& helper,
                                       const std::string& token_utf8,
-                                      const std::vector<int>& processes) {
+                                      const std::vector<int>& processes,
+                                      int hint_pid, std::uintptr_t hint_address,
+                                      const std::string& expect_suffix) {
     int pipe_fds[2];
     if (::pipe(pipe_fds) != 0) return std::nullopt;
     const pid_t child = ::fork();
@@ -62,9 +71,29 @@ std::optional<std::string> run_helper(const std::filesystem::path& helper,
         arguments.push_back(helper.string());
         arguments.push_back("--needle");
         arguments.push_back(token_utf8);
-        for (const int pid : processes) {
-            arguments.push_back("--pid");
-            arguments.push_back(std::to_string(pid));
+        arguments.push_back("--timeout-ms");
+        arguments.push_back(processes.empty() ? "8000" : "4000");
+        if (!expect_suffix.empty()) {
+            arguments.push_back("--expect-suffix");
+            arguments.push_back(expect_suffix);
+        }
+        if (hint_pid > 0 && hint_address > 0) {
+            // A previous probe found the token here; try that window first so
+            // repeat probes stay fast.
+            const auto start = hint_address > 32768 ? hint_address - 32768 : 0;
+            arguments.push_back("--hint");
+            arguments.push_back(std::to_string(hint_pid) + ":0x" + to_hex(start) + "-0x" +
+                                to_hex(hint_address + 32768));
+        }
+        if (processes.empty()) {
+            // The client did not name its processes (XIM and friends): scan
+            // every process of the user instead.
+            arguments.push_back("--same-uid-all");
+        } else {
+            for (const int pid : processes) {
+                arguments.push_back("--pid");
+                arguments.push_back(std::to_string(pid));
+            }
         }
         std::vector<char*> argv;
         argv.reserve(arguments.size() + 1);
@@ -182,12 +211,6 @@ public:
             return;
         }
         std::vector<int> processes = callbacks_.processes ? callbacks_.processes() : std::vector<int>{};
-        if (processes.empty()) {
-            ++failures_;
-            callbacks_.remove(token.size());
-            hooks_.publish({}, false);
-            return;
-        }
         Job job;
         try {
             job.token_utf8 = u16_to_utf8(token);
@@ -198,6 +221,7 @@ public:
         }
         job.token_units = token.size();
         job.processes = std::move(processes);
+        if (callbacks_.expect_suffix) job.expect_suffix = callbacks_.expect_suffix();
         {
             std::lock_guard lock(mutex_);
             if (stopping_) {
@@ -216,6 +240,7 @@ private:
         std::string token_utf8;
         std::size_t token_units = 0;
         std::vector<int> processes;
+        std::string expect_suffix;
     };
 
     std::u16string make_token() {
@@ -246,7 +271,8 @@ private:
         ++probes_;
         std::string output;
 #if defined(__linux__)
-        const auto result = run_helper(helper_path_, job.token_utf8, job.processes);
+        const auto result = run_helper(helper_path_, job.token_utf8, job.processes, hint_pid_,
+                                       hint_address_, job.expect_suffix);
         if (result) output = *result;
 #endif
         const auto parsed = nlohmann::json::parse(output, nullptr, false);
@@ -259,6 +285,12 @@ private:
                 hooks_.publish({}, false);
             }
             failures_ = 0;
+            hint_pid_ = parsed.value("pid", 0);
+            const std::string address = parsed.value("address", std::string{});
+            hint_address_ = 0;
+            if (!address.empty()) {
+                hint_address_ = static_cast<std::uintptr_t>(std::strtoull(address.c_str(), nullptr, 16));
+            }
             hooks_.availability(AccessibilityAvailability::Available, "memscan");
         } else {
             ++failures_;
@@ -288,6 +320,10 @@ private:
     bool stopping_ = false;
     std::size_t failures_ = 0;
     std::chrono::steady_clock::time_point last_probe_{};
+    // Where the token was found last time, so the next probe can look there
+    // first instead of scanning everything.
+    int hint_pid_ = 0;
+    std::uintptr_t hint_address_ = 0;
     std::mt19937_64 rng_;
 };
 
