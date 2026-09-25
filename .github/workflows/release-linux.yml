@@ -52,7 +52,7 @@ jobs:
             binutils build-essential ca-certificates cmake curl dpkg-dev fcitx5-modules \
             fcitx5-modules-dev file g++ gcc git \
             libatspi2.0-dev libfcitx5core-dev libglib2.0-dev libsqlite3-dev libvulkan1 ninja-build patchelf \
-            pkg-config python3 python3-venv tar unzip zip
+            pkg-config python3 tar unzip zip
 
       - name: Install Fedora build dependencies
         if: matrix.format == 'rpm'
@@ -62,7 +62,7 @@ jobs:
             autoconf autoconf-archive automake libtool \
             at-spi2-core-devel binutils ca-certificates cmake curl fcitx5 fcitx5-data \
             fcitx5-devel file gcc-c++ git glib2-devel ninja-build patchelf pkgconf-pkg-config sqlite-devel \
-            python3 python3-pip rpm-build tar unzip vulkan-loader zip
+            python3 rpm-build tar unzip vulkan-loader zip
 
       - name: Checkout ime-unix
         uses: actions/checkout@v4
@@ -101,12 +101,20 @@ jobs:
 
       # v0.9.0 uses SQLite3::SQLite3, introduced after the distros' CMake.
       # Keep tagged builds reproducible without changing the released source.
+      # The official tarball is verified against its published SHA-256 and
+      # unpacked under /tmp, so the build needs no package manager or Python.
       - name: Install pinned package-build CMake
+        env:
+          CMAKE_TOOL_SHA256: "d6c83076c575bc00b823522ac974bda66d0af05d6ddc30e739c12385cf32c6cc"
         run: |
           set -euo pipefail
-          python3 -m venv /tmp/llavon-ci-cmake
-          /tmp/llavon-ci-cmake/bin/python -m pip install 'cmake==4.3.4'
-          echo /tmp/llavon-ci-cmake/bin >> "${GITHUB_PATH}"
+          archive=/tmp/cmake-4.4.3-linux-x86_64.tar.gz
+          curl --fail --location --retry 3 --output "${archive}" \
+            "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-linux-x86_64.tar.gz"
+          echo "${CMAKE_TOOL_SHA256}  ${archive}" | sha256sum --check -
+          mkdir -p /tmp/cmake-4.4.3
+          tar -xzf "${archive}" -C /tmp/cmake-4.4.3 --strip-components=1
+          echo /tmp/cmake-4.4.3/bin >> "${GITHUB_PATH}"
 
       - name: Cache vcpkg binary cache
         uses: actions/cache@v4

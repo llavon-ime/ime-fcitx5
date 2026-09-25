@@ -312,6 +312,41 @@ bool archived_trainer(const fs::path& archive, const std::string& hash, std::uin
     return fs::is_regular_file(archive) && fs::file_size(archive) == size && sha256_matches(archive, hash);
 }
 
+// The rolling `latest` manifest only tracks the newest trainer release, so a
+// pinned submodule commit falls off it as soon as the trainer cuts a newer
+// version. Look the release that actually declares the pinned commit up
+// through the public release listing instead of waiting for a manifest that
+// will never match. The immutable manifest is still the authority: the caller
+// re-validates the version, commit, asset name, and SHA-256.
+nlohmann::json trainer_release_for_commit(const fs::path& output, std::string_view expected_commit) {
+    const auto listing = output / "releases.json.partial";
+    try {
+        run_tool("curl", {"--fail", "--location", "--retry", "3",
+                          "--header", "Accept: application/vnd.github+json",
+                          "--header", "Cache-Control: no-cache",
+                          "--output", listing.string(),
+                          "https://api.github.com/repos/llavon-ime/lora-trainer/releases?per_page=50"});
+        const auto releases = nlohmann::json::parse(std::ifstream(listing));
+        fs::remove(listing);
+        if (!releases.is_array()) return nlohmann::json::object();
+        for (const auto& release : releases) {
+            const auto target = release.value("target_commitish", "");
+            if (target.empty() || std::string_view(target).rfind(expected_commit, 0) != 0) continue;
+            const auto tag = release.value("tag_name", "");
+            if (tag.rfind("v", 0) != 0 || tag.size() < 2 ||
+                tag.find_first_not_of("0123456789.", 1) != std::string::npos) continue;
+            return nlohmann::json{{"schema", 1}, {"trainerApi", 1}, {"version", tag.substr(1)},
+                                  {"commit", std::string(expected_commit)}};
+        }
+    } catch (...) {
+        // The listing is an optimisation for pinned commits that fell off the
+        // rolling manifest; a rate limit or network error still produces the
+        // caller's pinned-commit diagnosis.
+    }
+    fs::remove(listing);
+    return nlohmann::json::object();
+}
+
 void check_model(const fs::path& output) {
     fs::create_directories(output);
     const auto metadata = output / "metadata.partial";
@@ -334,13 +369,18 @@ void check_model(const fs::path& output) {
 }
 
 void install_trainer(const fs::path& output) {
+    // Every platform declares the name so the function still compiles where no
+    // release exists (macOS x86_64); the check below reports those.
+    constexpr std::string_view platform =
 #if defined(__linux__) && defined(__x86_64__)
-    constexpr std::string_view platform = "linux-x64-cpu";
+        "linux-x64-cpu";
 #elif defined(__APPLE__) && (defined(__aarch64__) || defined(__arm64__))
-    constexpr std::string_view platform = "osx-arm64-cpu";
+        "osx-arm64-cpu";
 #else
-    throw std::runtime_error("LoRA Trainer release is unavailable for this platform");
+        "";
 #endif
+    if (platform.empty())
+        throw std::runtime_error("LoRA Trainer release is unavailable for this platform");
     fs::create_directories(output);
     const auto manifest_file = output / "release.json.partial";
     const auto pinned_manifest_file = output / "pinned-release.json.partial";
@@ -392,8 +432,17 @@ void install_trainer(const fs::path& output) {
             } catch (const std::exception& error) {
                 std::cerr << "Waiting for LoRA Trainer release: " << error.what() << '\n';
             }
+            // The pinned commit falls off the rolling manifest as soon as the
+            // trainer cuts a newer release, so consult the release listing
+            // before sleeping on a manifest that may never match again.
+            if (attempt == 1 || attempt % 5 == 0) {
+                candidate = trainer_release_for_commit(output, expected_commit);
+                if (candidate.value("commit", "") == expected_commit) break;
+            }
             if (attempt < attempts) std::this_thread::sleep_for(std::chrono::seconds(30));
         }
+        if (!candidate.is_object() || candidate.value("commit", "") != expected_commit)
+            candidate = trainer_release_for_commit(output, expected_commit);
         if (!candidate.is_object() || candidate.value("commit", "") != expected_commit)
             throw std::runtime_error("no LoRA Trainer release for pinned submodule commit " + std::string(expected_commit));
         if (candidate.at("schema") != 1 || candidate.at("trainerApi") != 1)
