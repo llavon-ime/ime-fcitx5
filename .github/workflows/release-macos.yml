@@ -187,6 +187,13 @@ jobs:
             "${{ steps.package.outputs.pkg }}"
           )
           notes="Native macOS input method package."
+          # A moved tag leaves its release behind as a draft that the by-tag
+          # lookups cannot see, and `gh release create` refuses to replace it.
+          # Drop those leftovers so the tag gets a release that is reachable
+          # through its download URLs.
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"${tag}\" and .draft == true) | .id" |
+            while read -r id; do gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/${id}"; done
           if gh release view "${tag}" >/dev/null 2>&1; then
             gh release upload "${tag}" "${assets[@]}" --clobber
           elif git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
@@ -202,6 +209,16 @@ jobs:
               --notes "${notes}" || \
               gh release upload "${tag}" "${assets[@]}" --clobber
           fi
+          # Publishing and re-stating the tag keeps the release attached to the
+          # tag that exists now: a release left over from a replaced tag serves
+          # 404 for every asset URL even though its upload succeeded.
+          release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"${tag}\") | .id" | head -1)"
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            -f draft=false -f tag_name="${tag}" >/dev/null
+          asset_url="$(gh release view "${tag}" --json assets --jq '.assets[0].url')"
+          curl --fail --silent --show-error --location --head "${asset_url}" >/dev/null
+          gh release view "${tag}" --json isDraft --jq '.isDraft' | grep -qx false
 
       - name: Check Homebrew tap token
         run: |
