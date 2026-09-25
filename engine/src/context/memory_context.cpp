@@ -244,7 +244,7 @@ private:
     };
 
     std::u16string make_token() {
-        std::uniform_int_distribution<char32_t> distribution(kTokenFirst, kTokenLast);
+        std::uniform_int_distribution<std::uint32_t> distribution(kTokenFirst, kTokenLast);
         std::u16string token;
         token.reserve(kTokenCodeUnits);
         for (std::size_t index = 0; index < kTokenCodeUnits; ++index) {
