@@ -43,6 +43,12 @@ jobs:
       - name: Run the engine and raw-key test suites
         run: scripts/verify-engine-tests.sh
 
+      - name: Fetch vcpkg version history
+        run: |
+          if [[ "$(git -C vcpkg rev-parse --is-shallow-repository)" == "true" ]]; then
+            git -C vcpkg fetch --unshallow
+          fi
+
       - name: Build and test the packaged Metal service
         run: |
           set -euo pipefail
