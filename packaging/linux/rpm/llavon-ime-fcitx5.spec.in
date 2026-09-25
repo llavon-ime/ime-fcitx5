@@ -29,6 +29,13 @@ Provides:       bundled(yyjson)
 
 %global debug_package %{nil}
 %global _build_id_links none
+# The package carries its own private shared libraries: the service bundles
+# llama.cpp/ggml and refcount helpers under the llavon-ime directory, and the
+# pinned LoRA Trainer bundles the .NET runtime's private libgomp. Fedora's ELF
+# generator does not publish provides for them, so their requires would stay
+# unsatisfied and dnf would refuse the package. Filter them instead: the
+# libraries are loaded from the package's own directories.
+%global __requires_exclude ^lib(ggml|llama|reflectcpp|gomp-98b21ff3).*[.]so.*$
 
 %description
 Llavon IME provides local llama.cpp-based text prediction for Fcitx5. This
