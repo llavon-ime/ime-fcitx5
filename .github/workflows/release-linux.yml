@@ -52,7 +52,7 @@ jobs:
             binutils build-essential ca-certificates cmake curl dpkg-dev fcitx5-modules \
             fcitx5-modules-dev file g++ gcc git \
             libatspi2.0-dev libfcitx5core-dev libglib2.0-dev libsqlite3-dev libvulkan1 ninja-build patchelf \
-            pkg-config python3 tar unzip zip
+            pkg-config python3 python3-venv tar unzip zip
 
       - name: Install Fedora build dependencies
         if: matrix.format == 'rpm'
@@ -62,7 +62,7 @@ jobs:
             autoconf autoconf-archive automake libtool \
             at-spi2-core-devel binutils ca-certificates cmake curl fcitx5 fcitx5-data \
             fcitx5-devel file gcc-c++ git glib2-devel ninja-build patchelf pkgconf-pkg-config sqlite-devel \
-            python3 rpm-build tar unzip vulkan-loader zip
+            python3 python3-pip rpm-build tar unzip vulkan-loader zip
 
       - name: Checkout ime-unix
         uses: actions/checkout@v4
@@ -98,6 +98,15 @@ jobs:
             echo "Tag ${RELEASE_TAG} does not point to a commit on main; refusing to publish." >&2
             exit 1
           fi
+
+      # v0.9.0 uses SQLite3::SQLite3, introduced after the distros' CMake.
+      # Keep tagged builds reproducible without changing the released source.
+      - name: Install pinned package-build CMake
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/llavon-ci-cmake
+          /tmp/llavon-ci-cmake/bin/python -m pip install 'cmake==4.3.4'
+          echo /tmp/llavon-ci-cmake/bin >> "${GITHUB_PATH}"
 
       - name: Cache vcpkg binary cache
         uses: actions/cache@v4
