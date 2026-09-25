@@ -215,6 +215,15 @@ trap 'rm -rf "${trainer_staging}"' EXIT
 "${SERVICE_BUILD_DIR}/llavon-ime-lora" install-trainer --output-dir "${trainer_staging}"
 mkdir -p "${private_root}/tools/lora"
 cp -a "${trainer_staging}/." "${private_root}/tools/lora/"
+# The pinned trainer release keeps the absolute runpath of its build machine
+# on its native libraries, and rpm's check-rpaths rejects the package for it.
+# The libraries all live in this directory, so $ORIGIN is the correct search
+# path for every one of them.
+while IFS= read -r -d '' binary; do
+    if file -b "${binary}" | grep -q '^ELF '; then
+        patchelf --set-rpath '$ORIGIN' "${binary}"
+    fi
+done < <(find "${private_root}/tools/lora" -type f -print0)
 chmod -R a+rX "${private_root}/tools/lora"
 chmod 0644 "${private_root}/tools/lora/trainer-release.json"
 for trainer_file in "${private_root}/tools/lora/llavon-lora" "${private_root}/tools/lora/trainer-release.json"; do
