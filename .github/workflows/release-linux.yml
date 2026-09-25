@@ -5,6 +5,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Existing release version without v prefix, for example 0.9.0"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -15,7 +20,10 @@ defaults:
 
 env:
   MODEL_REPOSITORY: "tony65535/llavon-ime-llama-250m-GGUF"
+  MODEL_REVISION: "fae44704fb1a7361bcc1150bf910c1d74fa367a4"
   MODEL_FILE_NAME: "llavon-ime-llama-250m-Q4_K_M.gguf"
+  MODEL_SHA256: "e0205904a65b735ed735b709d5e1502ebbe31fbd1393042573af9843d39e2ab8"
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
 
 jobs:
   build-linux:
@@ -40,6 +48,7 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
           apt-get install -y --no-install-recommends \
+            autoconf autoconf-archive automake libtool \
             binutils build-essential ca-certificates cmake curl dpkg-dev fcitx5-modules \
             fcitx5-modules-dev file g++ gcc git \
             libatspi2.0-dev libfcitx5core-dev libglib2.0-dev libsqlite3-dev libvulkan1 ninja-build patchelf \
@@ -50,6 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           dnf install -y \
+            autoconf autoconf-archive automake libtool \
             at-spi2-core-devel binutils ca-certificates cmake curl fcitx5 fcitx5-data \
             fcitx5-devel file gcc-c++ git glib2-devel ninja-build patchelf pkgconf-pkg-config sqlite-devel \
             python3 rpm-build tar unzip vulkan-loader zip
@@ -65,31 +75,29 @@ jobs:
           git config --global --add safe.directory "${GITHUB_WORKSPACE}"
           git config --global --add safe.directory "${GITHUB_WORKSPACE}/vcpkg"
 
-      - name: Verify tag points to main
-        if: github.event_name == 'push'
-        run: |
-          set -euo pipefail
-          main_sha="$(git rev-parse refs/remotes/origin/main)"
-          tag_sha="$(git rev-parse HEAD)"
-          if [[ "${main_sha}" != "${tag_sha}" ]]; then
-            echo "Tag ${GITHUB_REF_NAME} does not point to main HEAD; refusing to publish." >&2
-            exit 1
-          fi
-
       - name: Resolve version
         id: version
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            version="${GITHUB_REF_NAME#v}"
-            if [[ -z "${version}" || "${version}" == "${GITHUB_REF_NAME}" ]]; then
-              echo "Release tags must use v<version>, for example v0.6.0." >&2
-              exit 1
-            fi
-          else
-            version="0.0.0"
+          version="${RELEASE_TAG#v}"
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tags must use v<major>.<minor>.<patch>." >&2
+            exit 1
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify release source
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            git fetch origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+            git checkout --detach "${RELEASE_TAG}^{commit}"
+          fi
+          if [[ "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" != "$(git rev-parse HEAD)" ]] || \
+             ! git merge-base --is-ancestor HEAD refs/remotes/origin/main; then
+            echo "Tag ${RELEASE_TAG} does not point to a commit on main; refusing to publish." >&2
+            exit 1
+          fi
 
       - name: Cache vcpkg binary cache
         uses: actions/cache@v4
@@ -105,8 +113,9 @@ jobs:
           mkdir -p models
           curl --fail --location --retry 3 \
             --output "models/${MODEL_FILE_NAME}" \
-            "https://huggingface.co/${MODEL_REPOSITORY}/resolve/main/${MODEL_FILE_NAME}"
+            "https://huggingface.co/${MODEL_REPOSITORY}/resolve/${MODEL_REVISION}/${MODEL_FILE_NAME}"
           test -s "models/${MODEL_FILE_NAME}"
+          echo "${MODEL_SHA256}  models/${MODEL_FILE_NAME}" | sha256sum --check -
 
       - name: Build native package
         env:
@@ -256,13 +265,13 @@ jobs:
 
   publish-linux:
     name: Attach Linux packages to release
-    if: github.event_name == 'push'
     needs: verify-clean-install
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout tag
         uses: actions/checkout@v4
         with:
+          ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
       - name: Download packages
@@ -277,7 +286,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          tag="${RELEASE_TAG}"
           if ! gh release view "${tag}" >/dev/null 2>&1; then
             gh release create "${tag}" --verify-tag --title "${tag}" \
               --notes "Llavon IME packages for macOS, Debian/Ubuntu, and Fedora." || \

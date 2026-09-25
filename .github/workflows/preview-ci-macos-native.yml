@@ -1,12 +1,14 @@
-name: Preview native macOS CI
+name: Native macOS CI
 
 on:
   push:
     branches:
       - preview
+      - main
   pull_request:
     branches:
       - preview
+      - main
   workflow_dispatch:
 
 permissions:
@@ -25,21 +27,32 @@ jobs:
       - name: Checkout ime-unix
         uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
 
       - name: Cache vcpkg binary cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/vcpkg/archives
-          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-native-${{ hashFiles('vcpkg-configuration.json', 'engine/vcpkg.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-native-${{ hashFiles('vcpkg-configuration.json', 'engine/vcpkg.json', 'ime-unix-service/vcpkg.json', 'ime-unix-service/vcpkg-configuration.json', 'ime-core/vcpkg.json') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-vcpkg-
 
       - name: Install build prerequisites
-        run: brew install pkg-config
+        run: brew install autoconf autoconf-archive automake libtool cmake ninja pkg-config
 
       - name: Run the engine and raw-key test suites
         run: scripts/verify-engine-tests.sh
+
+      - name: Build and test the packaged Metal service
+        run: |
+          set -euo pipefail
+          cmake -S ime-unix-service -B build/ime-unix-service-macos-ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$PWD/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_MANIFEST_FEATURES=llama-metal \
+            -DIME_UNIX_SERVICE_BUILD_TESTS=ON
+          cmake --build build/ime-unix-service-macos-ci --parallel 4
+          ctest --test-dir build/ime-unix-service-macos-ci --output-on-failure --timeout 60
 
       - name: Build the app
         run: macos/scripts/build-native-app.sh
