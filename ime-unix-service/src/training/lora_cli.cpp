@@ -534,13 +534,17 @@ void list(sqlite3* db, const Options& options) {
 }
 
 void change_state(Database& db, std::string_view action, const std::string& id) {
+    // Deleting overwrites the freed pages so the typed text does not linger.
+    if (action == "delete") db.exec("PRAGMA secure_delete=ON");
     const char* sql = action == "exclude" ? "UPDATE commits SET state='excluded' WHERE id=? AND state='pending'" :
-                      action == "delete" ? "DELETE FROM commits WHERE id=?" : nullptr;
+                      action == "delete" ? "DELETE FROM commits WHERE id=? AND state='pending'" : nullptr;
     if (!sql) throw std::invalid_argument("unknown record action");
     Statement query(db.get(), sql);
     query.bind(1, id);
     (void)query.next();
-    if (sqlite3_changes(db.get()) != 1) throw std::runtime_error("record not found or not eligible for exclusion");
+    if (sqlite3_changes(db.get()) != 1)
+        throw std::runtime_error(action == "delete" ? "record not found or not pending"
+                                                    : "record not found or not eligible for exclusion");
 }
 
 // Removes the readable training dataset (and any partial file) as soon as a

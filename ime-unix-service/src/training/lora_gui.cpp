@@ -105,7 +105,6 @@ select:focus-visible,input:not([type=checkbox]):focus{border-color:var(--accent)
 .statusline .revision{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:var(--muted);overflow-wrap:anywhere}
 .records{display:grid;gap:10px}
 .record{border:1px solid var(--line);border-radius:12px;background:var(--paper);padding:12px 14px;display:grid;gap:8px}
-.record.selected{border-color:#d9b9a6;box-shadow:0 0 0 3px rgba(163,72,37,.10)}
 .record-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--muted);font-size:10px}
 .record-head .time{font-weight:800;color:#55463c}
 .record-head .actions{margin-left:auto;display:flex;gap:6px}
@@ -123,7 +122,6 @@ select:focus-visible,input:not([type=checkbox]):focus{border-color:var(--accent)
 .record-foot .readings{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
 .record-foot .readings strong{margin-left:6px;color:#55463c;font-weight:700}
 .revised{color:var(--accent);font-weight:800;letter-spacing:.04em}
-.checkbox{width:16px;height:16px;accent-color:var(--accent)}
 .chip{padding:4px 8px;border-radius:999px;background:var(--warning-soft);color:var(--warning);font-size:9px;font-weight:800}
 .chip.trained{background:var(--accent-soft);color:var(--accent-dark)}
 .chip.excluded{background:#eee8e1;color:var(--muted)}
@@ -173,12 +171,10 @@ progress{width:100%;height:6px;accent-color:var(--accent);border:none;border-rad
   <section class="form-card">
     <div class="field-group">
       <div class="field-label-row">
-        <span class="field-label"><span class="field-index">01</span>提交紀錄</span>
+        <span class="field-label"><span class="field-index">01</span>訓練資料</span>
         <div class="toolbar">
           <label for="record-state">顯示</label>
           <select id="record-state"><option value="pending">待訓練</option><option value="excluded">已排除</option><option value="trained">已訓練</option></select>
-          <button id="select-all" class="ghost tiny">全選</button>
-          <button id="clear-all" class="ghost tiny">全部取消</button>
           <button id="previous" class="ghost tiny">上一頁</button>
           <button id="next" class="ghost tiny">下一頁</button>
           <span id="page-summary"></span>
@@ -235,15 +231,16 @@ if (location.hash) { sessionStorage.setItem('llavon-token', token); history.repl
 const message = document.getElementById('message');
 let recordOffset=0;
 const PAGE_SIZE=20;
-const selectedIds=new Map();
+
 let pendingIds=[];
-let reviewedIds=null;
 let readingsTable={};
 let activeModelPath='';
 let protectionInfo={configured:false,enabled:false,unlocked:false};
 function updateEstimate(){
-  const count=pendingIds.filter(id=>selectedIds.get(id)!==false).length;
-  document.getElementById('selection-summary').textContent=`已選 ${count} / ${pendingIds.length} 筆`;
+  // Every pending record takes part in the next run; unwanted ones are
+  // deleted, matching the Windows manager.
+  const count=pendingIds.length;
+  document.getElementById('selection-summary').textContent='共 '+count+' 筆';
   const values=['batch-size','gradient-accumulation','epochs','max-steps'].map(name=>Number(document.getElementById(name).value));
   if(values.every(Number.isInteger)&&values[0]>0&&values[1]>0&&values[2]>0&&(values[3]===-1||values[3]>0)){
     const epochs=Math.ceil(Math.ceil(count/values[0])/values[1])*values[2];
@@ -346,10 +343,13 @@ function tableReadings(character){
 function readingSequence(item){
   const characters=Array.from(item.answer||'');
   const readings=item.readings||[];
+  const recorded=readings.length>0;
+  // Literal positions have no reading; only the composed ones are listed.
   return characters.map((character,index)=>{
-    const reading=readings[index]||tableReadings(character)[0];
-    return reading||'待選';
-  }).join('　');
+    if(recorded&&!readings[index])return null;
+    const reading=recorded?readings[index]:tableReadings(character)[0];
+    return reading||null;
+  }).filter(value=>value).join('　');
 }
 function composed(item){
   const sentence=document.createElement('p');sentence.className='sentence';
@@ -361,18 +361,22 @@ function composed(item){
   const characters=Array.from(item.answer||'');
   const readings=item.readings||[];
   const manual=item.manual||[];
+  const recorded=readings.length>0;
   characters.forEach((character,index)=>{
     const known=tableReadings(character);
-    const reading=readings[index]||known[0];
+    const reading=recorded?readings[index]:known[0];
+    // A literal position was typed as-is: it shows the character alone, with
+    // no reading above it and no unresolved warning.
+    const literal=recorded&&!reading;
     const syllable=document.createElement('span');syllable.className='syllable';
     if(manual[index])syllable.classList.add('manual');
     const annotation=document.createElement('span');annotation.className='reading';
-    annotation.textContent=reading||'待選';
+    annotation.textContent=reading||'';
     // The character table decides whether the recorded reading is plausible;
     // a reading outside it is flagged instead of silently rendered.
     const normalized=value=>(value||'').replace(/\s+$/,'');
-    if(reading&&known.length&&!known.some(item=>normalized(item)===normalized(reading)))annotation.classList.add('unresolved');
-    if(known.length)syllable.title=character+'：'+known.join('、');
+    if(!literal&&reading&&known.length&&!known.some(item=>normalized(item)===normalized(reading)))annotation.classList.add('unresolved');
+    if(!literal&&known.length)syllable.title=character+'：'+known.join('、');
     const text=document.createElement('span');text.className='character';text.textContent=character;
     syllable.append(annotation,text);answer.append(syllable);
   });
@@ -381,29 +385,23 @@ function composed(item){
 }
 function recordCard(item, viewState){
   const card=document.createElement('article');card.className='record';
-  const checked=selectedIds.get(item.id)!==false;
-  if(viewState==='pending'&&checked)card.classList.add('selected');
   const head=document.createElement('div');head.className='record-head';
-  if(viewState==='pending'){
-    const box=document.createElement('input');box.type='checkbox';box.className='checkbox';box.checked=checked;
-    box.onchange=()=>{selectedIds.set(item.id,box.checked);card.classList.toggle('selected',box.checked);updateEstimate();};
-    head.append(box);
-  }
   const time=document.createElement('span');time.className='time';time.textContent=item.committed_at;
   head.append(time,stateChip(viewState));
   const actions=document.createElement('div');actions.className='actions';
-  const buttons=viewState==='pending'?[['排除','exclude'],['刪除','delete']]:[['刪除','delete']];
-  for(const [label,action] of buttons){
+  // Pending records all take part in the next run; unwanted ones are deleted,
+  // exactly like the Windows manager.
+  if(viewState==='pending'){
     const button=document.createElement('button');
-    button.className='ghost tiny'+(action==='delete'?' danger':'');button.textContent=label;
-    button.onclick=async()=>{if(action==='delete'&&!confirm('確定刪除這筆紀錄？'))return;
-      selectedIds.delete(item.id);await act('records/'+item.id+'/'+action,{});};
+    button.className='ghost tiny danger';button.textContent='刪除';
+    button.onclick=async()=>{if(!confirm('確定刪除這筆訓練資料？'))return;
+      await act('records/'+item.id+'/delete',{});};
     actions.append(button);
   }
   head.append(actions);
   if(item.text===false){
-    // Sealed records keep their selection controls; only the text needs the
-    // password, and the manager never returns it without one.
+    // Sealed records keep their actions; only the text needs the password,
+    // and the manager never returns it without one.
     const note=document.createElement('p');note.className='locked-note';note.textContent='內容已加密・解鎖後才能檢視';
     card.append(head,note);return card;
   }
@@ -440,9 +438,10 @@ function runCard(item){
     top.append(time,tags,loaded);
   }else{
     const button=document.createElement('button');button.className='ghost tiny';
-    button.textContent='使用此模型 →';
+    button.textContent='立即套用';
     button.onclick=async()=>{
-      try{await api('use-model',{id:item.id});await refresh();}
+      try{await api('use-model',{id:item.id});await refresh();
+        message.className='notice';message.textContent='新模型已套用。';}
       catch(error){
         let status=top.querySelector('.run-error');
         if(!status){status=document.createElement('span');status.className='tag error run-error';top.insertBefore(status,button);}
@@ -464,7 +463,7 @@ async function refresh() {
     const job=state.job;
     message.className='notice'+(job.state==='failed'?' error':'');
     message.textContent=job.state==='running' ? ({fetch:'正在下載模型',check:'正在檢查模型更新',install:'正在安裝 Trainer',train:'正在訓練及匯出模型'}[job.kind])+(job.progress?'・'+job.progress:'')
-      : job.state==='idle'?'目前沒有工作':job.kind==='train'&&job.state==='completed'?'個人化模型已完成':job.kind+'：'+({completed:'完成',failed:'失敗',cancelled:'已取消'}[job.state]||job.state);
+      : job.state==='idle'?'目前沒有工作':job.kind==='train'&&job.state==='completed'?'訓練完成，請套用新模型。':job.kind+'：'+({completed:'完成',failed:'失敗',cancelled:'已取消'}[job.state]||job.state);
     document.getElementById('log').textContent=job.log || '';
     document.getElementById('log').style.display=job.log?'block':'none';
     const progress=document.getElementById('progress');progress.style.display=job.state==='running'?'block':'none';
@@ -483,15 +482,9 @@ async function refresh() {
     document.getElementById('trainer-status').textContent=state.trainer_ready ? 'LoRA Trainer 已安裝' :
       '找不到 llavon-lora，請安裝選配的 LoRA Trainer 元件。';
     const selected=document.getElementById('record-state').value;
-    // Records typed while the page is open show up on the next poll and join
-    // the selection by default, so an open page always mirrors the database.
-    if(reviewedIds===null)reviewedIds=[];
-    const fresh=await api('pending-ids');
-    for(const id of fresh){
-      if(!reviewedIds.includes(id))reviewedIds.push(id);
-      if(!selectedIds.has(id))selectedIds.set(id,true);
-    }
-    pendingIds=fresh;
+    // An open page always mirrors the database: records typed while it is open
+    // appear on the next poll and take part in the next training run.
+    pendingIds=await api('pending-ids');
     updateEstimate();
     const listing=await api('records?state='+selected+'&offset='+recordOffset);
     const page=Math.floor(recordOffset/PAGE_SIZE)+1;
@@ -514,8 +507,8 @@ document.getElementById('install-trainer').onclick=()=>act('install-trainer',{})
 document.getElementById('check').onclick=()=>act('check',{});
 document.getElementById('train').onclick=async()=>{
   try{
-    const ids=reviewedIds.filter(id=>selectedIds.get(id)!==false);
-    if(!ids.length)throw Error('請至少選取一筆訓練紀錄');
+    const ids=await api('pending-ids');
+    if(!ids.length)throw Error('目前沒有尚未訓練的資料');
     let password='';
     if(protectionInfo.configured){
       // Training asks for its own password; it never reuses the review unlock.
@@ -526,8 +519,8 @@ document.getElementById('train').onclick=async()=>{
     options.device=document.getElementById('device').value;
     options.dtype=document.getElementById('dtype').value;
     options.shuffle=document.getElementById('shuffle').checked?'1':'0';
-    if(!confirm(`以 ${ids.length} 筆資料開始訓練？未勾選的紀錄將被排除。`))return;
-    await act('train',{ids,reviewed:reviewedIds,options,password});
+    if(!confirm(`以 ${ids.length} 筆資料開始訓練？`))return;
+    await act('train',{ids,reviewed:ids,options,password});
     document.getElementById('train-password').value='';
   }catch(error){message.className='notice error';message.textContent=error.message;}
 };
@@ -545,8 +538,6 @@ document.getElementById('setup-confirm').onclick=async()=>{
 document.getElementById('cancel').onclick=()=>act('cancel',{});
 document.getElementById('record-state').onchange=()=>{recordOffset=0;refresh();};
 document.getElementById('reload-records').onclick=()=>{recordOffset=0;refresh();};
-document.getElementById('select-all').onclick=()=>{for(const id of reviewedIds||[])selectedIds.set(id,true);refresh();};
-document.getElementById('clear-all').onclick=()=>{for(const id of reviewedIds||[])selectedIds.set(id,false);refresh();};
 document.getElementById('previous').onclick=()=>{recordOffset=Math.max(0,recordOffset-PAGE_SIZE);refresh();};
 document.getElementById('next').onclick=()=>{recordOffset+=PAGE_SIZE;refresh();};
 if (!token) {message.textContent='請從輸入法選單重新開啟管理頁面。';}
@@ -1301,6 +1292,29 @@ private:
         }
     }
 
+    // Windows keeps only the latest completed model for inference: applying
+    // the newest model removes older quantized GGUFs, while every run's adapter
+    // stays so it can be exported again with its base revision.
+    void prune_obsolete_models(const fs::path& applied) const {
+        std::error_code error;
+        const auto rows = query_database(db_, "SELECT model_path FROM lora_runs ORDER BY id DESC", 1);
+        if (rows.empty()) return;
+        const auto latest = fs::absolute(rows.front()[0].get<std::string>(), error).lexically_normal();
+        if (error || !fs::is_regular_file(latest, error)) return;
+        const auto active = fs::absolute(applied, error).lexically_normal();
+        if (error || active != latest) return;
+        const auto root = fs::absolute(runs_root(options_), error).lexically_normal();
+        if (error) return;
+        for (const auto& row : rows) {
+            const auto candidate = fs::absolute(row[0].get<std::string>(), error).lexically_normal();
+            if (error) { error.clear(); continue; }
+            if (candidate == latest || candidate.filename() != "personalized-Q4_K_M.gguf" ||
+                candidate.parent_path().parent_path() != root) continue;
+            std::error_code ignored;
+            fs::remove(candidate, ignored);
+        }
+    }
+
     json records(const std::string& requested) const {
         const auto question = requested.find('?');
         const auto params = question == std::string::npos ? "" : requested.substr(question + 1);
@@ -1595,6 +1609,7 @@ private:
             const fs::path model = rows[0][0].get<std::string>();
             if (!fs::is_regular_file(model) || fs::file_size(model) == 0) throw std::runtime_error("模型檔案已不存在");
             use_model(model);
+            prune_obsolete_models(model);
         } else if (request.path.starts_with("/api/records/")) {
             const auto end = request.path.rfind('/');
             const auto action = request.path.substr(end + 1);

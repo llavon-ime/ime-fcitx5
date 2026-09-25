@@ -54,13 +54,24 @@ void validate(const protocol::RecordCommitRequest& request) {
         throw std::invalid_argument("invalid commit event");
     }
     std::u32string answer;
+    bool trainable = false;
     for (const auto& entry : request.entries) {
-        if (entry.reading.empty() || entry.reading.size() > 64 || !protocol::valid_utf16(entry.reading) ||
-            entry.character == 0 || !protocol::valid_scalar(entry.character)) {
-            throw std::invalid_argument("invalid commit reading");
+        // Literal positions carry no reading and only provide context; every
+        // other position must name a Bopomofo reading.
+        if (entry.literal != entry.reading.empty())
+            throw std::invalid_argument("invalid commit literal");
+        if (!entry.literal) {
+            if (entry.reading.empty() || entry.reading.size() > 64 || !protocol::valid_utf16(entry.reading))
+                throw std::invalid_argument("invalid commit reading");
+            trainable = true;
         }
+        if (entry.character == 0 || !protocol::valid_scalar(entry.character))
+            throw std::invalid_argument("invalid commit reading");
         answer.push_back(entry.character);
     }
+    // A commit without a single composed position teaches nothing; Windows
+    // discards those as well.
+    if (!trainable) throw std::invalid_argument("commit has no Bopomofo reading");
     if (utf8::utf8to32(utf8::utf16tou8(request.answer)) != answer)
         throw std::invalid_argument("commit answer does not match readings");
 }

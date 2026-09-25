@@ -147,18 +147,35 @@ std::optional<json> build_row(const Row& row, const Tables& tables, int max_leng
     if (context.size() > context_limit)
         context.erase(context.begin(), context.end() - static_cast<std::ptrdiff_t>(context_limit));
     tokens.insert(tokens.end(), context.begin(), context.end());
-    for (const auto& [reading, character] : row.entries) {
-        (void)character;
+    const auto literal_token = [&](char32_t character) {
+        const auto token = tables.chars.find(utf8_char(character));
+        return token == tables.chars.end() ? tables.special.at("<UNK>") : token->second;
+    };
+    for (std::size_t i = 0; i < row.entries.size(); ++i) {
+        const auto& reading = row.entries[i].first;
+        if (reading.empty()) {
+            // A literal position keeps its inference token as context.
+            tokens.push_back(literal_token(answer[i]));
+            continue;
+        }
         const auto found = tables.bopomofo.find("<" + reading + ">");
         if (found == tables.bopomofo.end()) return std::nullopt;
         tokens.push_back(found->second);
     }
     tokens.push_back(tables.special.at("<SEP>"));
-    const auto prompt = tokens.size();
     json masks = json::array();
-    for (std::size_t i = 0; i < prompt; ++i) masks.push_back(nullptr);
+    for (std::size_t i = 0; i < tokens.size(); ++i) masks.push_back(nullptr);
+    std::vector<int> weights(tokens.size(), 0);
     for (std::size_t i = 0; i < row.entries.size(); ++i) {
-        const auto found = tables.candidates.find(row.entries[i].first);
+        const auto& reading = row.entries[i].first;
+        if (reading.empty()) {
+            // Literal positions are context only: no mask and no loss.
+            tokens.push_back(literal_token(answer[i]));
+            masks.push_back(nullptr);
+            weights.push_back(0);
+            continue;
+        }
+        const auto found = tables.candidates.find(reading);
         if (found == tables.candidates.end()) return std::nullopt;
         std::vector<int> allowed;
         std::unordered_set<int> seen;
@@ -174,10 +191,12 @@ std::optional<json> build_row(const Row& row, const Tables& tables, int max_leng
             std::find(allowed.begin(), allowed.end(), answer_token->second) == allowed.end()) return std::nullopt;
         tokens.push_back(answer_token->second);
         masks.push_back(allowed);
+        weights.push_back(1);
     }
+    // A row whose positions are all literal teaches nothing.
+    if (std::find(weights.begin(), weights.end(), 1) == weights.end()) return std::nullopt;
     if (tokens.size() > static_cast<std::size_t>(max_length)) return std::nullopt;
-    std::vector<int> weights(tokens.size(), 0), attention(tokens.size(), 1);
-    std::fill(weights.begin() + static_cast<std::ptrdiff_t>(prompt), weights.end(), 1);
+    std::vector<int> attention(tokens.size(), 1);
     return json{{"tokens", tokens}, {"labels", tokens}, {"loss_weights", weights},
                 {"attention_mask", attention}, {"candidate_masks", masks}};
 }

@@ -172,6 +172,12 @@ chmod -R a+rX "${tool_root}/lora"
 chmod 0644 "${tool_root}/lora/trainer-release.json"
 rm -rf "${trainer_staging}"
 
+# The bundled LoRA trainer ships its own license in the release archive.
+if [[ -f "${tool_root}/lora/LICENSE" ]]; then
+    install -d "${license_root}/llavon-lora-trainer"
+    install -m 0644 "${tool_root}/lora/LICENSE" "${license_root}/llavon-lora-trainer/LICENSE"
+fi
+
 # The uninstaller cleans the files the cask's uninstall does not know about
 # (the legacy fcitx5 payload) and asks before removing a leftover Fcitx5.app.
 install -m 0755 "${ROOT_DIR}/packaging/macos/uninstall.sh" \

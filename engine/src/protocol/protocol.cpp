@@ -275,9 +275,11 @@ ByteVector encode(const Message& message) {
             text16(payload, value.answer, "commit answer", 1024);
             u32(payload, checked(value.entries.size(), "commit entries", 1024));
             for (const auto& entry : value.entries) {
+                if (entry.literal != entry.reading.empty()) fail("commit literal reading mismatch");
                 text16(payload, entry.reading, "commit reading", 64);
                 if (entry.character == 0) fail("empty commit character");
                 scalar(payload, entry.character, "commit character"); u8(payload, entry.manually_selected);
+                u8(payload, entry.literal);
             }
         }
         else if constexpr (std::is_same_v<T, RecordCommitResponse>) {
@@ -318,8 +320,12 @@ Message decode(const ByteVector& frame) {
                     CommitEntry entry; entry.reading = reader.read_utf16("commit reading", 64);
                     entry.character = reader.read_scalar("commit character");
                     const auto manual = reader.read_u8();
-                    if (entry.reading.empty() || entry.character == 0 || manual > 1) fail("invalid commit entry");
-                    entry.manually_selected = manual != 0; value.entries.push_back(std::move(entry));
+                    const auto literal = reader.read_u8();
+                    if (entry.character == 0 || manual > 1 || literal > 1) fail("invalid commit entry");
+                    entry.manually_selected = manual != 0;
+                    entry.literal = literal != 0;
+                    if (entry.literal != entry.reading.empty()) fail("invalid commit literal");
+                    value.entries.push_back(std::move(entry));
                 }
                 reader.done(); return value;
             }

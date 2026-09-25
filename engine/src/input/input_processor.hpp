@@ -107,6 +107,9 @@ struct InputEffect {
             std::u16string reading;
             char32_t character = 0;
             bool manually_selected = false;
+            // Literal positions carry no reading and are context only; a
+            // sample without any composed position is not training data.
+            bool literal = false;
         };
         std::vector<Entry> entries;
     };

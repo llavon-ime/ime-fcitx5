@@ -63,7 +63,7 @@ elif args[0] == 'train':
     assert 'LLAVON_IME_LORA_CLI_PATH' in os.environ and '--rank' in args and '--selected-ids' in args
     assert '--device' in args and '--shuffle' in args
     selection=__import__('json').loads(pathlib.Path(args[args.index('--selected-ids') + 1]).read_text())
-    assert len(selection['selected']) == 1 and len(selection['reviewed']) == 201
+    assert len(selection['selected']) == 1 and len(selection['reviewed']) == 200
     print('step=1/10', flush=True)
     time.sleep(30)
 else:
@@ -128,7 +128,7 @@ else:
             assert '@@LOGO@@' not in page
             with urlopen(Request(url + '/', headers={'Host': url.split('//', 1)[1]}), timeout=3) as response:
                 assert "img-src 'self' data:" in response.headers.get('Content-Security-Policy', '')
-            assert 'id="select-all"' in page and 'id="clear-all"' in page
+            assert 'id="select-all"' not in page and 'id="clear-all"' not in page
             assert 'id="protection"' in page and 'id="password-setup"' in page and 'id="train-password"' in page
             readings = json.loads(request('/api/readings'))
             assert 'ㄋㄧˇ' in readings['你'] and '€' not in readings
@@ -171,10 +171,9 @@ else:
             assert status == 200, reason
             assert json.loads(request('/api/records'))['rows'] == []
             assert len(json.loads(request('/api/records?state=excluded&offset=0'))['rows']) == 1
-            request('/api/records/' + record + '/delete', {})
-            assert json.loads(request('/api/records?state=excluded&offset=0'))['rows'] == []
+            # Deleting is meant for pending data; an excluded record stays.
+            assert raw('/api/records/' + record + '/delete', body={})[0] == 400
             with sqlite3.connect(database) as db:
-                assert db.execute('SELECT count(*) FROM readings').fetchone()[0] == 0
                 db.executemany("INSERT INTO commits (id,context,answer) VALUES (?,?,?)",
                                [(f'{i:032x}', '上下文', '你') for i in range(1, 202)])
             first_page = json.loads(request('/api/records?offset=0'))
@@ -183,6 +182,10 @@ else:
             assert len(first_page['rows']) == 20 and first_page['has_more'] and first_page['total'] == 201
             assert len(second_page['rows']) == 20 and second_page['has_more']
             assert len(last_page['rows']) == 1 and not last_page['has_more'] and last_page['total'] == 201
+            # A pending record can be deleted for good, with secure delete.
+            assert raw('/api/records/' + f'{7:032x}' + '/delete', body={})[0] == 200
+            with sqlite3.connect(database) as db:
+                assert db.execute('SELECT count(*) FROM commits WHERE id=?', (f'{7:032x}',)).fetchone()[0] == 0
 
             request('/api/check', {})
             for _ in range(40):
@@ -220,7 +223,7 @@ else:
                        'max-seq-length': '384', 'target-modules': 'q_proj,v_proj',
                        'device': 'auto', 'dtype': 'float32', 'shuffle': '1'}
             pending = json.loads(request('/api/pending-ids'))
-            assert len(pending) == 201
+            assert len(pending) == 200
             for payload in [{'ids': [], 'reviewed': pending, 'options': options},
                             {'ids': ['zz'], 'reviewed': pending, 'options': options},
                             {'ids': pending, 'reviewed': 'nope', 'options': options},
@@ -243,7 +246,7 @@ else:
             assert raw('/api/train', body={'ids': pending, 'reviewed': pending, 'options': options})[0] == 400
             assert raw('/api/use-model', body={'id': '1'})[0] == 400
             # The list endpoints stay available while the job runs.
-            assert len(json.loads(request('/api/pending-ids'))) == 201
+            assert len(json.loads(request('/api/pending-ids'))) == 200
             assert len(json.loads(request('/api/runs'))) == 0
             request('/api/cancel', {})
             for _ in range(40):
@@ -252,11 +255,21 @@ else:
                     break
                 time.sleep(.05)
             assert result['job']['state'] == 'cancelled'
-            gguf = Path(directory) / 'personalized-Q4_K_M.gguf'
+            # Two completed runs; applying the newest keeps only its quantized
+            # GGUF, while the older run keeps its adapter for a later export.
+            runs_root = Path(env['LLAVON_IME_LORA_ASSETS_DIR']) / 'runs'
+            older_run = runs_root / '1000'
+            newer_run = runs_root / '2000'
+            (older_run / 'adapter').mkdir(parents=True)
+            (older_run / 'adapter' / 'adapter_model.safetensors').write_text('adapter')
+            older = older_run / 'personalized-Q4_K_M.gguf'
+            older.write_text('older model')
+            newer_run.mkdir(parents=True)
+            gguf = newer_run / 'personalized-Q4_K_M.gguf'
             gguf.write_text('model')
             with sqlite3.connect(database) as db:
                 db.execute('INSERT INTO lora_runs (completed_at,record_count,model_path) VALUES (?,?,?)',
-                           ('today', 1, str(Path(directory) / 'missing.gguf')))
+                           ('today', 1, str(older)))
                 db.execute('INSERT INTO lora_runs (completed_at,record_count,model_path) VALUES (?,?,?)',
                            ('today', 1, str(gguf)))
             runs = json.loads(request('/api/runs'))
@@ -265,18 +278,24 @@ else:
             assert run['model_path'] == str(gguf) and run['record_count'] == 1
             assert str(run['rank']) == '8' and str(run['alpha']) == '16'
             assert run['cumulative_count'] == 2 and run['optimizer_steps'] == '0'
-            # A run whose model file disappeared cannot be applied.
-            assert raw('/api/use-model', body={'id': runs[1]['id']})[0] == 400
+            # A stale run applies like any other; it just does not prune.
+            assert raw('/api/use-model', body={'id': runs[1]['id']})[0] == 200
+            assert older.is_file() and gguf.is_file()
             if sys.platform == 'darwin':
                 config = Path(env['XDG_CONFIG_HOME']) / 'llavon-ime/config.json'
                 original = '{"model_path":"/old/model.gguf","candidate_page_size":9}'
             else:
                 config = Path(env['XDG_CONFIG_HOME']) / 'fcitx5/conf/llavon-ime.conf'
                 original = 'SelectionKeysCount=9\nModelPath="/old/model.gguf"\n'
-            config.parent.mkdir(parents=True)
+            config.parent.mkdir(parents=True, exist_ok=True)
             config.write_text(original)
             assert json.loads(request('/api/state'))['active_model_path'] == '/old/model.gguf'
             request('/api/use-model', {'id': run['id']})
+            assert not older.is_file(), 'applying the newest model must prune older GGUFs'
+            assert (older_run / 'adapter' / 'adapter_model.safetensors').is_file()
+            assert gguf.is_file()
+            # The pruned run can no longer be applied.
+            assert raw('/api/use-model', body={'id': runs[1]['id']})[0] == 400
             request('/api/use-model', {'id': run['id']})  # reapplying replaces the path
             settings = config.read_text()
             assert json.loads(request('/api/state'))['active_model_path'] == str(gguf)

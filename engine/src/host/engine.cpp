@@ -197,7 +197,8 @@ void Engine::apply_effect(ContextId context, InputSession& session, const InputE
                     request.context = utf16_tail(training_context, 4096);
                     request.answer = effect.training_sample->answer;
                     for (const auto& entry : effect.training_sample->entries) {
-                        request.entries.push_back({entry.reading, entry.character, entry.manually_selected});
+                        request.entries.push_back(
+                            {entry.reading, entry.character, entry.manually_selected, entry.literal});
                     }
                     transport_.record_commit(request);
                 }

@@ -32,6 +32,23 @@ bool protocol_test() {
     auto decoded = decode(bytes);
     if (std::get<OpenSessionResponse>(decoded).service_epoch != opened.service_epoch) return false;
 
+    RecordCommitRequest mixed;
+    mixed.event_id[0] = 9;
+    mixed.context = u"早安";
+    mixed.answer = u"你h";
+    mixed.entries = {{u"ㄋㄧˇ", U'你', false, false}, {u"", U'h', false, true}};
+    const auto mixed_bytes = decode(encode(Message{mixed}));
+    const auto& decoded_mixed = std::get<RecordCommitRequest>(mixed_bytes);
+    if (decoded_mixed.entries.size() != 2 || decoded_mixed.entries[0].literal ||
+        !decoded_mixed.entries[1].literal || !decoded_mixed.entries[1].reading.empty()) return false;
+    RecordCommitRequest literal_only;
+    literal_only.event_id[0] = 9;
+    literal_only.answer = u"h";
+    literal_only.entries = {{u"", U'h', false, true}};
+    bool literal_rejected = false;
+    try { (void)encode(Message{literal_only}); } catch (const ProtocolError&) { literal_rejected = true; }
+    if (literal_rejected) return false;
+
     DiscardCommitRequest discard;
     discard.event_id[0] = 7;
     if (decode_message_type(encode(Message{discard})) != MessageType::DiscardCommit) return false;
@@ -200,6 +217,22 @@ bool commit_test() {
             auto bad = request; bad.event_id[0]++; bad.answer = u"不符";
             try { (void)store.record(bad); throw std::runtime_error("invalid commit accepted"); }
             catch (const std::invalid_argument&) {}
+            // A commit with no composed position teaches nothing, even though
+            // the protocol itself can describe literal positions.
+            protocol::RecordCommitRequest literal_only;
+            literal_only.event_id[0] = 0x4b;
+            literal_only.answer = u"hi";
+            literal_only.entries = {{u"", U'h', false, true}, {u"", U'i', false, true}};
+            try { (void)store.record(literal_only); throw std::runtime_error("literal-only commit accepted"); }
+            catch (const std::invalid_argument&) {}
+            // Literal positions stay as context around the composed ones.
+            protocol::RecordCommitRequest mixed;
+            mixed.event_id[0] = 0x49;
+            mixed.context = u"早安";
+            mixed.answer = u"你hi";
+            mixed.entries = {{u"ㄋㄧˇ", U'你', false, false}, {u"", U'h', false, true},
+                             {u"", U'i', false, true}};
+            if (!store.record(mixed)) throw std::runtime_error("could not record mixed commit");
             auto new_reading = request;
             new_reading.event_id[0] += 2;
             new_reading.answer = u"了";
@@ -230,8 +263,8 @@ bool commit_test() {
                     "(SELECT COUNT(*) FROM readings WHERE reading='ㄋㄧˇ' OR character != 0)",
                     -1, &stmt, nullptr) != SQLITE_OK || sqlite3_step(stmt) != SQLITE_ROW)
                 throw std::runtime_error("could not inspect commit database");
-            good = sqlite3_column_int(stmt, 0) == 4 && sqlite3_column_int(stmt, 1) == 7 &&
-                   sqlite3_column_int(stmt, 2) == 4 && sqlite3_column_int(stmt, 3) == 0 && sqlite3_column_int(stmt, 4) == 0;
+            good = sqlite3_column_int(stmt, 0) == 5 && sqlite3_column_int(stmt, 1) == 10 &&
+                   sqlite3_column_int(stmt, 2) == 5 && sqlite3_column_int(stmt, 3) == 0 && sqlite3_column_int(stmt, 4) == 0;
             sqlite3_finalize(stmt);
         }
         {
@@ -258,10 +291,16 @@ bool commit_test() {
             std::string recorded_id = "45";
             recorded_id.append(30, '0');
             const auto* recorded = find(pending, recorded_id);
-            if (recorded == nullptr || recorded->context != "早安" || recorded->answer != "你好" ||
+            if (pending.size() != 4 ||
+                recorded == nullptr || recorded->context != "早安" || recorded->answer != "你好" ||
                 recorded->readings.size() != 2 || recorded->readings.front() != "ㄋㄧˇ" ||
                 recorded->manual.front() || !recorded->manual.back())
                 throw std::runtime_error("decrypted records differ");
+            const auto* mixed_record = find(pending, std::string("49") + std::string(30, '0'));
+            if (mixed_record == nullptr || mixed_record->answer != "你hi" ||
+                mixed_record->readings.size() != 3 || mixed_record->readings.front() != "ㄋㄧˇ" ||
+                !mixed_record->readings[1].empty() || !mixed_record->readings[2].empty())
+                throw std::runtime_error("mixed commit did not survive the round trip");
             try { migrated = read_commits(db, "trained", cipher, 0, 10); }
             catch (const std::exception& error) {
                 throw std::runtime_error(std::string("migrated read failed: ") + error.what());
@@ -292,7 +331,7 @@ bool commit_test() {
         NumericDataset dataset;
         try { dataset = write_numeric_dataset(db, IME_UNIX_SERVICE_TEST_TABLE_DIR, config, output, 384, nullptr, &decryption); }
         catch (const std::exception& error) { throw std::runtime_error(std::string("dataset failed: ") + error.what()); }
-        if (dataset.included_ids.size() != 2 || dataset.skipped != 1 || dataset.pad_token_id != 0) good = false;
+        if (dataset.included_ids.size() != 3 || dataset.skipped != 1 || dataset.pad_token_id != 0) good = false;
         std::ifstream input(output);
         nlohmann::json row;
         input >> row;
@@ -306,6 +345,22 @@ bool commit_test() {
         nlohmann::json long_row;
         input >> long_row;
         if (long_row.at("tokens").size() != 384 || long_row.at("loss_weights").back() != 1) good = false;
+        // The mixed row keeps literal positions as context: no mask and no loss
+        // for them, a real mask and loss for the composed position.
+        nlohmann::json mixed_row;
+        input >> mixed_row;
+        const auto& mixed_weights = mixed_row.at("loss_weights");
+        const auto& mixed_masks = mixed_row.at("candidate_masks");
+        if (mixed_row.at("tokens").size() != 384 || mixed_weights.size() != 384 || mixed_masks.size() != 384)
+            good = false;
+        bool saw_trained_position = false;
+        for (std::size_t i = 0; i < mixed_weights.size(); ++i) {
+            const auto weight = mixed_weights[i].get<int>();
+            if (weight != 0 && weight != 1) good = false;
+            if (weight == 0 && !mixed_masks[i].is_null()) good = false;
+            if (weight == 1 && !mixed_masks[i].is_null()) saw_trained_position = true;
+        }
+        if (!saw_trained_position) good = false;
         vocab[1427] = "wrong token";  // "你" is token 1427 in this checkpoint.
         std::ofstream(directory / "ime_vocab.json") << nlohmann::json{{"tokens", vocab}}.dump();
         bool mismatched = false;
@@ -329,6 +384,13 @@ bool commit_test() {
             const CommitCipher locked;
             if (store.protection_status().configured ||
                 !read_commits(db, "pending", locked, 0, 10).empty()) good = false;
+            {
+                sqlite3_stmt* count = nullptr;
+                if (sqlite3_prepare_v2(db, "SELECT (SELECT COUNT(*) FROM commits), (SELECT COUNT(*) FROM readings)",
+                                       -1, &count, nullptr) == SQLITE_OK && sqlite3_step(count) == SQLITE_ROW)
+                    good = good && sqlite3_column_int(count, 0) == 0 && sqlite3_column_int(count, 1) == 0;
+                sqlite3_finalize(count);
+            }
         }
         sqlite3_close(db);
     } catch (const std::exception& error) { std::cerr << "commit test: " << error.what() << '\n'; good = false; }

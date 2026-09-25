@@ -162,6 +162,12 @@ cmake \
     -DPROJECT_ROOT="${ROOT_DIR}" \
     -P "${ROOT_DIR}/scripts/install-licenses.cmake"
 
+# The bundled LoRA trainer ships its own license in the release archive.
+if [[ -f "${private_root}/llavon-ime/tools/lora/LICENSE" ]]; then
+    install -Dm0644 "${private_root}/llavon-ime/tools/lora/LICENSE" \
+        "${license_root}/llavon-lora-trainer/LICENSE"
+fi
+
 addon_path="$(find "${PKGROOT}/usr" -path '*/fcitx5/llavon-ime-addon.so' -print -quit)"
 required_files=(
     "${private_root}/llavon-ime-unix-service"

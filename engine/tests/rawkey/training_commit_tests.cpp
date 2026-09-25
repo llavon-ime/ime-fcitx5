@@ -158,6 +158,59 @@ RAWKEY_SUITE("training commit correction", training_commit_correction) {
     harness.key("Escape");
 }
 
+RAWKEY_SUITE("training mixed commit samples", training_mixed_commit_samples) {
+    struct Observed {
+        llavon::ime::InputEffect::CommitSample sample;
+        std::u16string context;
+    };
+    std::vector<Observed> samples;
+    HarnessOptions options;
+    options.config.collect_training_data = true;
+    options.on_training_commit = [&](const auto& sample, std::u16string_view context) {
+        samples.push_back({sample, std::u16string(context)});
+    };
+    Harness harness(options);
+    harness.set_surrounding("早安", 2, 2);
+    harness.set_config("SmartEnglish", "True");
+
+    // Chinese composed, then an English word typed as literals: the samples
+    // keep the literal characters as context without a reading, exactly like
+    // the Windows manager.
+    harness.type("su3");
+    harness.type("hello");
+    harness.expect_direct_commit("你hello ", Key(" "));
+    std::fprintf(stderr, "[debug] mixed samples=%zu\n", samples.size());
+    RAWKEY_ASSERT(samples.size() == 1);
+    RAWKEY_ASSERT(samples[0].sample.answer == u"你hello ");
+    RAWKEY_ASSERT(samples[0].sample.entries.size() == 7);
+    RAWKEY_ASSERT(samples[0].sample.entries[0].reading == u"ㄋㄧˇ");
+    RAWKEY_ASSERT(samples[0].sample.entries[0].character == U'你');
+    RAWKEY_ASSERT(!samples[0].sample.entries[0].literal);
+    RAWKEY_ASSERT(samples[0].sample.entries[1].literal);
+    RAWKEY_ASSERT(samples[0].sample.entries[1].character == U'h');
+    RAWKEY_ASSERT(samples[0].sample.entries[1].reading.empty());
+    RAWKEY_ASSERT(samples[0].sample.entries[6].literal);
+    RAWKEY_ASSERT(samples[0].sample.entries[6].character == U' ');
+
+    // A commit without a single composed position is not training data.
+    harness.type("hello");
+    harness.expect_direct_commit("hello ", Key(" "));
+    RAWKEY_ASSERT(samples.size() == 1);
+
+    // Literal punctuation settled into the composition keeps the earlier
+    // readings and stays a context-only position.
+    harness.type("su3");
+    harness.key(Key("Control+,"));
+    RAWKEY_ASSERT(harness.preedit() == "你，");
+    harness.key("Return");
+    RAWKEY_ASSERT(samples.size() == 2);
+    RAWKEY_ASSERT(samples[1].sample.answer == u"你，");
+    RAWKEY_ASSERT(samples[1].sample.entries.size() == 2);
+    RAWKEY_ASSERT(!samples[1].sample.entries[0].literal);
+    RAWKEY_ASSERT(samples[1].sample.entries[1].literal);
+    RAWKEY_ASSERT(samples[1].sample.entries[1].character == U'，');
+}
+
 RAWKEY_SUITE("training commit correction window", training_commit_correction_window) {
     std::size_t commits = 0, discards = 0;
     HarnessOptions options;

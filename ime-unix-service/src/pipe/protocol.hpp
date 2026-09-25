@@ -53,6 +53,9 @@ struct CommitEntry {
     std::u16string reading;
     char32_t character = 0;
     bool manually_selected = false;
+    // A literal (non-Bopomofo) position typed as-is: it carries no reading and
+    // only provides context, never a training target.
+    bool literal = false;
 };
 struct RecordCommitRequest {
     SessionId event_id{};

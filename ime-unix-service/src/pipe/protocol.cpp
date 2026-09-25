@@ -430,10 +430,13 @@ ByteVector encode(const Message& message) {
                 append_utf16(payload, value.answer, "commit answer", 1024);
                 append_u32(payload, checked_size(value.entries.size(), "commit entries", 1024));
                 for (const auto& entry : value.entries) {
+                    if (entry.literal != entry.reading.empty())
+                        throw ProtocolError("commit literal reading mismatch");
                     append_utf16(payload, entry.reading, "commit reading", 64);
                     if (entry.character == 0) throw ProtocolError("empty commit character");
                     append_scalar(payload, entry.character, "commit character");
                     append_u8(payload, entry.manually_selected ? 1U : 0U);
+                    append_u8(payload, entry.literal ? 1U : 0U);
                 }
             } else if constexpr (std::is_same_v<T, RecordCommitResponse>) {
                 append_type(payload, MessageType::RecordCommit); append_u8(payload, 1);
@@ -567,9 +570,14 @@ Message decode(const ByteVector& frame_bytes) {
                     CommitEntry entry; entry.reading = reader.utf16("commit reading", 64);
                     entry.character = reader.scalar("commit character");
                     const auto manual = reader.u8();
-                    if (entry.reading.empty() || entry.character == 0 || manual > 1)
+                    const auto literal = reader.u8();
+                    if (entry.character == 0 || manual > 1 || literal > 1)
                         throw ProtocolError("invalid commit entry");
-                    entry.manually_selected = manual != 0; request.entries.push_back(std::move(entry));
+                    entry.manually_selected = manual != 0;
+                    entry.literal = literal != 0;
+                    if (entry.literal != entry.reading.empty())
+                        throw ProtocolError("invalid commit literal");
+                    request.entries.push_back(std::move(entry));
                 }
                 reader.require_done(); return request;
             }
