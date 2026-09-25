@@ -461,6 +461,10 @@ private:
             }
         } while (false);
 
+        // Clear the running flag before the waiter can observe a failed
+        // start; otherwise a caller that retries `start()` right after it
+        // returns false can find the stale flag and report success.
+        if (!ok) running_.store(false);
         {
             std::lock_guard lock(ready_mutex_);
             ready_ = true;
@@ -473,7 +477,6 @@ private:
             g_main_context_unref(context_);
             context_ = nullptr;
             if (api_.is_initialized()) api_.exit();
-            running_.store(false);
             return;
         }
 
