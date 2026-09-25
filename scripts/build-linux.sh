@@ -93,6 +93,9 @@ if [[ -e /usr/lib64 ]]; then
     PRIVATE_LIBDIR="/usr/lib64"
 fi
 LORA_TRAINER_DIR="${PRIVATE_LIBDIR}/llavon-ime/tools/lora"
+# The memory probe helper is resolved by the engine at runtime; the same path
+# is compiled in below and used when installing the helper.
+MEMSCAN_PATH="/usr/libexec/llavon-ime/llavon-ime-memscan"
 
 echo "Building and testing ime-unix-service..."
 (
@@ -110,16 +113,38 @@ echo "Building and testing fcitx5 addon..."
     cd "${ROOT_DIR}/fcitx5"
     cmake --preset linux \
         -DLLAVON_IME_INSTALLED_MODEL_PATH="${MODEL_INSTALL_PATH}" \
+        -DLLAVON_IME_INSTALLED_MEMSCAN_PATH="${MEMSCAN_PATH}" \
         -DLLAVON_IME_DISPLAY_VERSION="${DISPLAY_VERSION}" \
         ${LLAVON_DEBUG_FLAG}
     cmake --build --preset linux --parallel
     ctest --preset linux
 )
 
-echo "Installing ime-unix-service, fcitx5 addon, and model..."
+echo "Building and testing the memory probe helper..."
+cmake -S "${ROOT_DIR}/memscan" -B "${ROOT_DIR}/build/memscan" \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+cmake --build "${ROOT_DIR}/build/memscan" --parallel
+ctest --test-dir "${ROOT_DIR}/build/memscan" --output-on-failure
+
+echo "Installing ime-unix-service, fcitx5 addon, memory probe helper, and model..."
 "${SUDO[@]}" cmake --install "${ROOT_DIR}/ime-unix-service/build/linux"
 "${SUDO[@]}" cmake --install "${ROOT_DIR}/build/fcitx5"
+"${SUDO[@]}" cmake --install "${ROOT_DIR}/build/memscan"
 "${SUDO[@]}" install -Dm644 "${MODEL_PATH}" "${MODEL_INSTALL_PATH}"
+
+# Reading another process needs ptrace permission. CAP_SYS_PTRACE on the helper
+# is the narrow option; kernel.yama.ptrace_scope=0 also works but applies to
+# every process of the user.
+if [[ -z "${LLAVON_IME_SKIP_MEMSCAN_CAPABILITY:-}" ]]; then
+    if command -v setcap >/dev/null 2>&1; then
+        "${SUDO[@]}" setcap cap_sys_ptrace+ep "${MEMSCAN_PATH}" || {
+            echo "Could not grant CAP_SYS_PTRACE to the memory probe helper." >&2
+            echo "Grant it manually or set kernel.yama.ptrace_scope=0 instead." >&2
+        }
+    else
+        echo "setcap not found (install libcap); the memory context source stays unavailable." >&2
+    fi
+fi
 
 if [[ -z "${LLAVON_IME_SKIP_LORA_TRAINER:-}" ]]; then
     echo "Downloading the pinned LoRA Trainer release..."

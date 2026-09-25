@@ -22,6 +22,8 @@
 
 namespace llavon::ime {
 
+class MemoryContextProvider;
+
 // A commit can be withdrawn by an immediate Backspace within this window; the
 // service holds staged commits for the same span before writing them.
 inline constexpr std::chrono::seconds kCommitCorrectionWindow{10};
@@ -35,6 +37,10 @@ struct EngineOptions {
     // creates the AT-SPI context provider and relies on Host::surrounding_text
     // alone.
     bool enable_accessibility = true;
+    // When true the engine may create the memory probe context source; the
+    // `memory_context` setting still gates whether it actually probes. Hosts on
+    // platforms with the probe helper set this.
+    bool enable_memory_context = false;
     // A host-independent sink for committed Bopomofo training samples. It is
     // called after Host::commit; a missing sink never records user text.
     std::function<void(const InputEffect::CommitSample&, std::u16string_view)> on_training_commit;
@@ -92,6 +98,7 @@ public:
     // Drops any cached context text (used when a context becomes sensitive).
     void clear_context_text(ContextId context);
     AccessibilityContextState accessibility_state() const;
+    AccessibilityContextState memory_context_state() const;
 
     // Raw session access for host diagnostics and tests. The engine keeps
     // ownership; prefer the event API for normal operation.
@@ -114,6 +121,12 @@ private:
     // of an empty composition inside the correction window.
     void withdraw_recent_commit(ContextId context);
     protocol::PredictRequest build_predict_request(ContextId context, const InputSession& session) const;
+    // Adopts a sample from a context source, stripping the composition preedit
+    // when the sample was published after the composition started.
+    std::optional<std::u16string> adopt_context_sample(const InputSession& session,
+                                                       const AccessibilityContextSample& sample,
+                                                       std::uint64_t base_sequence,
+                                                       std::uint64_t composition_base) const;
     std::optional<std::u16string> strip_accessibility_preedit(const InputSession& session,
                                                               const std::u16string& sample) const;
     void apply_context_sources();
@@ -144,6 +157,11 @@ private:
     std::uint64_t accessibility_base_sequence_ = 0;
     std::uint64_t accessibility_composition_base_ = 0;
     std::size_t accessibility_max_code_units_ = 0;
+    std::unique_ptr<MemoryContextProvider> memory_context_;
+    std::uint64_t memory_base_sequence_ = 0;
+    std::uint64_t memory_composition_base_ = 0;
+    // The context the memory probe currently belongs to (0 = none focused).
+    ContextId memory_probe_context_ = 0;
 };
 
 }  // namespace llavon::ime

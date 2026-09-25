@@ -59,7 +59,7 @@ Reading another process needs the same UID plus ptrace permission. Yama
 needs either `CAP_SYS_PTRACE`
 
 ```sh
-sudo setcap cap_sys_ptrace+ep /usr/lib/llavon-ime/llavon-ime-memscan
+sudo setcap cap_sys_ptrace+ep /usr/libexec/llavon-ime/llavon-ime-memscan
 ```
 
 or `kernel.yama.ptrace_scope=0`. Descendant processes (the test suite) need

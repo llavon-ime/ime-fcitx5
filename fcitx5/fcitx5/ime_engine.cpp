@@ -14,14 +14,18 @@
 #include <fcitx/userinterfacemanager.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <spawn.h>
 #include <string>
 #include <string_view>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <thread>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -59,8 +63,26 @@ std::string accessibility_status_text(const AccessibilityContextState& state) {
     return "無障礙: 未知";
 }
 
-std::filesystem::path default_table_path() {
-    if (const char* override = env_with_legacy("LLAVON_IME_TABLE_PATH", "IME_FCITX5_TABLE_PATH")) {
+std::string memory_status_text(const AccessibilityContextState& state) {
+    switch (state.availability) {
+        case AccessibilityAvailability::Available:
+            return "可取得";
+        case AccessibilityAvailability::Disabled:
+            return "已停用";
+        case AccessibilityAvailability::Unsupported:
+            return "此平台不支援";
+        case AccessibilityAvailability::Unavailable:
+            if (state.detail == "helper-missing") return "不可用(未安裝 llavon-ime-memscan)";
+            if (state.detail == "helper-not-executable") return "不可用(helper 無法執行)";
+            if (state.detail == "permission-denied") {
+                return "不可用(需要 CAP_SYS_PTRACE 或 ptrace_scope=0)";
+            }
+            return state.detail.empty() ? "不可用" : "不可用(" + state.detail + ")";
+    }
+    return "未知";
+}
+
+std::filesystem::path default_table_path() {    if (const char* override = env_with_legacy("LLAVON_IME_TABLE_PATH", "IME_FCITX5_TABLE_PATH")) {
         return override;
     }
 #ifdef __APPLE__
@@ -144,6 +166,10 @@ ImeEngine::ImeEngine(fcitx::Instance* instance)
     // The InputMethodKit client supplies surrounding text directly; there is
     // no accessibility provider to run.
     options.enable_accessibility = false;
+#else
+    // Linux hosts may use the memory probe as the last context source; the
+    // `memory_context` setting still gates whether it probes.
+    options.enable_memory_context = true;
 #endif
     engine_ = std::make_unique<Engine>(std::move(options), *this);
 
@@ -355,7 +381,11 @@ void ImeEngine::update_accessibility_status() {
 #ifdef LLAVON_IME_NATIVE_SURROUNDING
     const std::string status = "InputMethodKit: 可取得（不需輔助使用權限）";
 #else
-    const std::string status = accessibility_status_text(engine_->accessibility_state());
+    std::string status = accessibility_status_text(engine_->accessibility_state());
+    const auto memory = engine_->memory_context_state();
+    if (memory.availability != AccessibilityAvailability::Unsupported) {
+        status += "；記憶體取樣: " + memory_status_text(memory);
+    }
 #endif
     if (*fcitx_config_.accessibilityStatus == status) return;
     (void)fcitx_config_.accessibilityStatus.setValue(status);
@@ -475,6 +505,93 @@ bool ImeEngine::is_sensitive(ContextId context) {
     auto* input_context_ptr = input_context(context);
     if (input_context_ptr == nullptr) return true;
     return input_context_ptr->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive);
+}
+
+bool ImeEngine::inject_probe(ContextId context, std::u16string_view token) {
+    auto* input_context_ptr = input_context(context);
+    if (input_context_ptr == nullptr) return false;
+    // Never touch password or sensitive fields.
+    if (input_context_ptr->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive)) {
+        return false;
+    }
+    // The probe token must be removable again. Clients that support
+    // surrounding text delete it directly; clients without it (XIM and
+    // friends) need a program name so Backspace events can reach them.
+    if (!input_context_ptr->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText) &&
+        input_context_ptr->program().empty()) {
+        return false;
+    }
+    input_context_ptr->commitString(u16_to_utf8(token));
+    return true;
+}
+
+void ImeEngine::remove_probe(ContextId context, std::size_t units) {
+    auto* input_context_ptr = input_context(context);
+    if (input_context_ptr == nullptr || units == 0) return;
+    if (input_context_ptr->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText)) {
+        input_context_ptr->deleteSurroundingText(-static_cast<int>(units),
+                                                  static_cast<unsigned int>(units));
+        return;
+    }
+    // XIM has no delete-surrounding-text: replay Backspace key events, which
+    // the toolkit or shell applies exactly like a user correction.
+    for (std::size_t index = 0; index < units; ++index) {
+        input_context_ptr->forwardKey(fcitx::Key(FcitxKey_BackSpace));
+        input_context_ptr->forwardKey(fcitx::Key(FcitxKey_BackSpace), true);
+    }
+}
+
+std::vector<int> ImeEngine::probe_processes(ContextId context) {
+    auto* input_context_ptr = input_context(context);
+    if (input_context_ptr == nullptr) return {};
+    const std::string program = input_context_ptr->program();
+    if (program.empty()) return {};
+
+    const auto matches = [](std::string_view candidate, std::string_view needle) {
+        std::string lowered;
+        lowered.reserve(candidate.size());
+        for (const char value : candidate) {
+            lowered.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(value))));
+        }
+        // Linux truncates comm to 15 characters, so accept either direction of
+        // the prefix relationship.
+        return lowered == needle || lowered.starts_with(needle) || needle.starts_with(lowered);
+    };
+
+    std::string needle;
+    needle.reserve(program.size());
+    for (const char value : program) {
+        needle.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(value))));
+    }
+
+    std::vector<int> processes;
+    std::error_code error;
+    for (const auto& entry : std::filesystem::directory_iterator("/proc", error)) {
+        if (error) break;
+        const std::string name = entry.path().filename().string();
+        if (name.empty() || std::isdigit(static_cast<unsigned char>(name[0])) == 0) continue;
+        const int pid = std::atoi(name.c_str());
+        if (pid <= 1 || pid == static_cast<int>(::getpid())) continue;
+        struct stat info {};
+        if (::stat(entry.path().c_str(), &info) != 0 || info.st_uid != ::getuid()) continue;
+
+        bool matched = false;
+        {
+            std::ifstream comm(entry.path() / "comm");
+            std::string line;
+            std::getline(comm, line);
+            matched = matches(line, needle);
+        }
+        if (!matched) {
+            std::error_code link_error;
+            const auto executable = std::filesystem::read_symlink(entry.path() / "exe", link_error);
+            if (!link_error) matched = matches(executable.filename().string(), needle);
+        }
+        if (!matched) continue;
+        processes.push_back(pid);
+        if (processes.size() >= 32) break;
+    }
+    return processes;
 }
 
 fcitx::AddonInstance* ImeEngineFactory::create(fcitx::AddonManager* manager) {

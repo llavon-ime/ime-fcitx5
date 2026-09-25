@@ -24,6 +24,7 @@ set(LLAVON_IME_ENGINE_TEST_SOURCES
     caret_prefix_sampler_tests.cpp
     sample_adoption_tests.cpp
     accessibility_context_tests.cpp
+    memory_context_tests.cpp
     real_service_tests.cpp
     fallback_engine_tests.cpp
     mixed_input_decoder_tests.cpp

@@ -29,6 +29,10 @@ struct Config {
     bool smart_english = false;
     // Local collection of Bopomofo commits for optional personalization.
     bool collect_training_data = false;
+    // Last-resort context source: probe the focused application's memory for a
+    // token the engine inserts at the caret. Needs an external helper with
+    // CAP_SYS_PTRACE (or kernel.yama.ptrace_scope=0).
+    bool memory_context = false;
 };
 
 Config default_config();
