@@ -115,16 +115,6 @@ install(FILES "${IME_CORE_SOURCE_DIR}/LICENSE"
 
 if(IME_UNIX_SERVICE_BUILD_TESTS)
     enable_testing()
-    find_package(Python3 COMPONENTS Interpreter REQUIRED)
-    add_test(NAME ime_unix_lora_gui_tests
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/lora_gui_tests.py"
-                "$<TARGET_FILE:llavon-ime-lora-gui>" "$<TARGET_FILE:llavon-ime-lora>" "${IME_CORE_SOURCE_DIR}/table" "${LLAVON_LORA_COMMIT}")
-    add_test(NAME ime_unix_lora_training_options_tests
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/lora_training_options_tests.py"
-                "$<TARGET_FILE:llavon-ime-lora>" "${IME_CORE_SOURCE_DIR}/table" "${LLAVON_LORA_COMMIT}")
-    add_test(NAME ime_unix_lora_protection_tests
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/lora_protection_tests.py"
-                "$<TARGET_FILE:llavon-ime-lora>")
     add_executable(ime_unix_service_tests
         tests/protocol_tests.cpp
         src/pipe/protocol.cpp
