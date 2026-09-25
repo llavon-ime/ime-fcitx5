@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -21,6 +22,10 @@
 
 namespace llavon::ime {
 
+// A commit can be withdrawn by an immediate Backspace within this window; the
+// service holds staged commits for the same span before writing them.
+inline constexpr std::chrono::seconds kCommitCorrectionWindow{10};
+
 struct EngineOptions {
     std::filesystem::path table_path;
     std::filesystem::path phrase_overrides_path;
@@ -30,6 +35,16 @@ struct EngineOptions {
     // creates the AT-SPI context provider and relies on Host::surrounding_text
     // alone.
     bool enable_accessibility = true;
+    // A host-independent sink for committed Bopomofo training samples. It is
+    // called after Host::commit; a missing sink never records user text.
+    std::function<void(const InputEffect::CommitSample&, std::u16string_view)> on_training_commit;
+    // Called instead of telling the service when an immediate Backspace
+    // withdraws the last commit; hosts and tests that record samples
+    // themselves use it to observe the correction.
+    std::function<void(const protocol::SessionId&)> on_training_discard;
+    // How long an immediate Backspace may still withdraw the last commit. The
+    // service stages commits for the same span; tests shorten it.
+    std::chrono::milliseconds commit_correction_window{kCommitCorrectionWindow};
 };
 
 // Host-agnostic input method engine: owns the per-context sessions, routes
@@ -67,6 +82,9 @@ public:
     // stale results cannot leak across the change (the config UI path). A
     // plain reload from disk only refreshes the config and context sources.
     void set_config(Config config, bool settle_sessions = true);
+    // Restarts the prediction service with new options while keeping the
+    // engine, its accessibility backend, and its input sessions alive.
+    void set_transport_options(ServiceTransportOptions options);
     void reload_phrase_overrides();
     const Config& config() const { return config_; }
     PhraseOverrideStore& phrase_overrides() { return phrase_overrides_; }
@@ -90,6 +108,11 @@ private:
     void handle_prediction_response(ContextId context, std::uint64_t generation, protocol::Message response);
     void close_prediction_session(InputSession& session);
     void resync_context(ContextId context, InputSession& session);
+    void remember_recent_commit(ContextId context, const protocol::SessionId& event_id,
+                                std::u16string_view committed_tail, std::uint64_t accessibility_sequence);
+    // Withdraws the last commit when this Backspace is the immediate correction
+    // of an empty composition inside the correction window.
+    void withdraw_recent_commit(ContextId context);
     protocol::PredictRequest build_predict_request(ContextId context, const InputSession& session) const;
     std::optional<std::u16string> strip_accessibility_preedit(const InputSession& session,
                                                               const std::u16string& sample) const;
@@ -104,6 +127,18 @@ private:
     InputProcessor processor_;
     ServiceTransport transport_;
     Config config_;
+    std::function<void(const InputEffect::CommitSample&, std::u16string_view)> on_training_commit_;
+    std::function<void(const protocol::SessionId&)> on_training_discard_;
+    std::chrono::milliseconds correction_window_{kCommitCorrectionWindow};
+    // The commit an immediate Backspace could still withdraw.
+    struct RecentCommit {
+        ContextId context = 0;
+        protocol::SessionId event_id{};
+        std::chrono::steady_clock::time_point recorded_at{};
+        std::u16string committed_tail;
+        std::uint64_t accessibility_sequence = 0;
+    };
+    std::optional<RecentCommit> recent_commit_;
     std::unordered_map<ContextId, std::unique_ptr<InputSession>> sessions_;
     std::unique_ptr<AccessibilityContextProvider> accessibility_context_;
     std::uint64_t accessibility_base_sequence_ = 0;

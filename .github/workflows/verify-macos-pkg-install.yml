@@ -103,9 +103,13 @@ jobs:
           test -n "${pid}"
           test "$(ps -o user= -p "${pid}" | tr -d ' ')" = "${console_user}"
 
-          # The text input system knows the bundle.
-          "${tis}" status "${bundle_id}"
-          "${tis}" status "${bundle_id}" | grep -q "${bundle_id}"
+          # The text input system knows the bundle. `status` exits non-zero
+          # when no input source matches; its "not registered" message
+          # contains the bundle id, so a grep would not catch that.
+          if ! "${tis}" status "${bundle_id}"; then
+            echo "the input source is not registered with the text input system" >&2
+            exit 1
+          fi
 
           # TISEnableInputSource is a no-op for third-party input methods, and
           # macOS 26 keeps the enabled third-party sources in a protected store
@@ -134,6 +138,13 @@ jobs:
           done
           test -n "${after}"
           test "${after}" != "${before}"
+
+          # The replaced bundle is still registered with the text input system.
+          tis="/Library/Application Support/llavon-ime/tools/llavon-ime-tis"
+          if ! "${tis}" status com.llavon.inputmethod.LlavonIME; then
+            echo "the input source is not registered with the text input system" >&2
+            exit 1
+          fi
 
           # On macOS 15 and earlier the enabled input source survives the
           # upgrade in the HIToolbox list; macOS 26 keeps it in a protected

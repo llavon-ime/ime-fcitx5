@@ -171,6 +171,9 @@ Harness::Harness(HarnessOptions options) : options_(std::move(options)) {
     engine_options.table_path = LLAVON_IME_TEST_TABLE_PATH;
     engine_options.phrase_overrides_path = options_.phrase_overrides_path;
     engine_options.config = options_.config;
+    engine_options.on_training_commit = options_.on_training_commit;
+    engine_options.on_training_discard = options_.on_training_discard;
+    engine_options.commit_correction_window = options_.commit_correction_window;
     engine_options.enable_accessibility = options_.enable_accessibility;
     engine_options.transport.socket_path = options_.socket_path;
     engine_options.transport.service_path = options_.service_path;
@@ -341,6 +344,8 @@ void Harness::set_config(std::string_view path, std::string_view value) {
     const bool on = value == "True" || value == "true" || value == "1";
     if (path == "SmartEnglish") {
         updated.smart_english = on;
+    } else if (path == "CollectTrainingData") {
+        updated.collect_training_data = on;
     } else if (path == "BopomofoKeyboardLayout") {
         updated.keyboard_layout = (value == "許氏" || value == "hsu") ? "hsu" : "standard";
     } else if (path == "ShiftLetterKeys") {

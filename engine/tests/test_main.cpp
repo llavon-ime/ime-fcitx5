@@ -29,6 +29,8 @@ extern "C" int run_c_api_tests();
 int main() {
     const char* real_service_only = std::getenv("LLAVON_IME_REAL_SERVICE_ONLY");
     if (real_service_only != nullptr && real_service_only[0] != '\0') return run_real_service_tests();
+    const char* transport_only = std::getenv("LLAVON_IME_TRANSPORT_ONLY");
+    if (transport_only != nullptr && transport_only[0] != '\0') return run_service_transport_tests();
 
     if (run_config_tests() != EXIT_SUCCESS) return EXIT_FAILURE;
     if (run_bopomofo_tests() != EXIT_SUCCESS) return EXIT_FAILURE;

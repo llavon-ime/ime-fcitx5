@@ -27,6 +27,8 @@ struct Config {
     // Smart Chinese-English: lowercase letters are held raw as a pending word
     // until a tone key or space decides whether they were 注音 or English.
     bool smart_english = false;
+    // Local collection of Bopomofo commits for optional personalization.
+    bool collect_training_data = false;
 };
 
 Config default_config();

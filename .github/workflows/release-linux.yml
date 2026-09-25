@@ -42,7 +42,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             binutils build-essential ca-certificates cmake curl dpkg-dev fcitx5-modules \
             fcitx5-modules-dev file g++ gcc git \
-            libatspi2.0-dev libfcitx5core-dev libglib2.0-dev libvulkan1 ninja-build patchelf \
+            libatspi2.0-dev libfcitx5core-dev libglib2.0-dev libsqlite3-dev libvulkan1 ninja-build patchelf \
             pkg-config python3 tar unzip zip
 
       - name: Install Fedora build dependencies
@@ -51,7 +51,7 @@ jobs:
           set -euo pipefail
           dnf install -y \
             at-spi2-core-devel binutils ca-certificates cmake curl fcitx5 fcitx5-data \
-            fcitx5-devel file gcc-c++ git glib2-devel ninja-build patchelf pkgconf-pkg-config \
+            fcitx5-devel file gcc-c++ git glib2-devel ninja-build patchelf pkgconf-pkg-config sqlite-devel \
             python3 rpm-build tar unzip vulkan-loader zip
 
       - name: Checkout ime-unix
@@ -130,6 +130,9 @@ jobs:
             grep -q 'libatspi2.0' <<< "${dependencies}"
             grep -q 'libglib2.0' <<< "${dependencies}"
             grep -q 'libvulkan1' <<< "${dependencies}"
+            grep -q 'curl' <<< "${dependencies}"
+            grep -q 'tar' <<< "${dependencies}"
+            grep -q 'coreutils' <<< "${dependencies}"
           else
             package="$(find dist/linux -name '*.rpm' -print -quit)"
             rpm -qip "${package}"
@@ -139,6 +142,9 @@ jobs:
             grep -q '^at-spi2-core' <<< "${dependencies}"
             grep -q '^glib2' <<< "${dependencies}"
             grep -q '^vulkan-loader' <<< "${dependencies}"
+            grep -q '^curl' <<< "${dependencies}"
+            grep -q '^tar' <<< "${dependencies}"
+            grep -q '^coreutils' <<< "${dependencies}"
           fi
 
       - name: Upload package artifact

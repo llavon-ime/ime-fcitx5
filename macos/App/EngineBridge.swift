@@ -8,6 +8,24 @@ final class EngineBridge: EngineCore {
 
     private let supportRoot = "/Library/Application Support/llavon-ime"
 
+    // The manager is a separate, short-lived program. It reuses a running
+    // browser session and never runs training inside InputMethodKit.
+    func openLoraManager() -> Bool {
+        let environment = ProcessInfo.processInfo.environment
+        let candidates = [
+            environment["LLAVON_IME_LORA_GUI_PATH"],
+            "\(supportRoot)/payload/bin/llavon-ime-lora-gui",
+            "\(home)/Library/fcitx5/bin/llavon-ime-lora-gui",
+        ].compactMap { $0 }
+        guard let path = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            return false
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        do { try process.run(); return true }
+        catch { NSLog("llavon-ime: cannot open LoRA manager: \(error)"); return false }
+    }
+
     // Set by the caller before launch to point the prediction service at a
     // development model. Captured here because applyServiceEnvironment() writes
     // the settings-file value into the same variable.
@@ -24,6 +42,13 @@ final class EngineBridge: EngineCore {
             }
         }
         setSensitiveCheck { IsSecureEventInputEnabled() }
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
+                                        Unmanaged.passUnretained(self).toOpaque(),
+                                        { _, observer, _, _, _ in
+            guard let observer else { return }
+            let bridge = Unmanaged<EngineBridge>.fromOpaque(observer).takeUnretainedValue()
+            DispatchQueue.main.async { bridge.reloadConfigFromDisk() }
+        }, "org.llavon-ime.lora.model-changed" as CFString, nil, .deliverImmediately)
     }
 
     private var configRootURL: URL {

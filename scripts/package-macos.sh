@@ -60,6 +60,10 @@ if [[ ! -f "${ROOT_DIR}/ime-core/CMakeLists.txt" ]]; then
     echo "Initializing the ime-core submodule..."
     git -C "${ROOT_DIR}" submodule update --init ime-core
 fi
+if [[ ! -f "${ROOT_DIR}/lora-trainer/.git" ]]; then
+    echo "Initializing the lora-trainer submodule..."
+    git -C "${ROOT_DIR}" submodule update --init lora-trainer
+fi
 if [[ ! -f "${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" ]]; then
     echo "vcpkg was not found; run: git -C \"${ROOT_DIR}\" submodule update --init vcpkg" >&2
     exit 2
@@ -124,6 +128,7 @@ unix_service_cmake_args=(
     -DCMAKE_BUILD_TYPE=Release
     -DCMAKE_TOOLCHAIN_FILE="${ROOT_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake"
     -DCMAKE_INSTALL_PREFIX="${PAYLOAD_PREFIX}"
+    -DLLAVON_IME_INSTALLED_LORA_TRAINER_PATH="/Library/Application Support/llavon-ime/tools/lora/llavon-lora"
     -DLLAVON_IME_INSTALLED_MODEL_PATH="${MODEL_INSTALL_PATH}"
     -DIME_UNIX_SERVICE_BUILD_TESTS=ON
 )
@@ -158,6 +163,21 @@ xcrun clang -O2 -Wall -Wextra -framework Carbon \
     -o "${tool_root}/llavon-ime-tis" \
     "${ROOT_DIR}/packaging/macos/tools/tis.c"
 
+echo "Bundling the pinned LoRA Trainer release..."
+trainer_staging="$(mktemp -d "${TMPDIR:-/tmp}/llavon-lora-package.XXXXXX")"
+"${SERVICE_BUILD_DIR}/llavon-ime-lora" install-trainer --output-dir "${trainer_staging}"
+mkdir -p "${tool_root}/lora"
+cp -a "${trainer_staging}/." "${tool_root}/lora/"
+chmod -R a+rX "${tool_root}/lora"
+chmod 0644 "${tool_root}/lora/trainer-release.json"
+rm -rf "${trainer_staging}"
+
+# The bundled LoRA trainer ships its own license in the release archive.
+if [[ -f "${tool_root}/lora/LICENSE" ]]; then
+    install -d "${license_root}/llavon-lora-trainer"
+    install -m 0644 "${tool_root}/lora/LICENSE" "${license_root}/llavon-lora-trainer/LICENSE"
+fi
+
 # The uninstaller cleans the files the cask's uninstall does not know about
 # (the legacy fcitx5 payload) and asks before removing a leftover Fcitx5.app.
 install -m 0755 "${ROOT_DIR}/packaging/macos/uninstall.sh" \
@@ -168,6 +188,9 @@ if command -v xattr >/dev/null 2>&1; then
 fi
 find "${PKGROOT}" -name '._*' -delete
 
+# The bundled LoRA Trainer keeps its upstream signature: re-signing its
+# apphost with a hardening runtime would reject the native libraries that ship
+# with it.
 if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
     echo "Signing with Developer ID Application: ${DEVELOPER_ID_APPLICATION}"
     codesign --force --deep --timestamp --options runtime \
@@ -176,16 +199,28 @@ if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
     codesign --force --timestamp --options runtime \
         --sign "${DEVELOPER_ID_APPLICATION}" \
         "${payload_root}/bin/llavon-ime-unix-service"
+    codesign --force --timestamp --options runtime \
+        --sign "${DEVELOPER_ID_APPLICATION}" \
+        "${payload_root}/bin/llavon-ime-lora"
+    codesign --force --timestamp --options runtime \
+        --sign "${DEVELOPER_ID_APPLICATION}" \
+        "${payload_root}/bin/llavon-ime-lora-gui"
 else
     echo "No Developer ID Application identity; keeping the ad-hoc app signature."
     codesign --force --timestamp=none --sign - \
         "${payload_root}/bin/llavon-ime-unix-service"
+    codesign --force --timestamp=none --sign - \
+        "${payload_root}/bin/llavon-ime-lora"
+    codesign --force --timestamp=none --sign - \
+        "${payload_root}/bin/llavon-ime-lora-gui"
 fi
 
 required_files=(
     "${app_root}/${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
     "${app_root}/${APP_NAME}.app/Contents/Info.plist"
     "${payload_root}/bin/llavon-ime-unix-service"
+    "${payload_root}/bin/llavon-ime-lora"
+    "${payload_root}/bin/llavon-ime-lora-gui"
     "${payload_root}/share/llavon-ime/tables/bopomofo_char.json"
     "${payload_root}/share/llavon-ime/tables/tokens/bpmf.json"
     "${payload_root}/share/llavon-ime/tables/tokens/chars.json"
@@ -200,6 +235,8 @@ required_files=(
     "${license_root}/mcbopomofo-symbols/NOTICE"
     "${PKGROOT}${MODEL_INSTALL_PATH}"
     "${tool_root}/llavon-ime-tis"
+    "${tool_root}/lora/llavon-lora"
+    "${tool_root}/lora/trainer-release.json"
     "${PKGROOT}/Library/Application Support/llavon-ime/uninstall.sh"
 )
 

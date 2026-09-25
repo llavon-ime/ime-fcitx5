@@ -56,7 +56,27 @@ if [ -n "${console_user}" ] && id "${console_user}" >/dev/null 2>&1; then
     # writes, so there the source has to be added there once. An upgrade
     # keeps the state it already has and needs nothing.
     if [ -x "${TIS_TOOL}" ]; then
-        as_user "${TIS_TOOL}" register "${APP}" || true
+        # The payload is registered with LaunchServices a moment after the
+        # postinstall runs, and TISRegisterInputSource is dropped while the
+        # bundle record is not ready yet, so register and verify until the
+        # text input system lists the source instead of trusting one call.
+        registered=0
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            as_user "${TIS_TOOL}" register "${APP}" || true
+            if as_user "${TIS_TOOL}" status "${bundle_id}" >/dev/null 2>&1; then
+                registered=1
+                break
+            fi
+            sleep 1
+        done
+        if [ "${registered}" = "0" ]; then
+            echo "llavon-ime: could not register 「拉風輸入法」; log out and back in once." >&2
+        fi
+
+        # The installer registers the bundle with LaunchServices when it
+        # finishes, which prunes the entry registered above, so register once
+        # more from a detached process after the installer has settled.
+        as_user /bin/sh -c "nohup /bin/sh -c 'sleep 5; \"${TIS_TOOL}\" register \"${APP}\"' >/dev/null 2>&1 &" || true
 
         enable_output=""
         for _ in 1 2 3; do
@@ -82,6 +102,18 @@ if [ -n "${console_user}" ] && id "${console_user}" >/dev/null 2>&1; then
     echo "llavon-ime: if it is not in the input menu, add it under System Settings > Keyboard > Input Sources."
 else
     echo "llavon-ime: no active user found; add 「拉風輸入法」 in System Settings > Keyboard > Input Sources."
+fi
+
+# The Windows bundle downloads the optional LoRA Trainer during installation;
+# mirror that here so the model-improvement flow works out of the box. A
+# failure is non-fatal: the settings page can install or update it later.
+LORA_MANAGER="${PAYLOAD}/payload/bin/llavon-ime-lora"
+LORA_DIR="${PAYLOAD}/tools/lora"
+if [ -x "${LORA_MANAGER}" ] && [ ! -x "${LORA_DIR}/llavon-lora" ]; then
+    echo "llavon-ime: downloading the pinned LoRA Trainer release..."
+    if ! "${LORA_MANAGER}" install-trainer --output-dir "${LORA_DIR}"; then
+        echo "llavon-ime: LoRA Trainer download failed; install it later from the input method settings."
+    fi
 fi
 
 /bin/chmod -R a+rX "${PAYLOAD}" 2>/dev/null || true

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <fcitx/addonfactory.h>
+#include <fcitx/action.h>
 #include <fcitx/candidatelist.h>
 #include <fcitx/inputcontextproperty.h>
 #include <fcitx/inputmethodengine.h>
@@ -9,6 +10,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -62,6 +64,7 @@ private:
 
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     std::unique_ptr<Engine> engine_;
+    std::filesystem::path active_service_model_path_;
     ImeFcitxConfig fcitx_config_;
     // Refreshed in place so a pointer handed to a config frontend stays valid.
     mutable PhraseOverrideEditorConfig phrase_override_editor_;
@@ -71,6 +74,8 @@ private:
     std::unordered_map<ContextId, fcitx::TrackableObjectReference<fcitx::InputContext>> contexts_;
     ImeInputContextPropertyFactory property_factory_;
     std::unique_ptr<fcitx::HandlerTableEntry<fcitx::EventHandler>> capability_changed_handler_;
+    fcitx::SimpleAction lora_manager_action_;
+    fcitx::ScopedConnection lora_manager_connection_;
 };
 
 class ImeEngineFactory final : public fcitx::AddonFactory {

@@ -1,6 +1,7 @@
 #include "host/engine.hpp"
 
 #include <algorithm>
+#include <random>
 #include <utility>
 #include <vector>
 
@@ -22,7 +23,10 @@ Engine::Engine(EngineOptions options, Host& host)
       phrase_overrides_(options_.phrase_overrides_path),
       processor_(fallback_, decoder_, phrase_overrides_),
       transport_(options_.transport),
-      config_(options_.config) {
+      config_(options_.config),
+      on_training_commit_(options_.on_training_commit),
+      on_training_discard_(options_.on_training_discard),
+      correction_window_(options_.commit_correction_window) {
     processor_.set_state_observer([this](InputStateKind previous, InputStateKind next) {
         if (accessibility_context_ == nullptr) return;
         if (previous == InputStateKind::Empty && next == InputStateKind::Inputting) {
@@ -55,6 +59,7 @@ void Engine::detach(ContextId context) {
     if (it == sessions_.end()) return;
     close_prediction_session(*it->second);
     sessions_.erase(it);
+    if (recent_commit_ && recent_commit_->context == context) recent_commit_.reset();
 }
 
 bool Engine::has_context(ContextId context) const {
@@ -65,6 +70,10 @@ bool Engine::key_event(ContextId context, const InputKey& key) {
     // Releases reach the engine so key policy lives here instead of in the
     // host; they carry no input meaning today.
     if (key.release) return false;
+    // An immediate Backspace withdraws the commit the user is correcting; any
+    // other key means the correction window is over.
+    if (key.sym == keysym::BackSpace) withdraw_recent_commit(context);
+    else recent_commit_.reset();
     auto& session = find_or_create(context);
     const auto effect = processor_.process(key, session, config_);
     apply_effect(context, session, effect);
@@ -103,6 +112,7 @@ void Engine::deactivate(ContextId context) {
 void Engine::reset(ContextId context, InputResetReason reason, bool clear_context) {
     auto* session = find(context);
     if (session == nullptr) return;
+    if (recent_commit_ && recent_commit_->context == context) recent_commit_.reset();
     if (reason == InputResetReason::FocusOut && accessibility_context_) {
         accessibility_context_->set_active(false);
         accessibility_base_sequence_ = accessibility_context_->sequence();
@@ -125,6 +135,19 @@ void Engine::set_config(Config config, bool settle_sessions) {
     for (auto& [context, session] : sessions_) {
         processor_.prepare_for_config_change(*session);
         close_prediction_session(*session);
+    }
+}
+
+void Engine::set_transport_options(ServiceTransportOptions options) {
+    transport_.reconfigure(std::move(options));
+    // The previous service process staged its commits; it cannot withdraw them.
+    recent_commit_.reset();
+    // Prediction sessions belonged to the service process that just went away.
+    // Late responses are ignored and each context opens a fresh session on
+    // the next prediction.
+    for (auto& [context, session] : sessions_) {
+        session->prediction.invalidate();
+        session->prediction.session_id = {};
     }
 }
 
@@ -151,14 +174,83 @@ InputSession& Engine::find_or_create(ContextId context) {
     auto it = sessions_.find(context);
     if (it == sessions_.end()) {
         it = sessions_.emplace(context, std::make_unique<InputSession>()).first;
+        std::random_device random;
+        for (auto& byte : it->second->training_source_id) byte = static_cast<std::uint8_t>(random());
     }
     return *it->second;
 }
 
 void Engine::apply_effect(ContextId context, InputSession& session, const InputEffect& effect) {
-    if (!effect.commit.empty()) host_.commit(context, effect.commit);
+    if (!effect.commit.empty()) {
+        // Capture the context before the host inserts the committed text.
+        // The prediction path already strips client preedit when sampling it.
+        const auto training_context = session.context_text;
+        const auto accessibility_sequence = accessibility_context_ ? accessibility_context_->sequence() : 0;
+        const bool allow_training = effect.training_sample && config_.collect_training_data &&
+                                    !host_.is_sensitive(context);
+        host_.commit(context, effect.commit);
+        if (allow_training) {
+            try {
+                protocol::RecordCommitRequest request;
+                std::random_device random;
+                for (auto& byte : request.event_id) byte = static_cast<std::uint8_t>(random());
+                request.source_id = session.training_source_id;
+                if (on_training_commit_) {
+                    on_training_commit_(*effect.training_sample, training_context);
+                } else {
+                    request.context = utf16_tail(training_context, 4096);
+                    request.answer = effect.training_sample->answer;
+                    for (const auto& entry : effect.training_sample->entries) {
+                        request.entries.push_back(
+                            {entry.reading, entry.character, entry.manually_selected, entry.literal});
+                    }
+                    transport_.record_commit(request);
+                }
+                // An immediate Backspace may still withdraw this commit.
+                remember_recent_commit(context, request.event_id,
+                                       utf16_tail(training_context + effect.commit, 256), accessibility_sequence);
+            } catch (...) {
+                // Recording must never prevent a successful text commit.
+            }
+        }
+    }
     if (effect.request_prediction) request_prediction(context, session);
     if (effect.redraw) host_.update_ui(context);
+}
+
+void Engine::remember_recent_commit(ContextId context, const protocol::SessionId& event_id,
+                                    std::u16string_view committed_tail, std::uint64_t accessibility_sequence) {
+    recent_commit_ = RecentCommit{context, event_id, std::chrono::steady_clock::now(),
+                                  std::u16string(committed_tail), accessibility_sequence};
+}
+
+void Engine::withdraw_recent_commit(ContextId context) {
+    if (!recent_commit_) return;
+    const auto pending = *recent_commit_;
+    recent_commit_.reset();
+    if (pending.context != context) return;
+    if (std::chrono::steady_clock::now() - pending.recorded_at > correction_window_) return;
+    // A composition that is not empty takes this Backspace itself; only an
+    // empty buffer means the host is deleting the committed text.
+    const auto* session = find(context);
+    if (session == nullptr || !session->buffer.empty()) return;
+    // Only withdraw if the application's text is still exactly what the IME
+    // committed. A same-context edit by another path must leave the record.
+    const auto surrounding = host_.surrounding_text(context);
+    if (surrounding.valid && !surrounding.text.empty()) {
+        if (surrounding.cursor != surrounding.anchor || surrounding.cursor > surrounding.text.size() ||
+            utf16_tail(std::u16string_view(surrounding.text).substr(0, surrounding.cursor), 256) !=
+                pending.committed_tail) return;
+    } else {
+        if (surrounding.valid && (surrounding.cursor != 0 || surrounding.anchor != 0)) return;
+        // Some Linux clients provide no usable surrounding text. Only trust a
+        // fresh AT-SPI sample published after the commit, never a stale one.
+        const auto sample = accessibility_context_ ? accessibility_context_->latest() : std::nullopt;
+        if (!sample || !sample->usable || sample->sequence <= pending.accessibility_sequence ||
+            utf16_tail(sample->text, 256) != pending.committed_tail) return;
+    }
+    if (on_training_discard_) on_training_discard_(pending.event_id);
+    else transport_.discard_commit(pending.event_id);
 }
 
 void Engine::request_prediction(ContextId context, InputSession& session) {
@@ -392,17 +484,16 @@ void Engine::apply_context_sources() {
     }
 
     const std::size_t limit = static_cast<std::size_t>(std::max(1, config_.context_length));
-    if (accessibility_context_ && accessibility_max_code_units_ != limit) {
-        accessibility_context_->stop();
-        accessibility_context_.reset();
-        accessibility_max_code_units_ = 0;
-        accessibility_base_sequence_ = 0;
-    }
     if (!accessibility_context_) {
         accessibility_context_ = create_accessibility_context_provider(limit);
-        accessibility_max_code_units_ = limit;
         accessibility_base_sequence_ = 0;
+    } else if (accessibility_max_code_units_ != limit) {
+        // A configuration change must not rebuild the backend: tearing down
+        // and re-initialising libatspi in one process crashes the input
+        // method, so only the sampling bound is updated.
+        accessibility_context_->set_max_code_units(limit);
     }
+    accessibility_max_code_units_ = limit;
     (void)accessibility_context_->start();
 }
 

@@ -201,7 +201,7 @@ private:
 MessageType read_type(Reader& reader) {
     const auto raw = reader.u8();
     if (raw < static_cast<std::uint8_t>(MessageType::OpenSession) ||
-        raw > static_cast<std::uint8_t>(MessageType::Error)) {
+        raw > static_cast<std::uint8_t>(MessageType::DiscardCommit)) {
         throw ProtocolError("unknown protocol message type: " + std::to_string(raw));
     }
     return static_cast<MessageType>(raw);
@@ -346,6 +346,10 @@ MessageType message_type(const Message& message) {
                 return MessageType::Status;
             else if constexpr (std::is_same_v<T, ShutdownRequest> || std::is_same_v<T, ShutdownResponse>)
                 return MessageType::Shutdown;
+            else if constexpr (std::is_same_v<T, RecordCommitRequest> || std::is_same_v<T, RecordCommitResponse>)
+                return MessageType::RecordCommit;
+            else if constexpr (std::is_same_v<T, DiscardCommitRequest> || std::is_same_v<T, DiscardCommitResponse>)
+                return MessageType::DiscardCommit;
             else
                 return MessageType::Error;
         },
@@ -417,6 +421,35 @@ ByteVector encode(const Message& message) {
                 append_type(payload, MessageType::Shutdown);
                 append_u8(payload, 1);
                 append_u8(payload, value.accepted ? 1U : 0U);
+            } else if constexpr (std::is_same_v<T, RecordCommitRequest>) {
+                if (is_zero(value.event_id) || is_zero(value.source_id) || value.entries.empty() || value.entries.size() > 1024 ||
+                    value.answer.empty()) throw ProtocolError("invalid commit sample");
+                append_type(payload, MessageType::RecordCommit); append_u8(payload, 0);
+                append_id(payload, value.event_id);
+                append_id(payload, value.source_id);
+                append_utf16(payload, value.context, "commit context", 4096);
+                append_utf16(payload, value.answer, "commit answer", 1024);
+                append_u32(payload, checked_size(value.entries.size(), "commit entries", 1024));
+                for (const auto& entry : value.entries) {
+                    if (entry.literal != entry.reading.empty())
+                        throw ProtocolError("commit literal reading mismatch");
+                    append_utf16(payload, entry.reading, "commit reading", 64);
+                    if (entry.character == 0) throw ProtocolError("empty commit character");
+                    append_scalar(payload, entry.character, "commit character");
+                    append_u8(payload, entry.manually_selected ? 1U : 0U);
+                    append_u8(payload, entry.literal ? 1U : 0U);
+                }
+            } else if constexpr (std::is_same_v<T, RecordCommitResponse>) {
+                append_type(payload, MessageType::RecordCommit); append_u8(payload, 1);
+                append_id(payload, value.event_id); append_u8(payload, value.stored ? 1U : 0U);
+            } else if constexpr (std::is_same_v<T, DiscardCommitRequest>) {
+                if (is_zero(value.event_id)) throw ProtocolError("discard has no event id");
+                append_type(payload, MessageType::DiscardCommit); append_u8(payload, 0);
+                append_id(payload, value.event_id);
+            } else if constexpr (std::is_same_v<T, DiscardCommitResponse>) {
+                if (is_zero(value.event_id)) throw ProtocolError("discard response has no event id");
+                append_type(payload, MessageType::DiscardCommit); append_u8(payload, 1);
+                append_id(payload, value.event_id); append_u8(payload, value.discarded ? 1U : 0U);
             } else if constexpr (std::is_same_v<T, Error>) {
                 if (static_cast<std::uint8_t>(value.code) < 1 || static_cast<std::uint8_t>(value.code) > 9)
                     throw ProtocolError("unknown error code");
@@ -523,6 +556,51 @@ Message decode(const ByteVector& frame_bytes) {
                 return response;
             }
             throw ProtocolError("unknown Shutdown payload kind");
+        }
+        case MessageType::RecordCommit: {
+            const auto kind = reader.u8();
+            if (kind == 0) {
+                RecordCommitRequest request; request.event_id = reader.id(); request.source_id = reader.id();
+                if (is_zero(request.event_id) || is_zero(request.source_id)) throw ProtocolError("commit has no event or source id");
+                request.context = reader.utf16("commit context", 4096);
+                request.answer = reader.utf16("commit answer", 1024);
+                const auto count = reader.u32();
+                if (count == 0 || count > 1024 || request.answer.empty())
+                    throw ProtocolError("invalid commit sample");
+                for (std::uint32_t i = 0; i < count; ++i) {
+                    CommitEntry entry; entry.reading = reader.utf16("commit reading", 64);
+                    entry.character = reader.scalar("commit character");
+                    const auto manual = reader.u8();
+                    const auto literal = reader.u8();
+                    if (entry.character == 0 || manual > 1 || literal > 1)
+                        throw ProtocolError("invalid commit entry");
+                    entry.manually_selected = manual != 0;
+                    entry.literal = literal != 0;
+                    if (entry.literal != entry.reading.empty())
+                        throw ProtocolError("invalid commit literal");
+                    request.entries.push_back(std::move(entry));
+                }
+                reader.require_done(); return request;
+            }
+            if (kind == 1) {
+                RecordCommitResponse response{reader.id(), reader.u8() != 0};
+                reader.require_done(); return response;
+            }
+            throw ProtocolError("unknown RecordCommit payload kind");
+        }
+        case MessageType::DiscardCommit: {
+            const auto kind = reader.u8();
+            if (kind == 0) {
+                DiscardCommitRequest request{reader.id()};
+                if (is_zero(request.event_id)) throw ProtocolError("discard has no event id");
+                reader.require_done(); return request;
+            }
+            if (kind == 1) {
+                DiscardCommitResponse response{reader.id(), reader.u8() != 0};
+                if (is_zero(response.event_id)) throw ProtocolError("discard response has no event id");
+                reader.require_done(); return response;
+            }
+            throw ProtocolError("unknown DiscardCommit payload kind");
         }
         case MessageType::Error: {
             const auto raw_code = reader.u8();

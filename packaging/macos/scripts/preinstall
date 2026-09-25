@@ -12,7 +12,9 @@ fi
 # it before the new input method is installed. The answer is never assumed:
 # without a console user (or when the prompt cannot be shown) it is kept.
 FCITX5_APP="/Library/Input Methods/Fcitx5.app"
-PAYLOAD="/Library/Application Support/llavon-ime"
+# The fcitx5-based packages installed their addon files under the payload
+# prefix, so the cleanup below removes them from there.
+PAYLOAD="/Library/Application Support/llavon-ime/payload"
 
 console_user="$(stat -f %Su /dev/console 2>/dev/null || true)"
 if [ -z "${console_user}" ] || [ "${console_user}" = "root" ] || [ "${console_user}" = "loginwindow" ]; then

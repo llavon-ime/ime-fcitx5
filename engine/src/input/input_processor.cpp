@@ -213,6 +213,90 @@ void InputProcessor::commit_text(std::u16string text) {
     effect_.commit = std::move(text);
 }
 
+namespace {
+// Everything the composition does not account for was typed literally:
+// SmartEnglish pending words and the trailing space or punctuation. Like
+// Windows, they stay in the sample as context without a reading.
+bool append_literal_tail(InputEffect::CommitSample& sample, std::u16string_view committed) {
+    if (!committed.starts_with(sample.answer)) return false;
+    const auto tail = utf8_to_u32(u16_to_utf8(committed.substr(sample.answer.size())));
+    for (const auto character : tail) {
+        if (character == 0 || sample.entries.size() >= 1024) return false;
+        sample.entries.push_back({std::u16string{}, character, false, true});
+    }
+    sample.answer += committed.substr(sample.answer.size());
+    return sample.answer == committed && sample.answer.size() <= 1024;
+}
+
+std::optional<InputEffect::CommitSample> training_sample(const CompositionBuffer& buffer,
+                                                          std::u16string_view committed) {
+    if (buffer.segments().empty() || buffer.segments().size() > 1024) return std::nullopt;
+    InputEffect::CommitSample sample;
+    bool trainable = false;
+    for (const auto& segment : buffer.segments()) {
+        // A visible candidate is complete by construction; literal positions
+        // are rendered as typed and carry no reading.
+        if (!segment.visible_candidate() || segment.selected_candidate() == 0) return std::nullopt;
+        if (segment.literal != 0) {
+            // Windows keeps literal characters in the sample so later
+            // Bopomofo positions keep their context; they are not targets.
+            sample.entries.push_back({std::u16string{}, segment.literal, false, true});
+        } else {
+            if (segment.reading().empty()) return std::nullopt;
+            sample.entries.push_back({segment.reading(), segment.selected_candidate(),
+                                      segment.manually_chosen, false});
+            trainable = true;
+        }
+        sample.answer += segment.rendered_text();
+    }
+    // A commit without a single composed position carries nothing to learn.
+    if (!trainable) return std::nullopt;
+    if (!append_literal_tail(sample, committed)) return std::nullopt;
+    return sample;
+}
+
+// The SmartEnglish decision already holds one entry per committed position:
+// Bopomofo segments keep their reading and candidate, everything else is a
+// literal position. The committed text must match exactly, so a manually
+// paged candidate simply skips recording instead of storing a wrong target.
+std::optional<InputEffect::CommitSample> mixed_training_sample(const InputSession& session,
+                                                               std::u16string_view committed) {
+    if (!session.mixed_decision.active()) return std::nullopt;
+    // The preview path can change while typing; the committed text tells which
+    // interpretation was really inserted, so the longest matching rendering
+    // wins. Matching exactly keeps a paged candidate from storing a wrong
+    // target.
+    const MixedPath* chosen = nullptr;
+    for (const auto& path : session.mixed_decision.result.paths) {
+        if (path.rendered.empty() || !committed.starts_with(path.rendered)) continue;
+        if (chosen == nullptr || path.rendered.size() > chosen->rendered.size()) chosen = &path;
+    }
+    if (chosen == nullptr) return std::nullopt;
+    const auto& segments = chosen->segments;
+    if (segments.empty() || segments.size() > 1024) return std::nullopt;
+    InputEffect::CommitSample sample;
+    bool trainable = false;
+    for (const auto& segment : segments) {
+        if (segment.kind == MixedSegmentKind::Bopomofo) {
+            if (segment.reading.empty() || segment.candidates.empty() || segment.candidates.front() == 0)
+                return std::nullopt;
+            sample.entries.push_back({segment.reading, segment.candidates.front(), false, false});
+            sample.answer += utf8_to_u16(char32_to_utf8(segment.candidates.front()));
+            trainable = true;
+            continue;
+        }
+        for (const auto character : utf8_to_u32(u16_to_utf8(segment.raw))) {
+            if (character == 0 || sample.entries.size() >= 1024) return std::nullopt;
+            sample.entries.push_back({std::u16string{}, character, false, true});
+            sample.answer += utf8_to_u16(char32_to_utf8(character));
+        }
+    }
+    if (!trainable) return std::nullopt;
+    if (!append_literal_tail(sample, committed)) return std::nullopt;
+    return sample;
+}
+}
+
 void InputProcessor::mark_prediction_dirty() {
     session_->prediction.mark_dirty();
 }
@@ -261,6 +345,8 @@ InputEffect InputProcessor::reset(InputSession& session, const Config& config, I
     if (should_commit) {
         auto text = session.buffer.candidate_commit_text();
         text += pending_rendered_text(session);
+        effect_.training_sample = training_sample(session.buffer, text);
+        if (!effect_.training_sample) effect_.training_sample = mixed_training_sample(session, text);
         commit_text(std::move(text));
     }
 
@@ -816,6 +902,8 @@ CandidateKeyConfig InputProcessor::candidate_key_config() const {
 void InputProcessor::commit_current() {
     auto text = session_->buffer.commit_text();
     text += pending_rendered_text(*session_);
+    effect_.training_sample = training_sample(session_->buffer, text);
+    if (!effect_.training_sample) effect_.training_sample = mixed_training_sample(*session_, text);
     session_->buffer.clear();
     session_->pending_token.clear();
     session_->mixed_decision.clear();
@@ -830,6 +918,8 @@ void InputProcessor::commit_composition_with(char32_t extra) {
     std::u16string text = session_->buffer.commit_text();
     text += pending_rendered_text(*session_);
     if (extra != 0) text += utf8_to_u16(char32_to_utf8(extra));
+    effect_.training_sample = training_sample(session_->buffer, text);
+    if (!effect_.training_sample) effect_.training_sample = mixed_training_sample(*session_, text);
     session_->buffer.clear();
     session_->pending_token.clear();
     session_->mixed_decision.clear();

@@ -46,8 +46,15 @@ public:
     void close_session(const protocol::SessionId& session_id, Callback callback);
     void status(std::optional<protocol::SessionId> session_id, Callback callback);
     void shutdown(Callback callback);
+    void record_commit(protocol::RecordCommitRequest request);
+    // Tells the service that the user immediately corrected the commit with
+    // Backspace, so the staged record is dropped instead of written.
+    void discard_commit(protocol::SessionId event_id);
 
     void stop();
+    // Restarts the transport against a new service configuration without
+    // touching the rest of the engine (accessibility backends, sessions).
+    void reconfigure(ServiceTransportOptions options);
     bool connected() const noexcept;
     std::optional<protocol::ServiceEpoch> service_epoch() const;
     const ServiceTransportOptions& options() const noexcept;
@@ -56,7 +63,7 @@ public:
     static std::filesystem::path default_service_path();
 
 private:
-    enum class RequestKind : std::uint8_t { Open, Predict, Close, Status, Shutdown };
+    enum class RequestKind : std::uint8_t { Open, Predict, Close, Status, Shutdown, RecordCommit, DiscardCommit };
     struct Pending {
         RequestKind kind;
         protocol::Message message;

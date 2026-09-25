@@ -95,6 +95,10 @@ final class LlavonInputController: IMKInputController, EngineHost {
                                     action: #selector(openSettings),
                                     keyEquivalent: "")
         settings.target = self
+        let training = menu.addItem(withTitle: "管理個人化訓練…",
+                                    action: #selector(openLoraManager),
+                                    keyEquivalent: "")
+        training.target = self
         let restart = menu.addItem(withTitle: "重新啟動",
                                    action: #selector(restartPredictionService),
                                    keyEquivalent: "")
@@ -104,6 +108,14 @@ final class LlavonInputController: IMKInputController, EngineHost {
 
     @objc private func openSettings() {
         SettingsWindowController.shared.show()
+    }
+
+    @objc private func openLoraManager() {
+        if !EngineBridge.shared.openLoraManager() {
+            let alert = NSAlert()
+            alert.messageText = "找不到個人化訓練管理程式"
+            alert.runModal()
+        }
     }
 
     // Drops the prediction service; the engine starts a fresh process on the

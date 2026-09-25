@@ -2,7 +2,9 @@
   "name": "ime-unix-service",
   "version-string": "0.2.0",
   "dependencies": [
+    "libsodium",
     "llama-cpp",
+    "nlohmann-json",
     "reflectcpp",
     "utfcpp"
   ],

@@ -13,6 +13,11 @@ Requires:       glibc
 Requires:       libgcc
 Requires:       libstdc++
 Requires:       vulkan-loader
+Requires:       sqlite-libs
+Requires:       xdg-utils
+Requires:       curl
+Requires:       tar
+Requires:       coreutils
 Provides:       bundled(brotli)
 Provides:       bundled(cpp-httplib)
 Provides:       bundled(ctre)

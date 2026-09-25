@@ -158,6 +158,25 @@ bool ServiceTransport::connected() const noexcept {
     return connected_;
 }
 
+void ServiceTransport::reconfigure(ServiceTransportOptions options) {
+    // stop() joins the worker, fails everything still queued, and shuts down
+    // the service this transport owned. The worker is restarted with the new
+    // options so a service may only spawn once a request arrives.
+    stop();
+    {
+        std::lock_guard lock(mutex_);
+        stopping_ = false;
+        connected_ = false;
+        socket_fd_ = -1;
+        epoch_.reset();
+        spawn_backoff_until_ = {};
+    }
+    if (options.socket_path.empty()) options.socket_path = default_socket_path();
+    if (options.service_path.empty()) options.service_path = default_service_path();
+    options_ = std::move(options);
+    worker_ = std::thread([this]() { run(); });
+}
+
 std::optional<protocol::ServiceEpoch> ServiceTransport::service_epoch() const {
     std::lock_guard lock(mutex_);
     return epoch_;
@@ -216,6 +235,10 @@ void ServiceTransport::enqueue(RequestKind kind, protocol::Message message, Call
                 rejected_response = protocol::Message{correlation_error(
                     message, protocol::ErrorCode::ServiceShuttingDown, "transport is stopped")};
             }
+        } else if (kind == RequestKind::RecordCommit && queue_.size() >= 128) {
+            // Collection is best effort. Do not let a stalled service retain
+            // unbounded committed text in the input method process.
+            return;
         } else {
             queue_.push(Pending{kind, std::move(message), std::move(callback)});
         }
@@ -223,6 +246,14 @@ void ServiceTransport::enqueue(RequestKind kind, protocol::Message message, Call
     if (rejected_callback) rejected_callback(std::move(*rejected_response));
     if (rejected_response) return;
     condition_.notify_one();
+}
+
+void ServiceTransport::record_commit(protocol::RecordCommitRequest request) {
+    enqueue(RequestKind::RecordCommit, std::move(request), {});
+}
+
+void ServiceTransport::discard_commit(protocol::SessionId event_id) {
+    enqueue(RequestKind::DiscardCommit, protocol::DiscardCommitRequest{event_id}, {});
 }
 
 void ServiceTransport::run() {
@@ -367,6 +398,15 @@ void ServiceTransport::shutdown_service() noexcept {
     }
     ::shutdown(fd, SHUT_RDWR);
     ::close(fd);
+    // The service unlinks its socket while exiting. Wait briefly for that so a
+    // reconfigured transport does not connect to the process going away. This
+    // must not probe with connect(): a peer that does not accept would block
+    // the caller once its backlog is full.
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        std::error_code error;
+        if (!std::filesystem::exists(options_.socket_path, error) || error) return;
+        ::usleep(50000);
+    }
 }
 
 void ServiceTransport::fail(Pending pending, protocol::ErrorCode code, std::string message) {
@@ -389,6 +429,16 @@ bool ServiceTransport::matches(RequestKind kind, const protocol::Message& reques
         }
         case RequestKind::Status: return std::holds_alternative<protocol::StatusResponse>(response);
         case RequestKind::Shutdown: return std::holds_alternative<protocol::ShutdownResponse>(response);
+        case RequestKind::RecordCommit: {
+            const auto* sent = std::get_if<protocol::RecordCommitRequest>(&request);
+            const auto* received = std::get_if<protocol::RecordCommitResponse>(&response);
+            return sent && received && sent->event_id == received->event_id;
+        }
+        case RequestKind::DiscardCommit: {
+            const auto* sent = std::get_if<protocol::DiscardCommitRequest>(&request);
+            const auto* received = std::get_if<protocol::DiscardCommitResponse>(&response);
+            return sent && received && sent->event_id == received->event_id;
+        }
     }
     return false;
 }
