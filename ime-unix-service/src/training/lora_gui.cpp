@@ -1,4 +1,5 @@
 #include "commit_store.hpp"
+#include "gpu_vendor.hpp"
 
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
@@ -245,6 +246,7 @@ progress{width:100%;height:6px;accent-color:var(--accent);border:none;border-rad
       <div class="estimate"><span id="estimated-steps">預計 steps：0</span><progress id="progress" max="100" style="display:none"></progress></div>
       <div class="row"><button id="train" class="primary">開始訓練</button><button id="cancel" class="ghost">取消目前工作</button></div>
       <div class="row" style="margin-top:16px"><button id="install-trainer" class="ghost">安裝／更新 LoRA Trainer</button></div>
+      <small id="gpu-status" class="hint"></small>
       <small id="trainer-status" class="hint"></small>
       <pre id="log" class="log"></pre>
     </div>
@@ -534,6 +536,12 @@ async function refresh() {
     else if(state.model_update_available===false){const current=document.createElement('span');current.className='tag';current.textContent='已是最新版本';modelStatus.append(current);}
     document.getElementById('trainer-status').textContent=state.trainer_ready ? 'LoRA Trainer 已安裝' :
       '找不到 llavon-lora，請安裝選配的 LoRA Trainer 元件。';
+    const gpu=state.gpu||'none';
+    document.getElementById('gpu-status').textContent=
+      gpu==='amd' ? '偵測到 AMD GPU：安裝／更新會下載 ROCm 版（小檔案＋9.4 GB libtorch，只下載一次）' :
+      gpu==='nvidia' ? '偵測到 NVIDIA GPU：安裝／更新會下載 CUDA 版（小檔案＋3.9 GB libtorch，只下載一次）' :
+      gpu==='apple' ? 'Apple GPU：macOS 產物已內建 Metal（MPS），不需額外下載' :
+      '未偵測到可用的 GPU：安裝／更新會下載 CPU 版';
     // An open page always mirrors the database: records typed while it is open
     // appear on the next poll and take part in the next training run.
     pendingIds=await api('pending-ids');
@@ -1520,6 +1528,8 @@ private:
                 {"model_ready", ready}, {"revision", ready ? revision : ""},
                 {"model_update_available", update},
                 {"active_model_path", configured_model_path()},
+                {"gpu", ime::unix_service::gpu_vendor()},
+                {"recommended_backend", ime::unix_service::recommended_backend()},
                 {"trainer_ready", trainer_ready(options_.trainer, options_.state)}};
     }
 
@@ -1574,7 +1584,11 @@ private:
         } else if (request.path == "/api/check") {
             start_job("check", {"check-model", "--output-dir", assets_root(options_).string()}, {});
         } else if (request.path == "/api/install-trainer") {
-            start_job("install", {"install-trainer", "--output-dir", (options_.state / "tools" / "lora").string()}, {});
+            // The release for the detected accelerator: AMD GPUs install the
+            // ROCm build and fetch its libtorch, NVIDIA GPUs the CUDA build;
+            // everything else uses the CPU build, which already carries the
+            // Metal backend on macOS.
+            start_job("install", {"install-trainer", "--backend", "auto", "--output-dir", (options_.state / "tools" / "lora").string()}, {});
         } else if (request.path == "/api/unlock") {
             const auto text = [&](const char* key) {
                 return body.contains(key) && body[key].is_string() ? body[key].get<std::string>() : std::string{};

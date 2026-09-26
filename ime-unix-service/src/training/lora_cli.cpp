@@ -1,5 +1,6 @@
 #include "commit_store.hpp"
 #include "numeric_dataset.hpp"
+#include "gpu_vendor.hpp"
 
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
@@ -368,19 +369,25 @@ void check_model(const fs::path& output) {
     fs::remove(metadata);
 }
 
-void install_trainer(const fs::path& output) {
+void install_trainer(const fs::path& output, const std::string& requested_backend) {
+    std::string backend = requested_backend;
+    if (backend == "auto") backend = ime::unix_service::recommended_backend();
+    if (backend != "cpu" && backend != "rocm" && backend != "cuda")
+        throw std::invalid_argument("invalid --backend");
     // Every platform declares the name so the function still compiles where no
     // release exists (macOS x86_64); the check below reports those.
-    constexpr std::string_view platform =
+    const std::string platform =
 #if defined(__linux__) && defined(__x86_64__)
-        "linux-x64-cpu";
+        backend == "rocm" ? "linux-x64-rocm" : backend == "cuda" ? "linux-x64-cuda" : "linux-x64-cpu";
 #elif defined(__APPLE__) && (defined(__aarch64__) || defined(__arm64__))
-        "osx-arm64-cpu";
+        backend == "cpu" ? "osx-arm64-cpu" : "";
 #else
         "";
 #endif
     if (platform.empty())
-        throw std::runtime_error("LoRA Trainer release is unavailable for this platform");
+        throw std::runtime_error(backend == "cpu"
+                                     ? "LoRA Trainer release is unavailable for this platform"
+                                     : "the " + backend + " trainer release is available for Linux x64 only");
     fs::create_directories(output);
     const auto manifest_file = output / "release.json.partial";
     const auto pinned_manifest_file = output / "pinned-release.json.partial";
@@ -397,14 +404,15 @@ void install_trainer(const fs::path& output) {
             const auto stamp_path = output / "trainer-release.json";
             const auto stamp = nlohmann::json::parse(std::ifstream(stamp_path));
             const auto installed = output / "llavon-lora";
-            if (stamp.at("commit") == expected_commit && fs::is_regular_file(installed) && has_trainer_libraries(output)) {
+            if (stamp.at("commit") == expected_commit && stamp.value("backend", "cpu") == backend &&
+                fs::is_regular_file(installed) && has_trainer_libraries(output)) {
                 const auto hash = sha256_hex(installed);
                 const auto recorded = stamp.contains("sha256") ? stamp.at("sha256").get<std::string>() : std::string{};
                 if (recorded.empty() || recorded == hash) {
                     if (recorded.empty()) {
                         std::ofstream file(stamp_path, std::ios::trunc);
                         file << nlohmann::json{{"version", stamp.at("version")}, {"commit", stamp.at("commit")},
-                                               {"sha256", hash}}.dump() << '\n';
+                                               {"backend", backend}, {"sha256", hash}}.dump() << '\n';
                     }
                     std::cout << "trainer=" << installed << " version=" << stamp.at("version").get<std::string>()
                               << " already-installed=true\n";
@@ -504,7 +512,7 @@ void install_trainer(const fs::path& output) {
             throw std::runtime_error("trainer API is incompatible (expected 2)");
         { std::ofstream file(staging / "trainer-release.json", std::ios::trunc);
           file << nlohmann::json{{"version", version}, {"commit", expected_commit},
-                                 {"sha256", sha256_hex(binary)}}.dump() << '\n';
+                                 {"backend", backend}, {"sha256", sha256_hex(binary)}}.dump() << '\n';
           if (!file) throw std::runtime_error("cannot store trainer release information"); }
         std::vector<fs::path> obsolete;
         for (const auto& entry : fs::directory_iterator(output)) obsolete.push_back(entry.path());
@@ -518,6 +526,13 @@ void install_trainer(const fs::path& output) {
             fs::rename(entry.path(), output / entry.path().filename());
         fs::remove_all(staging);
         std::cout << "trainer=" << (output / "llavon-lora") << " version=" << version << '\n';
+        if (backend != "cpu") {
+            // The GPU builds carry no libtorch: install the official PyTorch
+            // build for the backend into the per-user cache they pick up
+            // automatically.
+            std::cout << "fetching the " << backend << " libtorch (this can take a while)\n";
+            run(output / "llavon-lora", {"fetch-libtorch", "--backend", backend});
+        }
     } catch (...) { fs::remove_all(staging); fs::remove(archive); fs::remove(manifest_file);
                     fs::remove(pinned_manifest_file); throw; }
     fs::remove(archive);
@@ -819,7 +834,7 @@ int main(int argc, char** argv) {
         if (argc < 2) throw std::invalid_argument("usage: llavon-ime-lora check-model|fetch-model|install-trainer|protection-status|configure-password|set-recording|reset-conversation-data|list|exclude|delete|dataset|train [--option value ...]");
         const auto options = parse(argc, argv);
         if (std::string_view(argv[1]) == "install-trainer") {
-            install_trainer(fs::absolute(require(options, "--output-dir")));
+            install_trainer(fs::absolute(require(options, "--output-dir")), optional(options, "--backend", "cpu"));
             return EXIT_SUCCESS;
         }
         if (std::string_view(argv[1]) == "check-model") {
